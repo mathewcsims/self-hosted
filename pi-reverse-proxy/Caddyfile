@@ -194,6 +194,33 @@ dashboard.mathewcsims.uk {
 	reverse_proxy nimbus:3000
 }
 
+# ── Speedtest Tracker (running HERE on the Pi, LAN-ONLY) ─────────────────
+# Clean public URL https://speedtest.mathewcsims.uk, but only for LAN clients
+# — same pattern as mc37 below: a real public A-record lets Caddy obtain a
+# Let's Encrypt cert (needed regardless of who's allowed to actually use the
+# site), but only private/LAN source IPs get proxied through; everyone else
+# gets a closed connection. Unlike mc37 this is a container on the Pi itself
+# (see ../speedtest-tracker/), reached over `pi-shared` by container name —
+# same no-published-port pattern as Nimbus. Deliberately not using
+# speedtest-tracker's own ALLOWED_IPS env var for this: with no documented
+# trusted-proxy/X-Forwarded-For config on that app, it would only ever see
+# Caddy's own container IP as the "client", not real LAN clients — the
+# request-source check has to happen here, at the actual network edge, not
+# in the app.
+speedtest.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit speedtest
+
+	@lan remote_ip private_ranges
+	handle @lan {
+		reverse_proxy speedtest-tracker:80
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.

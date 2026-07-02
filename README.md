@@ -15,6 +15,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Memos](https://github.com/usememos/memos) | `prospect-ukri-tus.mathewcsims.uk` | Mac |
 | [Vikunja](https://vikunja.io) | `vikunja.mathewcsims.uk` | Mac |
 | [Nimbus](https://github.com/Turbootzz/Nimbus) | `dashboard.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
+| [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) | `speedtest.mathewcsims.uk` | Pi (LAN-only — no WAN access at all) |
 
 ## Architecture, in short
 
@@ -22,7 +23,9 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ cp.mathewcsims.uk                → Mac
                                   ├─ prospect-ukri-tus.mathewcsims.uk → Mac
-                                  └─ dashboard.mathewcsims.uk         → itself (Pi)
+                                  ├─ vikunja.mathewcsims.uk           → Mac
+                                  ├─ dashboard.mathewcsims.uk         → itself (Pi)
+                                  └─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
 ```
 
 Each app is its own `podman-compose`/`docker-compose` project in its own
@@ -41,6 +44,7 @@ file, never in a tracked one:
 | `copyparty/cfg/accounts.conf` | `accounts.conf.example` |
 | `vikunja/.env` | `.env.example` |
 | `nimbus/.env` | `.env.example` |
+| `speedtest-tracker/.env` | `.env.example` |
 | `pi-reverse-proxy/.env` | `.env.example` |
 
 To stand this up from scratch (or recreate a secret file), copy the matching
@@ -57,6 +61,7 @@ copyparty/            compose.yaml, config, and data (Mac)
 memos-prospect-ukri-tus/  compose.yaml and data (Mac)
 vikunja/               compose.yaml and data (Mac)
 nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
+speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 SETUP.md               full setup, deployment, and troubleshooting guide
