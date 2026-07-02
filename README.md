@@ -13,6 +13,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 |-----|-----|---------|
 | [copyparty](https://github.com/9001/copyparty) | `cp.mathewcsims.uk` | Mac |
 | [Memos](https://github.com/usememos/memos) | `prospect-ukri-tus.mathewcsims.uk` | Mac |
+| [Vikunja](https://vikunja.io) | `vikunja.mathewcsims.uk` | Mac |
 | [Nimbus](https://github.com/Turbootzz/Nimbus) | `dashboard.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 
 ## Architecture, in short
@@ -38,6 +39,7 @@ file, never in a tracked one:
 | Real (gitignored) | Template (tracked) |
 |---|---|
 | `copyparty/cfg/accounts.conf` | `accounts.conf.example` |
+| `vikunja/.env` | `.env.example` |
 | `nimbus/.env` | `.env.example` |
 | `pi-reverse-proxy/.env` | `.env.example` |
 
@@ -53,6 +55,7 @@ this repo is infrastructure-as-code only, never the data the apps hold.
 ```
 copyparty/            compose.yaml, config, and data (Mac)
 memos-prospect-ukri-tus/  compose.yaml and data (Mac)
+vikunja/               compose.yaml and data (Mac)
 nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
