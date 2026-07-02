@@ -9,6 +9,7 @@ recipe — see "Adding another app" near the end.
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
 | Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
+| Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
 
 ## Architecture
 
@@ -24,6 +25,7 @@ recipe — see "Adding another app" near the end.
        │  • routes by hostname:                            │
        │      cp.mathewcsims.uk                → Mac:3923  │
        │      prospect-ukri-tus.mathewcsims.uk → Mac:5230  │
+       │      vikunja.mathewcsims.uk           → Mac:3456  │
        │      dashboard.mathewcsims.uk         → Nimbus,   │
        │        a SEPARATE compose stack ALSO on this Pi,  │
        │        reached by container name over a shared    │
@@ -36,6 +38,7 @@ recipe — see "Adding another app" near the end.
                      stack per app, each its own folder:
                        copyparty  :3923  (data on disk)
                        memos-prospect-ukri-tus  :5230  (sqlite)
+                       vikunja  :3456  (sqlite)
 ```
 
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
@@ -63,6 +66,10 @@ to the **Pi** (copied over and run with `docker compose`, not `podman compose`
 | `copyparty/inbox/` | **Mac** | password drop-box uploads land here |
 | `memos-prospect-ukri-tus/compose.yaml` | **Mac** | Memos, container `memos-prospect-ukri-tus` (plain HTTP on the LAN) |
 | `memos-prospect-ukri-tus/data/` | **Mac** | Memos' sqlite DB + attachments |
+| `vikunja/compose.yaml` | **Mac** | Vikunja, pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from `.env` |
+| `vikunja/.env` | **Mac** | **real service secret — gitignored**; see `.env.example` |
+| `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
+| `vikunja/files/` | **Mac** | task attachments |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only router-admin site); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
 | `pi-reverse-proxy/.env` | **Pi** | domain, email, Mac IP — gitignored; see `.env.example` |
@@ -511,6 +518,93 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 
 ---
 
+## Vikunja (https://vikunja.mathewcsims.uk)
+
+[Vikunja](https://vikunja.io) task management, holding private information —
+built with more deliberate hardening than the other apps here, on request.
+Single container, sqlite (no separate DB service/password to manage), on the
+Mac like copyparty/Memos.
+
+**Image is pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`, NOT the "official"
+`docker.io/vikunja/vikunja` the upstream docs point at.** That Docker Hub
+image is stale — last pushed at `1.1.0` (Feb 2026) — and does **not** include
+fixes for several real CVEs disclosed since, most seriously a **CVSS 9.1
+critical** (`GHSA-2pv8-4c52-mf8j`): an unauthenticated instance-wide data
+breach chaining a link-share hash disclosure with a cross-project attachment
+IDOR — just a link-share URL was enough to potentially exfiltrate or delete
+files across every project on the instance, not just the shared one. Also
+fixed by 2.3.0: a rate-limit bypass via spoofed `X-Forwarded-For`/`X-Real-IP`
+(`CVE-2026-29794`), a TOTP brute-force bypass (`CVE-2026-35597`), a 2FA bypass
+via CalDAV basic auth, and others — 2.3.0's own release notes cite "11
+security fixes". Confirmed via `go-vikunja/vikunja`'s actual GitHub releases
+(not the stale Docker Hub listing) that 2.3.0 is genuinely current. **If you
+ever bump this version, check the releases/changelog for security fixes
+first** — this app has a real, recent CVE history, pin deliberately.
+
+**Hardened beyond Vikunja's own defaults**, all in `vikunja/compose.yaml`:
+- `VIKUNJA_SERVICE_ENABLEREGISTRATION: "false"` — **from the very first boot**,
+  never temporarily opened. Vikunja has no `INITIAL_ADMIN_EMAIL`-style
+  bootstrap env var, but it does have a CLI: the admin account was created
+  with `podman exec vikunja /app/vikunja/vikunja user create -u mat -e
+  mat@mathewcsims.uk -p <password>` — the registration endpoint has never been
+  reachable, not even for a moment. Use the same command (or `... user
+  reset-password --direct`) to add or manage accounts later; there's no
+  self-service signup or admin "invite" flow, by design.
+- `VIKUNJA_SERVICE_ENABLELINKSHARING: "false"` — off by default. This is
+  specifically the feature the CVSS 9.1 chain above entered through; even
+  fully patched, unused attack surface isn't needed for a private-data
+  instance. Flip to `"true"` (`podman compose up -d`, not `restart`) if you
+  deliberately want to share a project by link later.
+- `VIKUNJA_SERVICE_IPEXTRACTIONMETHOD`/`TRUSTEDPROXIES` — same class of
+  setting as copyparty's `xff-src`/`rproxy` and FreeScout's
+  `APP_TRUSTED_PROXIES`: without it, Vikunja can't distinguish real client IPs
+  from the podman gateway's, which breaks rate-limiting (limits would apply to
+  "the proxy" instead of real clients) and is the exact shape of the spoofed-
+  header rate-limit bypass CVE on older versions. Scoped to RFC1918 ranges
+  (matching copyparty's `xff-src: lan`), not a single hardcoded IP.
+- `VIKUNJA_RATELIMIT_ENABLED: "true"` (off by default upstream) — IP-based,
+  10/min specifically on login/register/password-reset.
+- `VIKUNJA_CORS_ENABLE: "false"` — this exists for the desktop app, which
+  isn't in use; our reverse-proxied web UI is same-origin, no CORS involved at
+  all, so disabling it is free attack-surface reduction.
+- Caddy adds HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  and a `Referrer-Policy` for this site specifically (see the Caddyfile) —
+  cheap, real hardening for something holding private data. Safe to copy that
+  `header` block to any other site later; it just wasn't asked for there.
+- `VIKUNJA_SERVICE_ENABLETOTP` is left **on** (Vikunja's default) — not
+  forced, but available: turn on 2FA for your account yourself under Settings
+  whenever you want it.
+
+**A genuine image quirk, not a security thing:** `ghcr.io/go-vikunja/vikunja`
+is minimal — no shell, no `wget`/`curl` at all inside it (smaller attack
+surface, but means the `wget`-based healthcheck pattern used elsewhere in this
+repo doesn't work here). It has its own `vikunja healthcheck` CLI subcommand
+instead, confirmed working before using it. Also: unlike copyparty (which runs
+as root inside its container and benefits from podman-machine's automatic
+root→host-user remap on macOS), Vikunja's image always runs as a fixed
+non-root UID inside the container — the bind-mounted `./files`/`./db` need to
+actually be owned by that UID for it to write to them. On this Mac (rootless
+podman via the *remote* client), `podman unshare` isn't available to fix that
+directly; used a throwaway container instead:
+```sh
+podman run --rm -v "$PWD/files:/files" -v "$PWD/db:/db" docker.io/library/alpine:latest \
+  chown -R 1000:1000 /files /db
+```
+
+**To bring it up (mirrors copyparty):**
+1. **Mac:** `cd vikunja && podman compose up -d`.
+2. Create the admin account (see above) — do this before exposing it publicly.
+3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and reload Caddy.
+4. **DNS:** a wildcard record already covers new subdomains here — check
+   `python3 -c "import socket; print(socket.gethostbyname('yourdomain'))"`
+   resolves before assuming you need to add anything at the registrar.
+5. **DrayTek LAN DNS**: add `vikunja.mathewcsims.uk` → `10.0.1.19`, same as
+   the other apps, for clean access from inside your own network.
+6. Watch `docker compose logs -f caddy` (in `pi-reverse-proxy/`) for the cert,
+   then visit `https://vikunja.mathewcsims.uk`.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
@@ -649,9 +743,9 @@ After editing the Caddyfile: `docker compose restart caddy`.
 
 ## Backups
 
-- Back up **`copyparty/data/`** and **`memos-prospect-ukri-tus/data/`** on the
-  Mac (Time Machine covers both if under your home dir). That's all your
-  actual data.
+- Back up **`copyparty/data/`**, **`memos-prospect-ukri-tus/data/`**, and
+  **`vikunja/db/` + `vikunja/files/`** on the Mac (Time Machine covers all of
+  these if under your home dir). That's all your actual data.
 - The Pi's `caddy_data` volume holds the TLS certs/account — nice to keep, but
   Caddy re-issues automatically if lost.
 - **`nimbus/db/` on the Pi** holds your monitoring config and history — the Pi

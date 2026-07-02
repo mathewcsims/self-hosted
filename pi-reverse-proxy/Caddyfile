@@ -32,6 +32,26 @@ prospect-ukri-tus.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:5230
 }
 
+# ── Vikunja (running on the Mac) ───────────────────────────────────────────
+# Clean public URL https://vikunja.mathewcsims.uk. Same pattern as copyparty
+# above. Vikunja's own image is pinned to an exact patched version and
+# hardened at the app level (no self-registration, rate limiting on, link
+# sharing off, trusted-proxy config so it can tell real clients from the
+# podman gateway) — see vikunja/compose.yaml for the reasoning. Extra
+# hardening headers here since this holds private information and it costs
+# nothing: HSTS (force HTTPS on repeat visits), clickjacking and MIME-sniffing
+# protection. Not added to the other sites only because it wasn't asked for
+# there — safe to copy this block to any of them later.
+vikunja.mathewcsims.uk {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	reverse_proxy http://{$MAC_IP}:3456
+}
+
 # ── Nimbus (running HERE on the Pi, not the Mac) ──────────────────────────
 # Clean public URL https://dashboard.mathewcsims.uk. Unlike every other app,
 # Nimbus is a separate docker-compose project also on the Pi (see ../nimbus/),

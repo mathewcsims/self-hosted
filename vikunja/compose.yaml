@@ -1,0 +1,113 @@
+# Vikunja (https://vikunja.io) — self-hosted task management.
+# Storage backend = ./files (attachments) + ./db (sqlite) on this Mac.
+#
+# Same architecture as ../copyparty: TLS and the public hostname
+# (vikunja.mathewcsims.uk) are handled by the Caddy reverse proxy on your
+# Raspberry Pi (see ../pi-reverse-proxy/). This Mac only serves plain HTTP on
+# the LAN; the Pi terminates HTTPS and forwards to MAC_IP:3456 here.
+#
+# ── Image: pinned, NOT the stale official Docker Hub image ─────────────────
+# docker.io/vikunja/vikunja was last pushed at 1.1.0 (Feb 2026) and does NOT
+# include fixes for several real CVEs disclosed since, including a CVSS 9.1
+# critical (instance-wide data breach via link-share hash disclosure chained
+# with cross-project attachment IDOR — GHSA-2pv8-4c52-mf8j) and a rate-limit
+# bypass via spoofed X-Forwarded-For/X-Real-IP (CVE-2026-29794). Confirmed via
+# the actual GitHub releases (go-vikunja/vikunja) that ghcr.io IS kept current
+# and v2.3.0 (Apr 2026) is the latest, patching all of the above plus a TOTP
+# brute-force bypass (CVE-2026-35597) and others — its own release notes cite
+# "11 security fixes". Pinned to an exact tag (not :latest) given this history,
+# so upgrades are a deliberate, reviewed decision, not silent.
+#
+# All secrets live in ./.env (gitignored — see .env.example for the template).
+name: vikunja
+
+services:
+  vikunja:
+    image: ghcr.io/go-vikunja/vikunja:2.3.0
+    container_name: vikunja
+    restart: unless-stopped
+    # Do NOT set `user:` — on podman-machine (macOS) the container's root maps
+    # to your host user, giving sane ownership on the bind mounts below (same
+    # reasoning as copyparty's compose.yaml). Vikunja's own docs assume plain
+    # Docker on Linux and say to `chown 1000` the host dirs first — that's
+    # NOT needed here; verified empirically after first boot instead of
+    # assumed, given this bit an earlier deployment in this exact repo.
+    environment:
+      VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SERVICE_SECRET}
+      VIKUNJA_SERVICE_PUBLICURL: https://vikunja.mathewcsims.uk/
+      VIKUNJA_DATABASE_PATH: /db/vikunja.db
+
+      # No self-registration, ever — the admin account is created once via
+      # `podman exec vikunja vikunja user create ...` (see SETUP.md), so this
+      # never needs to be temporarily opened. Left off permanently: a fresh
+      # `docker exec ... user create` also works for any account added later.
+      VIKUNJA_SERVICE_ENABLEREGISTRATION: "false"
+      # Leave enabled so 2FA can be turned on from within the account itself
+      # (Settings) if wanted later — this doesn't affect the registration gate.
+      VIKUNJA_SERVICE_ENABLETOTP: "true"
+      # Off by default: the CVSS-9.1 chain above was entered specifically via
+      # a link-share hash, and even patched, an unused feature is attack
+      # surface a private-data instance doesn't need. Flip to "true" (and
+      # `podman compose up -d` — env changes need that, not `restart`) if you
+      # deliberately want to share a project by link later.
+      VIKUNJA_SERVICE_ENABLELINKSHARING: "false"
+
+      # Same class of setting as copyparty's xff-src/rproxy and FreeScout's
+      # APP_TRUSTED_PROXIES: without this, Vikunja can't tell real client IPs
+      # from the podman gateway's, which both breaks rate-limiting (limits
+      # would apply to "the proxy", not real clients) and was the exact shape
+      # of CVE-2026-29794 on older versions. RFC1918-only, matching copyparty's
+      # xff-src:lan reasoning — no real internet client can present a TCP
+      # connection that appears to originate from a private address here, so
+      # trusting "any private-range direct hop" is safe and doesn't need to
+      # hardcode podman's gateway IP specifically.
+      VIKUNJA_SERVICE_IPEXTRACTIONMETHOD: xff
+      VIKUNJA_SERVICE_TRUSTEDPROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+      # Not needed: this proxies cross-origin requests for the desktop app,
+      # which isn't in use. Our reverse-proxied web UI is same-origin (no CORS
+      # involved at all), so disabling this is pure attack-surface reduction.
+      VIKUNJA_CORS_ENABLE: "false"
+
+      # Off by default upstream; brute-force protection matters more than
+      # usual given this holds private information. IP-based (not "user")
+      # since pre-auth endpoints like login have no authenticated identity to
+      # key on yet. "memory" store: single instance, no redis in this stack.
+      VIKUNJA_RATELIMIT_ENABLED: "true"
+      VIKUNJA_RATELIMIT_KIND: ip
+      VIKUNJA_RATELIMIT_STORE: memory
+      VIKUNJA_RATELIMIT_PERIOD: "60"
+      VIKUNJA_RATELIMIT_LIMIT: "100"
+      VIKUNJA_RATELIMIT_NOAUTHLIMIT: "10"   # login/register/password-reset specifically
+
+      # Outgoing mail (password resets) — unset. Needs your own SMTP
+      # provider/account, same reasoning as every other app's SMTP section in
+      # this repo. Without it: "all users are enabled right away and password
+      # reset is not possible" (Vikunja's own docs) — fine for a single-user
+      # instance where you create/reset accounts via the CLI instead.
+      # VIKUNJA_MAILER_ENABLED: "true"
+      # VIKUNJA_MAILER_HOST: smtp.example.com
+      # VIKUNJA_MAILER_PORT: "587"
+      # VIKUNJA_MAILER_USERNAME: ...
+      # VIKUNJA_MAILER_PASSWORD: ...
+      # VIKUNJA_MAILER_FROMEMAIL: vikunja@mathewcsims.uk
+    volumes:
+      - ./files:/app/vikunja/files
+      - ./db:/db
+    ports:
+      # IMPORTANT (same podman-machine quirk as the other Mac apps): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address. The router does NOT forward
+      # 3456, so this is never directly internet-facing.
+      - "10.0.1.14:3456:3456"
+    healthcheck:
+      # This image is minimal — no shell, no wget/curl at all (good for attack
+      # surface, means the usual wget-based healthcheck used elsewhere in this
+      # repo doesn't work here). Vikunja's own binary has a built-in
+      # `healthcheck` subcommand instead — verified directly before using it.
+      test: ["CMD", "/app/vikunja/vikunja", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
