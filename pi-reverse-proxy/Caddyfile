@@ -72,6 +72,40 @@
 prospect-ukri-tus.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit memos
+
+	# Memos has no rate-limiting, brute-force lockout, or CAPTCHA of its own
+	# anywhere in its source (confirmed by reading it) — same gap class as
+	# Nimbus. Registration is deliberately open here (this is for Prospect
+	# members to self-signup), so unlike Nimbus this can't just be "strict
+	# zone on all of /api/v1/auth/*" — a genuine new member still needs to
+	# be able to sign up without hassle. Two separate, purpose-matched zones:
+	rate_limit {
+		# Credential-stuffing against existing accounts: sign-in and token
+		# refresh. 20/min/IP is well above any real user's need but caps
+		# automated password-guessing.
+		zone rl_memos_auth {
+			match {
+				path /api/v1/auth/signin /api/v1/auth/refresh
+			}
+			key {remote_host}
+			events 20
+			window 1m
+		}
+		# Registration spam/bot floods: POST /api/v1/users is the signup
+		# endpoint (also used for admin user-management, but only unauthed
+		# POST is what an anonymous signup bot can hit). 5/min/IP is
+		# generous for a real one-off signup, tight against scripted abuse.
+		zone rl_memos_register {
+			match {
+				method POST
+				path /api/v1/users
+			}
+			key {remote_host}
+			events 5
+			window 1m
+		}
+	}
+
 	reverse_proxy http://{$MAC_IP}:5230
 }
 

@@ -379,6 +379,36 @@ curl -X PATCH -H "Authorization: Bearer <a Personal Access Token>" \
 ```
 Generate a token yourself in the web UI: Settings ▸ My Account ▸ Access Tokens.
 
+**Hardening:** public self-registration is **deliberate** here (Prospect
+members should be able to sign up freely) and must stay on — nothing below
+disables it.
+- Image pinned to the exact digest behind `:stable` (currently v0.29.1), same
+  discipline as Vikunja/Nimbus. Checked against usememos/memos's GitHub
+  security advisories: several real CVEs exist in its history (an SSRF via
+  link-preview fetching, stale auth tokens surviving a password change, a
+  CORS misconfiguration, an older SSRF+XSS pair in a since-removed endpoint)
+  but all were fixed well before 0.29.1 — nothing unpatched applies.
+  `MEMOS_DEMO: "false"` made explicit too (already the default when unset —
+  demo mode uses a hardcoded JWT secret instead of a real random one).
+- Memos has **no rate-limiting, brute-force lockout, or CAPTCHA of its own
+  anywhere in its source** (confirmed by reading it) — same gap class as
+  Nimbus. Unlike Nimbus, blanket-limiting all of `/api/v1/auth/*` isn't right
+  here since registration must stay easy for real new members. Two
+  purpose-matched Caddy zones instead (`pi-reverse-proxy/Caddyfile`):
+  - `/api/v1/auth/signin` + `/api/v1/auth/refresh`: 20 requests/min/IP —
+    blunts credential-stuffing against existing accounts.
+  - `POST /api/v1/users` only (the signup endpoint — method-scoped so it
+    doesn't touch authenticated `GET /api/v1/users/*` calls): 5 requests/
+    min/IP — generous for a genuine one-off signup, tight against scripted
+    mass-registration spam.
+  - `/api/v1/auth/me` (the SPA's routine per-page-load session check) is
+    deliberately *not* in either zone — it fires constantly during normal
+    use and would false-positive.
+  - Verified live: 25 rapid signin POSTs → 20 real responses then 429s; 8
+    rapid registration POSTs → 5 real responses then 429s, independently of
+    the signin zone; GETs to `/api/v1/users/*` unaffected by the
+    registration zone's method scoping.
+
 ---
 
 ## Nimbus (https://dashboard.mathewcsims.uk) — runs on the Pi, not the Mac
@@ -795,10 +825,11 @@ docker compose pull nimbus && docker compose up -d
   restart.
 - Use a long unique admin password per app (already generated where relevant).
 
-### Hardening pass (copyparty, Nimbus, Caddy)
+### Hardening pass (copyparty, Nimbus, Caddy, Memos)
 
 Applied across the board, on top of what each app section above already
-documents (Vikunja's app-level hardening, Nimbus's OIDC, etc.):
+documents (Vikunja's app-level hardening, Nimbus's OIDC, Memos's registration
+policy, etc.):
 
 - **Reusable security headers, now on every site, not just Vikunja.**
   `pi-reverse-proxy/Caddyfile` defines a `(security_headers)` snippet (HSTS,
@@ -844,3 +875,9 @@ documents (Vikunja's app-level hardening, Nimbus's OIDC, etc.):
   exact digest behind it as of 2026-07-02
   (`turboot/nimbus@sha256:c22c98b5f53...`) — same reasoning as Vikunja's
   version pin: an upstream push can't silently change what's running here.
+- **Memos**: image pinned the same way (`:stable` → exact digest, v0.29.1,
+  CVE history checked — nothing unpatched applies), plus two purpose-matched
+  Caddy rate-limit zones on signin/refresh and on registration specifically,
+  since blanket-limiting `/api/v1/auth/*` the way Nimbus's zone does isn't
+  right when self-registration is meant to stay open. Full detail in the
+  [Memos section](#memos-httpsprospect-ukri-tusmathewcsimsuk) above.

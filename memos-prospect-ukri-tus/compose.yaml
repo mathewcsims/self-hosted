@@ -17,7 +17,16 @@ name: memos-prospect-ukri-tus
 
 services:
   memos:
-    image: docker.io/neosmemo/memos:stable
+    # Pinned to the exact digest behind :stable as of 2026-07-02 (verified
+    # via Docker Hub's API to be v0.29.1, the actual current stable release —
+    # not stale like Vikunja's old default tag was). Same discipline as every
+    # other app in this repo: an upstream push to :stable can't silently
+    # change what's running here. Checked against GitHub security advisories
+    # for usememos/memos: every known CVE (SSRF via link-preview fetching,
+    # stale tokens after password change, a CORS privilege-escalation bug,
+    # an old SSRF+XSS pair in a since-removed REST endpoint) was fixed well
+    # before this version — nothing unpatched applies.
+    image: docker.io/neosmemo/memos@sha256:3e1253477066eb2aefa91145f7f9038bb931ed88c8a3ee05310a933594cdba7d
     container_name: memos-prospect-ukri-tus
     restart: unless-stopped
     volumes:
@@ -31,6 +40,11 @@ services:
       # internal Mac:5230 address instead of the public domain, breaking
       # OAuth login when you configure it in the admin UI.
       MEMOS_INSTANCE_URL: https://prospect-ukri-tus.mathewcsims.uk
+      # Already the default when unset (confirmed in Memos's own source) —
+      # made explicit for reviewability. Demo mode would use a hardcoded
+      # "usememos" JWT secret instead of the real persisted random one, and
+      # is meant for throwaway demo instances, never a real one like this.
+      MEMOS_DEMO: "false"
     ports:
       # IMPORTANT (same podman-machine quirk as copyparty): a published port
       # must be bound to the Mac's *actual* LAN IP — podman-machine cannot
