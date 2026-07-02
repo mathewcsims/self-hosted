@@ -606,12 +606,24 @@ first** — this app has a real, recent CVE history, pin deliberately.
   isn't in use; our reverse-proxied web UI is same-origin, no CORS involved at
   all, so disabling it is free attack-surface reduction.
 - Caddy adds HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-  and a `Referrer-Policy` for this site specifically (see the Caddyfile) —
-  cheap, real hardening for something holding private data. Safe to copy that
-  `header` block to any other site later; it just wasn't asked for there.
+  and a `Referrer-Policy` — originally added for this site specifically, now
+  applied to every site via a shared snippet (see the [hardening
+  pass](#hardening-pass-copyparty-nimbus-caddy-memos) below).
 - `VIKUNJA_SERVICE_ENABLETOTP` is left **on** (Vikunja's default) — not
   forced, but available: turn on 2FA for your account yourself under Settings
   whenever you want it.
+- `VIKUNJA_SERVICE_TIMEZONE: Europe/London` (+ standard `TZ: Europe/London`)
+  — Vikunja defaults to `GMT`, which doesn't observe BST, so for roughly half
+  the year (late March–late October) server-side time was effectively an hour
+  off real local time. This affects the API's serialized timestamps and
+  anything computed server-side (reminder-email timing, recurring-task
+  regeneration) — Vikunja's own maintainers describe the frontend as trusting
+  the API to return correctly-zoned dates and just rendering whatever it's
+  given, so a wrong server zone shows up as wrong times in the browser too,
+  not just in the backend. Redeployed and confirmed healthy (no "unknown time
+  zone" startup error — some minimal Docker images lack the IANA tz database
+  entirely; this one has it built in) and the API stayed fully responsive
+  afterwards.
 
 **A genuine image quirk, not a security thing:** `ghcr.io/go-vikunja/vikunja`
 is minimal — no shell, no `wget`/`curl` at all inside it (smaller attack

@@ -37,6 +37,17 @@ services:
       VIKUNJA_SERVICE_PUBLICURL: https://vikunja.mathewcsims.uk/
       VIKUNJA_DATABASE_PATH: /db/vikunja.db
 
+      # Defaults to GMT, which doesn't observe BST — roughly half the year,
+      # server-side time was effectively an hour off real local time. This
+      # isn't just a backend nicety: dates/times you type without an explicit
+      # zone get interpreted (and stored/serialized) using this setting, so a
+      # wrong server zone produces a wrong stored value that then displays
+      # wrong in the browser too, not just in server-side things like
+      # reminder-email timing and recurring-task regeneration. TZ (the
+      # standard container-level var) is set the same way for consistency.
+      VIKUNJA_SERVICE_TIMEZONE: Europe/London
+      TZ: Europe/London
+
       # No self-registration, ever — the admin account is created once via
       # `podman exec vikunja vikunja user create ...` (see SETUP.md), so this
       # never needs to be temporarily opened. Left off permanently: a fresh
