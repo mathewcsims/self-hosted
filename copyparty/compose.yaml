@@ -1,0 +1,32 @@
+# copyparty file server. Storage backend = ./data on this Mac.
+#
+# TLS and the public hostname (cp.mathewcsims.uk) are handled by the Caddy
+# reverse proxy on your Raspberry Pi (see ../pi-reverse-proxy/). This Mac only
+# serves plain HTTP on the LAN; the Pi terminates HTTPS and forwards to
+# MAC_IP:3923 here. Nothing on the Mac is forwarded by the router.
+
+services:
+  copyparty:
+    image: copyparty/ac:latest
+    container_name: copyparty
+    restart: unless-stopped
+    # Do NOT set `user:` — on podman-machine (macOS) the container's root maps
+    # to your host user, giving sane ownership on the bind mounts below.
+    volumes:
+      - ./cfg:/cfg          # *.conf files auto-loaded from /cfg
+      - ./data:/w           # PRIVATE storage (admin-only, served at /)
+      - ./public:/pub       # PUBLIC storage (anonymous read, served at /pub)
+      - ./inbox:/inbox      # DROP BOX storage (password write-only, served at /inbox)
+    ports:
+      # IMPORTANT: podman-machine on macOS will only expose a published port on
+      # the *specific* host IP you name here — it cannot bind 0.0.0.0 to the real
+      # LAN interface. So the Mac's actual LAN IP must be hard-set below; the Pi's
+      # reverse proxy connects to it. The router does NOT forward 3923, so this is
+      # never directly internet-facing.
+      - "10.0.1.14:3923:3923"     # LAN — the Pi reverse-proxies here (browse on the Mac via this too)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3923/?h"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

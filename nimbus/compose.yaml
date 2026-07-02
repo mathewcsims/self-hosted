@@ -1,0 +1,104 @@
+# Nimbus (https://github.com/Turbootzz/Nimbus) — homelab monitoring dashboard.
+#
+# UNLIKE every other app in this repo, this one runs ON THE PI, not the Mac —
+# deliberately, for resilience: if the Mac (which hosts copyparty/Memos) is
+# down for maintenance, the dashboard itself should still be up to report that.
+# Deploy this folder to the Pi exactly like ../pi-reverse-proxy/:
+#
+#   scp -r self-hosted/nimbus mathewcsims@10.0.1.19:~/
+#   ssh mathewcsims@10.0.1.19
+#   cd ~/nimbus && docker compose up -d
+#
+# All secrets live in ./.env (gitignored — see .env.example for the template
+# and what each value is for). docker compose auto-loads .env from this same
+# directory for ${VAR} substitution below, same pattern as ../pi-reverse-proxy/.
+#
+# Caddy (also on the Pi, see ../pi-reverse-proxy/) terminates TLS for
+# https://dashboard.mathewcsims.uk and proxies to Nimbus. Caddy runs in its
+# OWN container/compose project — "127.0.0.1" from inside Caddy's container
+# would hit itself, not the Pi host, so a host-loopback bind wouldn't actually
+# be reachable from Caddy. Instead, the `nimbus` service joins `pi-shared`, an
+# external Docker network created by ../pi-reverse-proxy/'s compose stack
+# (bring that stack up first), and Caddy proxies to it by container name
+# ("nimbus:3000"). No port is published to the host AT ALL — tighter than the
+# Mac-app pattern (which needs a LAN-IP bind since the Pi has to reach across
+# hosts); here nothing outside these two containers ever touches port 3000.
+name: nimbus
+
+services:
+  db:
+    image: turboot/nimbus-postgres:18
+    container_name: nimbus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nimbus
+      POSTGRES_USER: nimbus
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - ./db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nimbus -d nimbus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nimbus:
+    image: turboot/nimbus:latest
+    container_name: nimbus
+    restart: unless-stopped
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db
+      JWT_SECRET: ${JWT_SECRET}
+
+      # Public URL — used to build password-reset/OAuth links correctly.
+      FRONTEND_URL: https://dashboard.mathewcsims.uk
+      NEXT_PUBLIC_SITE_URL: https://dashboard.mathewcsims.uk
+      # Static flag, not dynamic proxy-header detection (unlike the class of
+      # bug hit with copyparty/FreeScout) — safe to set unconditionally since
+      # Caddy always serves this over HTTPS.
+      COOKIE_SECURE: "true"
+
+      # Bootstrap admin account, created on first boot only. CHANGE THE
+      # PASSWORD after first login (Settings) — this is only for initial setup.
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
+
+      # Generic OIDC via Infomaniak's IK-AUTH (an application registered
+      # against Infomaniak's shared login.infomaniak.com identity service —
+      # confirmed via its real discovery document, not guessed). Nimbus
+      # auto-discovers authorize/token/userinfo endpoints from ISSUER_URL at
+      # startup (backend/internal/services/oauth_service.go), so only these
+      # four are needed. New-account creation via OIDC is gated by the
+      # public_registration_enabled setting (currently false — confirmed in
+      # the DB), so this will only ever LINK to an existing account by
+      # verified email match, never let an arbitrary Infomaniak user sign up.
+      OIDC_ISSUER_URL: https://login.infomaniak.com
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_REDIRECT_URL: https://dashboard.mathewcsims.uk/api/v1/auth/oauth/oidc/callback
+
+      # SMTP (for password reset emails) already configured via the admin UI
+      # (system_settings table) — nothing needed here for that.
+    volumes:
+      - ./uploads:/app/backend/uploads
+    # No `ports:` — reached only by Caddy, over `pi-shared`, by container name.
+    # See the note at the top of this file for why a host bind isn't used.
+    networks:
+      - default    # to reach `db` by service name
+      - pi-shared  # to be reached by Caddy, by container name "nimbus"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  pi-shared:
+    external: true
+    name: pi-shared

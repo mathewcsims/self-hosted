@@ -1,0 +1,13 @@
+# Template for accounts.conf — copy this to accounts.conf (gitignored) and
+# fill in real passwords. copyparty auto-loads every *.conf file in /cfg, so
+# this merges into copyparty.conf's volume/permission definitions with no
+# other changes needed.
+#
+#   cp accounts.conf.example accounts.conf
+#   # then edit accounts.conf with real passwords
+#   # generate a strong one with: openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32
+
+[accounts]
+  # username: password
+  admin: CHANGE_ME_ADMIN_PASSWORD
+  inbox: CHANGE_ME_INBOX_PASSWORD

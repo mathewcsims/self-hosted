@@ -1,0 +1,32 @@
+# ── Secrets ──────────────────────────────────────────────────────────────
+# Every real .env and accounts.conf holds live credentials. Only their
+# .example templates are ever tracked.
+.env
+**/.env
+copyparty/cfg/accounts.conf
+
+# ── Runtime data & databases ────────────────────────────────────────────
+# This repo is infrastructure-as-code only — never the actual files,
+# notes, sessions, or databases the apps generate while running.
+copyparty/data/
+copyparty/public/
+copyparty/inbox/
+# copyparty's own internal state: salts, sessions.db, shares.db, cert.pem, iphash
+copyparty/cfg/copyparty/
+memos-prospect-ukri-tus/data/
+nimbus/db/
+nimbus/uploads/
+pi-reverse-proxy/caddy_data/
+pi-reverse-proxy/caddy_config/
+
+# ── Tool-local / editor state ───────────────────────────────────────────
+# Claude Code's own local session cache — unrelated to this project, and
+# has been seen to cache credentials from earlier terminal commands.
+.claude/
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+autostart/*.log
+*.log
+
+# ── OS cruft ─────────────────────────────────────────────────────────────
+.DS_Store

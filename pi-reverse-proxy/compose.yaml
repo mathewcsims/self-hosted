@@ -1,0 +1,38 @@
+# Reverse proxy + automatic HTTPS for the whole LAN. Runs on the Raspberry Pi.
+#
+# Copy this entire pi-reverse-proxy/ folder to the Pi, then `docker compose up -d`.
+# The DrayTek forwards WAN 80/443 -> this Pi; Caddy routes by hostname to the
+# right backend and obtains/renews Let's Encrypt certificates automatically.
+#
+# `pi-shared` is a Docker network other Pi-resident app stacks (e.g. ../nimbus/)
+# join to be reachable from Caddy by container name, without publishing a port
+# to the host at all. This compose project creates it (as a normal network);
+# the other stacks reference it as `external: true`. Bring this stack up
+# BEFORE any stack that depends on `pi-shared` existing.
+
+services:
+  caddy:
+    image: caddy:2-alpine          # multi-arch image; runs on the Pi's arm64
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"                     # required for ACME HTTP-01 + HTTP->HTTPS redirect
+      - "443:443"                   # HTTPS (and ACME TLS-ALPN-01)
+    environment:
+      CP_DOMAIN: ${CP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      MAC_IP: ${MAC_IP}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data            # issued certs + ACME account — persist this!
+      - caddy_config:/config
+    networks:
+      - pi-shared
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  pi-shared:
+    name: pi-shared

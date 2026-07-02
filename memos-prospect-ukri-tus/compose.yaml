@@ -1,0 +1,46 @@
+# Memos (https://github.com/usememos/memos). Storage backend = ./data on this Mac.
+#
+# Same architecture as ../copyparty: TLS and the public hostname
+# (prospect-ukri-tus.mathewcsims.uk) are handled by the Caddy reverse proxy on
+# your Raspberry Pi (see ../pi-reverse-proxy/). This Mac only serves plain
+# HTTP on the LAN; the Pi terminates HTTPS and forwards to MAC_IP:5230 here.
+# Nothing on the Mac is forwarded by the router.
+#
+# Project/container named "memos-prospect-ukri-tus" (not "memos") to stay
+# unambiguous alongside (a) the unrelated pre-existing app-memos/tailscale-memos
+# pair on this Mac (that stack lives at ~/ScaleTail/services/memos and would
+# otherwise share the same default compose "project name", risking cross-stack
+# --remove-orphans damage), and (b) any other future Memos instances for other
+# purposes — folder name, project name, and container name all match, so a new
+# instance just needs its own distinct name throughout.
+name: memos-prospect-ukri-tus
+
+services:
+  memos:
+    image: docker.io/neosmemo/memos:stable
+    container_name: memos-prospect-ukri-tus
+    restart: unless-stopped
+    volumes:
+      - ./data:/var/opt/memos
+    environment:
+      MEMOS_PORT: 5230
+      MEMOS_DRIVER: sqlite
+      # REQUIRED for correct behaviour behind a reverse proxy and for OAuth:
+      # Memos uses this to build its own callback/redirect URLs (OAuth,
+      # webhooks, etc). Without it, those URLs would be built from the
+      # internal Mac:5230 address instead of the public domain, breaking
+      # OAuth login when you configure it in the admin UI.
+      MEMOS_INSTANCE_URL: https://prospect-ukri-tus.mathewcsims.uk
+    ports:
+      # IMPORTANT (same podman-machine quirk as copyparty): a published port
+      # must be bound to the Mac's *actual* LAN IP — podman-machine cannot
+      # bind 0.0.0.0 to the real interface. The Pi's reverse proxy connects
+      # to this address. The router does NOT forward 5230, so this is never
+      # directly internet-facing.
+      - "10.0.1.14:5230:5230"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5230/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
