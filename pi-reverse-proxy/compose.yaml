@@ -12,7 +12,13 @@
 
 services:
   caddy:
-    image: caddy:2-alpine          # multi-arch image; runs on the Pi's arm64
+    # Built from ./Dockerfile, NOT the stock caddy:2-alpine image — adds the
+    # caddy-ratelimit module (see Dockerfile for why). `docker compose build`
+    # (or `up --build`) compiles it; still multi-arch-correct since the build
+    # runs natively on whatever host it's built on (the Pi, arm64).
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: caddy
     restart: unless-stopped
     ports:

@@ -136,11 +136,19 @@ Give **both the Pi and the Mac a fixed LAN IP** via a DrayTek DHCP reservation
    ```
 3. Check **`.env`** — `MAC_IP=10.0.1.14`, `CP_DOMAIN`, and `ACME_EMAIL` are
    already filled. Nothing to edit unless an IP changes.
-4. Bring it up (no cert yet — DNS + router come next):
+4. Bring it up (no cert yet — DNS + router come next). `caddy` is built from
+   `./Dockerfile`, not a stock image (it compiles in the `caddy-ratelimit`
+   module — see [Security notes](#security-notes-internet-facing) below), so
+   the first run compiles Go from source and takes a few minutes on the Pi's
+   arm64 CPU:
    ```sh
-   docker compose up -d
+   docker compose up -d --build
    docker compose logs -f caddy
    ```
+   After editing the Dockerfile or Caddyfile later, re-run
+   `docker compose up -d --build` (or `docker compose build` then
+   `up -d`) — a plain `up -d` reuses the already-built image and won't
+   pick up Dockerfile changes.
 
 ---
 
@@ -706,9 +714,22 @@ podman compose pull && podman compose up -d        # update
 **Pi (Caddy):**
 ```sh
 docker compose ps | logs -f | restart | down
-docker compose pull && docker compose up -d        # update Caddy
+docker compose build --pull && docker compose up -d   # update Caddy (rebuilds
+                                                        # from source — it's a
+                                                        # custom image now, see
+                                                        # Security notes below)
 ```
-After editing the Caddyfile: `docker compose restart caddy`.
+After editing just the **Caddyfile** (no Dockerfile change): `docker compose
+restart caddy` is enough — it's bind-mounted, not baked into the image. After
+editing the **Dockerfile**: `docker compose up -d --build`.
+
+**Pi (Nimbus):**
+```sh
+docker compose ps | logs -f | restart | down
+# Update: bump the digest in nimbus/compose.yaml first (deliberate, see
+# Security notes below — not `pull`+`latest`), then:
+docker compose pull nimbus && docker compose up -d
+```
 
 ---
 
@@ -757,12 +778,69 @@ After editing the Caddyfile: `docker compose restart caddy`.
 
 ## Security notes (internet-facing)
 
-- copyparty has **no anonymous access**: every visitor logs in. Keep it that way.
-- The Pi's Caddy serves only `cp.mathewcsims.uk` and refuses any other hostname
-  or bare-IP hit — so scanning the public IP reveals nothing.
-- **Optional — lock copyparty to the Pi only.** Right now anything on your LAN
-  can reach `10.0.1.14:3923` (still needs a login). To restrict it to the Pi,
-  add a macOS packet-filter rule allowing :3923 only from `10.0.1.19`, or run
-  copyparty with an IP allow-list. Ask me and I'll wire it up.
-- Keep both images updated (the `pull && up -d` commands above).
-- Use a long unique admin password (already generated in your conf).
+- copyparty has **no anonymous access** to `/` or `/inbox`: every visitor to
+  those must log in. Keep it that way.
+- The Pi's Caddy serves only the five configured hostnames and refuses any
+  other hostname or bare-IP hit (`:80`/`:443` catch-all blocks at the bottom
+  of the Caddyfile just `abort`) — so scanning the public IP reveals nothing.
+- **Optional — lock copyparty/Vikunja to the Pi only.** Right now anything on
+  your LAN can reach `10.0.1.14:3923` or `:3456` directly (still needs a
+  login). To restrict either to the Pi only, add a macOS packet-filter rule
+  allowing that port only from `10.0.1.19`, or run the app with its own IP
+  allow-list. Ask me and I'll wire it up.
+- Keep every image updated (the `pull && up -d` commands above) — but review
+  before pulling: copyparty, Nimbus, and Vikunja are all pinned to an exact
+  tag/digest deliberately (see each app's compose.yaml), so an upgrade is a
+  conscious decision, not something that happens silently on a routine
+  restart.
+- Use a long unique admin password per app (already generated where relevant).
+
+### Hardening pass (copyparty, Nimbus, Caddy)
+
+Applied across the board, on top of what each app section above already
+documents (Vikunja's app-level hardening, Nimbus's OIDC, etc.):
+
+- **Reusable security headers, now on every site, not just Vikunja.**
+  `pi-reverse-proxy/Caddyfile` defines a `(security_headers)` snippet (HSTS,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: strict-origin-when-cross-origin`) and every site block
+  imports it. copyparty already sends its own `X-Content-Type-Options` —
+  harmless duplicate, not worth extra Caddyfile complexity to dedupe.
+- **Rate limiting at the Caddy layer**, via a custom-built image
+  (`pi-reverse-proxy/Dockerfile`, `mholt/caddy-ratelimit` compiled in with
+  `xcaddy` — Caddy has no rate limiting built in, and this module is the
+  standard way to add it). `docker compose build` (not a stock `image:`) now
+  produces the running `caddy` image; rebuild after ever editing the
+  Dockerfile, and after any Caddy version bump.
+  - A `(general_ratelimit)` snippet gives every site its own 300
+    requests/minute/IP budget (`import general_ratelimit <name>` — the zone
+    name is parameterized so each site's budget is independent, not shared).
+    Loose enough not to bother a real browsing session; caps a single
+    source's blast radius.
+  - **Nimbus specifically** also gets a strict zone scoped to
+    `/api/v1/auth/*` — 10 requests/minute/IP. This is the compensating
+    control for a real gap: Nimbus has **no brute-force or rate-limit
+    protection anywhere in its own codebase** (confirmed by reading its
+    source), unlike copyparty (`--ban-pw`/`--ban-403`, on by default) and
+    Vikunja (`VIKUNJA_RATELIMIT_*`). Verified live: 15 rapid requests to
+    `/api/v1/auth/me` returned 401 (real responses) for the first ~8, then
+    429 (rate-limited) for the rest.
+  - `order rate_limit first` in the global options block makes every site
+    check its rate-limit zones before headers/rewrites/proxying — an
+    over-limit request never reaches the backend app at all.
+- **copyparty**: added `vague-403` to `[global]` — unauthenticated probes now
+  get an identical 404 whether a private path exists or not (no compatible
+  with WebDAV, which this setup doesn't use). Also made the already-active
+  defaults `ban-pw: 9,60,1440` and `ban-403: 9,2,1440` explicit in
+  `copyparty.conf` rather than leaving them as an unstated default.
+  - **Not applied**: `--usernames` (require a username, not just a password,
+    at login). Considered and rejected — it's a global flag with no
+    per-volume override, so it would also apply to the `/inbox` drop-box
+    login, breaking its deliberately-simple "just share one password" design
+    for a marginal gain (the only two usernames, `admin` and `inbox`, are
+    both guessable, and both accounts already have strong random passwords
+    plus the ban-pw/ban-403 lockouts above).
+- **Nimbus**: pinned `nimbus/compose.yaml`'s image from `:latest` to the
+  exact digest behind it as of 2026-07-02
+  (`turboot/nimbus@sha256:c22c98b5f53...`) — same reasoning as Vikunja's
+  version pin: an upstream push can't silently change what's running here.

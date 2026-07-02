@@ -2,6 +2,45 @@
 {
 	# Let's Encrypt expiry notices. Set in ./.env
 	email {$ACME_EMAIL}
+
+	# caddy-ratelimit (see Dockerfile) isn't in Caddy's default directive
+	# order, so it must be told where to run. "first" = every site block
+	# checks its rate-limit zones before anything else (headers, rewrites,
+	# proxying) — an over-limit request is rejected as cheaply as possible,
+	# and never reaches copyparty/Memos/Vikunja/Nimbus at all.
+	order rate_limit first
+}
+
+# Reusable hardening headers — HSTS (force HTTPS on repeat visits),
+# clickjacking and MIME-sniffing protection, conservative referrer leakage.
+# Was Vikunja-only ("wasn't asked for elsewhere"); now applied everywhere
+# per "harden Copyparty/Nimbus/Caddy in general" — it's free and every app
+# here is either private or has an admin login worth protecting.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+# General-purpose per-site, per-IP request budget — coarse abuse/DoS
+# protection, not a substitute for each app's own auth-specific limits
+# (copyparty has --ban-pw/--ban-403 built in and enabled by default; Vikunja
+# has VIKUNJA_RATELIMIT_*; Nimbus has none at all, see the @auth zone below).
+# 300 req/min/IP is loose enough not to bother a real browsing session
+# (page + assets + polling) while still capping a single source's blast
+# radius. Zone name is parameterized per site (import ... <name>) so each
+# site gets its own independent budget rather than sharing one global bucket.
+(general_ratelimit) {
+	rate_limit {
+		zone rl_{args[0]} {
+			key {remote_host}
+			events 300
+			window 1m
+		}
+	}
 }
 
 # ── copyparty (running on the Mac) ───────────────────────────────────────
@@ -11,6 +50,8 @@
 # correct https links and logs real client IPs (it trusts the Pi's private
 # LAN IP by default).
 {$CP_DOMAIN} {
+	import security_headers
+	import general_ratelimit cp
 	reverse_proxy http://{$MAC_IP}:3923
 }
 
@@ -29,6 +70,8 @@
 # used here instead of a second hardcoded IP, for a single source of truth if
 # the Mac's LAN IP ever changes.
 prospect-ukri-tus.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit memos
 	reverse_proxy http://{$MAC_IP}:5230
 }
 
@@ -37,18 +80,10 @@ prospect-ukri-tus.mathewcsims.uk {
 # above. Vikunja's own image is pinned to an exact patched version and
 # hardened at the app level (no self-registration, rate limiting on, link
 # sharing off, trusted-proxy config so it can tell real clients from the
-# podman gateway) — see vikunja/compose.yaml for the reasoning. Extra
-# hardening headers here since this holds private information and it costs
-# nothing: HSTS (force HTTPS on repeat visits), clickjacking and MIME-sniffing
-# protection. Not added to the other sites only because it wasn't asked for
-# there — safe to copy this block to any of them later.
+# podman gateway) — see vikunja/compose.yaml for the reasoning.
 vikunja.mathewcsims.uk {
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
-	}
+	import security_headers
+	import general_ratelimit vikunja
 	reverse_proxy http://{$MAC_IP}:3456
 }
 
@@ -59,6 +94,30 @@ vikunja.mathewcsims.uk {
 # (created by this compose project — see compose.yaml) and is reached by
 # container name, not an IP:port — no host port is published for it at all.
 dashboard.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit dashboard
+
+	# Nimbus has NO brute-force/rate-limit protection anywhere in its own
+	# codebase (confirmed by reading its source) — unlike copyparty's
+	# --ban-pw/--ban-403 (on by default) and Vikunja's VIKUNJA_RATELIMIT_*.
+	# This is the compensating control: an unauthenticated attacker gets 10
+	# attempts/minute/IP against login/register/password-reset/OAuth-callback
+	# before Caddy itself starts rejecting the requests — well below anything
+	# a real user needs, and low enough to make online password-guessing
+	# impractical against the shared admin login (see nimbus/compose.yaml —
+	# there is no per-user login here, just the one admin account shared per
+	# the earlier decision).
+	rate_limit {
+		zone rl_dashboard_auth {
+			match {
+				path /api/v1/auth/*
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+	}
+
 	# Workaround for a bug in Nimbus itself: avatar uploads are written to
 	# /uploads/avatars/<file> and that exact path (no /api/v1 prefix) is what
 	# gets stored as avatar_url and returned to the frontend. But Nimbus's own
@@ -114,7 +173,7 @@ mc37.mathewcsims.uk {
 	handle @lan {
 		reverse_proxy https://10.0.1.1:8443 {
 			transport http {
-				tls_insecure_skip_verify   # router uses a self-signed cert
+				tls_insecure_skip_verify # router uses a self-signed cert
 			}
 		}
 	}
