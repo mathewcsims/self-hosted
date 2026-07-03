@@ -164,6 +164,19 @@ blog.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:2368
 }
 
+# ── ways-of-working.mathewcsims.uk (permanent redirect) ──────────────────
+# Formerly its own standalone page; now folded into this blog as
+# https://blog.mathewcsims.uk/ways-of-working/. `redir ... permanent` issues
+# a 301, telling browsers/search engines the move is final so bookmarks and
+# search results update rather than re-checking the old URL indefinitely.
+# No app behind this at all — just a cert + redirect — so no rate-limit
+# zone needed (nothing here to brute-force or abuse), but the shared
+# security-headers snippet costs nothing to keep on.
+ways-of-working.mathewcsims.uk {
+	import security_headers
+	redir https://blog.mathewcsims.uk/ways-of-working/ permanent
+}
+
 # ── Nimbus (running HERE on the Pi, not the Mac) ──────────────────────────
 # Clean public URL https://dashboard.mathewcsims.uk. Unlike every other app,
 # Nimbus is a separate docker-compose project also on the Pi (see ../nimbus/),
