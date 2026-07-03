@@ -22,8 +22,5 @@ RUN apk add --no-cache curl tar && \
 
 # Overlay our own content on top of upstream's — everything else (CSS,
 # icons, reset styles) comes from the pinned release above untouched.
-# TODO: once a real avatar image is supplied, add ./images/avatar.png +
-# avatar@2x.png here and add `COPY images/ /usr/share/nginx/html/images/`
-# below — index.html currently points at upstream's own placeholder image
-# until then.
 COPY index.html /usr/share/nginx/html/index.html
+COPY images/ /usr/share/nginx/html/images/
