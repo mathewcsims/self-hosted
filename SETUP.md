@@ -749,6 +749,89 @@ create it as root first and fixing ownership after is the harder path.
 
 ---
 
+## Donetick (https://donetick.mathewcsims.uk)
+
+[Donetick](https://github.com/donetick/donetick) — recurring-chore tracker
+(bins, calling family, anything that repeats), deliberately separate from
+Vikunja: Vikunja handles project/work-style tasks, Donetick handles the
+daily/weekly household stuff. Single container, sqlite, on the Mac like
+copyparty/Memos/Vikunja — internet-facing with a login, **not** LAN-only
+(unlike Speedtest Tracker, this needs to work away from home).
+
+**Image**: `docker.io/donetick/donetick`, pinned to the latest **stable**
+tag (`v0.1.75`) — confirmed via GitHub releases, not just Docker Hub's tag
+list, since the `v0.1.76-beta.*` series is under active/unstable development
+in parallel. Checked GitHub Security Advisories: one real critical,
+[GHSA-hjjg-vw4j-986x](https://github.com/donetick/donetick/security/advisories/GHSA-hjjg-vw4j-986x)
+/ CVE-2025-47945 (CVSS 9.1) — a predictable/weak default JWT signing secret
+allowed full account takeover on any instance that hadn't changed it. Fixed
+in v0.1.44, long patched here, but the underlying risk is exactly why
+`DT_JWT_SECRET` is a freshly generated random value (`openssl rand -base64
+32`), never the template's own placeholder string.
+
+**Config mechanism**: every setting is a `DT_<UPPER_SNAKE_DOTTED_PATH>` env
+var (confirmed directly against the project's own `config/selfhosted.yaml` +
+`config/selfhosted.env` templates, not assumed) — no separate config file is
+mounted; the image bakes in its own default config
+(`DT_ENV=selfhosted`, already set by the Dockerfile) and env vars override
+individual keys on top.
+
+**Hardening, all in `donetick/compose.yaml`:**
+- `DT_JWT_SECRET` — freshly generated, see above.
+- `DT_SERVER_CORS_ALLOW_ORIGINS` scoped to the real domain (plus the app's
+  own documented Android-app-compatibility entries) — CORS is enforced by
+  Donetick itself, not just Caddy, and **verified live**: a preflight from
+  the real origin passes through; a preflight from an untrusted origin gets a
+  hard `403` from the app itself.
+- `DT_REALTIME_ALLOWED_ORIGINS` scoped the same way — the image's own
+  default for the realtime/SSE endpoint is a bare `"*"` (any origin).
+- No trusted-proxy/`X-Forwarded-For` config exists anywhere in Donetick's
+  config schema (confirmed by reading it) — so its own built-in rate limiter
+  can only ever see "the Caddy container" as one client behind this reverse
+  proxy, not real distinct users. Real per-real-IP brute-force protection is
+  a dedicated Caddy zone instead (`pi-reverse-proxy/Caddyfile`): 20
+  requests/min/IP on `/api/v1/auth/*`, which — read directly from the app's
+  own route registration (`internal/user/handler.go`'s `Routes` func), not
+  guessed — covers *everything* sensitive: login, signup, password
+  reset/change, token refresh, logout, MFA verify, OAuth callback, all under
+  this one prefix. Verified live: 25 rapid login POSTs → 20 real responses,
+  then `429`s.
+- `TZ` set explicitly (`Europe/London`) per this repo's now-standard practice
+  since the [Vikunja timezone
+  fix](#vikunja-httpsvikunjamathewcsimsuk) — Donetick has no app-specific
+  timezone config key, just the standard container `TZ`.
+
+**Registration — a real, temporary exception to this repo's usual "never
+open, not even briefly" rule:** Donetick has **no CLI or env-var way to seed
+the first account** (confirmed — no equivalent to Vikunja's `user create` or
+Speedtest Tracker's `ADMIN_EMAIL`/`ADMIN_PASSWORD`). The only way to create
+an account is the normal signup form, so `DT_IS_USER_CREATION_DISABLED`
+starts `"false"` (open) for exactly as long as it takes to create the one
+account this instance needs (confirmed as a single-user instance —
+mat@mathewcsims.uk), then gets flipped to `"true"` and redeployed
+(`podman compose up -d`, not `restart` — env changes need that). **This is
+the one pending step after initial setup — see the note at the end of this
+section.**
+
+**To bring it up:**
+1. **Mac:** `cd donetick && podman compose up -d` — starts on `10.0.1.14:2021`.
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** nothing to add — the existing wildcard record covers this
+   subdomain already.
+4. **DrayTek LAN DNS**: add `donetick.mathewcsims.uk` → `10.0.1.19`, same as
+   every other app.
+5. Visit `https://donetick.mathewcsims.uk`, sign up with your own email and a
+   password of your choosing (Donetick, not this repo, generates/stores that
+   — there's no way for a strong password to be pre-generated for you here
+   the way admin accounts are elsewhere in this repo, since it's your
+   personal login).
+6. **Once signed up**, set `DT_IS_USER_CREATION_DISABLED=true` in
+   `donetick/compose.yaml` and `podman compose up -d` again — this closes
+   registration permanently. Don't skip this step.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
