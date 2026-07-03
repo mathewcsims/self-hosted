@@ -1,0 +1,31 @@
+# LittleLink (https://github.com/sethcottle/littlelink) — link-in-bio
+# landing page for the bare mathewcsims.uk domain. Same architecture as
+# every other Mac app here: TLS and the public hostname are handled by the
+# Caddy reverse proxy on the Pi (see ../pi-reverse-proxy/); this Mac only
+# serves plain HTTP on the LAN.
+#
+# Unlike everything else in this repo, this has no secrets at all — it's a
+# static site with no database, no auth, nothing to leak — so there's no
+# .env file here.
+name: landing-page
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: landing-page
+    restart: unless-stopped
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address. The router does NOT forward
+      # 3080, so this is never directly internet-facing.
+      - "10.0.1.14:3080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

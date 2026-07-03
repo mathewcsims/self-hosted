@@ -953,6 +953,42 @@ cookie-banner obligation per Ghost's own docs.
 
 ---
 
+## Landing page (https://mathewcsims.uk)
+
+[LittleLink](https://github.com/sethcottle/littlelink) — a link-in-bio style
+page for the bare apex domain (not a subdomain, unlike everything else in
+this repo). Genuinely static: nginx serving plain HTML/CSS, no backend, no
+database, no auth — confirmed by reading upstream's own Dockerfile, not
+assumed. About as close to zero attack surface as a self-hosted app gets.
+
+**No published Docker image exists upstream** — the project ships only a
+Dockerfile you build yourself, no Docker Hub/GHCR listing. Ours fetches an
+exact tagged release (`v3.10.0`) at build time rather than tracking `main`,
+so a rebuild later doesn't silently pick up unreviewed upstream changes; the
+whole tarball, checked for GitHub Security Advisories (none published), gets
+extracted into the nginx web root, then `landing-page/index.html` (this
+repo's own content — name, tagline, links) is copied on top, overwriting
+just that one file.
+
+**Apex domain, not a subdomain — different DNS handling from every other
+app here.** The existing wildcard record covers `*.mathewcsims.uk`
+automatically, as it has for every other app in this repo, but a wildcard
+does not cover the bare apex (`mathewcsims.uk` itself) — that needed its own
+explicit A record, pointed directly at the Pi's WAN IP by the domain owner
+rather than through anything in this repo.
+
+**To bring it up:**
+1. **Mac:** `cd landing-page && podman compose up -d` — starts on
+   `10.0.1.14:3080`.
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** an explicit A record for the bare domain, not the wildcard —
+   see above.
+4. **DrayTek LAN DNS**: add `mathewcsims.uk` → `10.0.1.19`, same as every
+   other app.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:

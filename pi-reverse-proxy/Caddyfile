@@ -277,6 +277,20 @@ speedtest.mathewcsims.uk {
 	}
 }
 
+# ── Landing page (running on the Mac) ─────────────────────────────────────
+# The bare apex domain, not a subdomain — everything else in this Caddyfile
+# is a subdomain of mathewcsims.uk, covered by the existing wildcard DNS
+# record; the apex itself needed its own explicit A record, added directly
+# by the domain owner rather than through this repo. Genuinely static site
+# (see ../landing-page/), so no rate-limit zone is really load-bearing here
+# — nothing to brute-force or abuse — but it's cheap to keep on for
+# consistency with every other site.
+mathewcsims.uk {
+	import security_headers
+	import general_ratelimit landing
+	reverse_proxy http://{$MAC_IP}:3080
+}
+
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.

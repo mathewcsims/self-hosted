@@ -17,11 +17,13 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Nimbus](https://github.com/Turbootzz/Nimbus) | `dashboard.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 | [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) | `speedtest.mathewcsims.uk` | Pi (LAN-only — no WAN access at all) |
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
+| [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
 
 ## Architecture, in short
 
 ```
 internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
+                                  ├─ mathewcsims.uk                   → Mac
                                   ├─ cp.mathewcsims.uk                → Mac
                                   ├─ prospect-ukri-tus.mathewcsims.uk → Mac
                                   ├─ vikunja.mathewcsims.uk           → Mac
@@ -64,6 +66,7 @@ copyparty/            compose.yaml, config, and data (Mac)
 memos-prospect-ukri-tus/  compose.yaml and data (Mac)
 vikunja/               compose.yaml and data (Mac)
 blog/                  compose.yaml, MySQL, and Ghost content (Mac)
+landing-page/          compose.yaml, static site content (Mac, no secrets)
 nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
