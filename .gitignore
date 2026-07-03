@@ -21,6 +21,8 @@ nimbus/uploads/
 pi-reverse-proxy/caddy_data/
 pi-reverse-proxy/caddy_config/
 speedtest-tracker/config/
+blog/db/
+blog/content/
 
 # ── Tool-local / editor state ───────────────────────────────────────────
 # Claude Code's own local session cache — unrelated to this project, and

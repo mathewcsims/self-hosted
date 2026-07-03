@@ -121,6 +121,36 @@ vikunja.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3456
 }
 
+# ── Ghost blog (running on the Mac) ───────────────────────────────────────
+# Clean public URL https://blog.mathewcsims.uk — replaces paid Ghost(Pro)
+# hosting. Same pattern as Vikunja above. Ghost's own docs warn that without
+# X-Forwarded-Proto being set correctly behind a TLS-terminating proxy, it
+# creates an infinite HTTPS redirect loop — Caddy's reverse_proxy sets this
+# by default, so nothing extra is needed here for that specifically.
+blog.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit blog
+
+	# Ghost has its own built-in login/password-reset rate limit
+	# (5/hour/IP, per its docs), but this is a supplementary Caddy-layer
+	# zone scoped to just the authentication surface — same defense-in-depth
+	# reasoning as every other app in this repo — not the day-to-day
+	# authenticated admin API traffic (writing/editing posts), which stays
+	# under the general zone above instead.
+	rate_limit {
+		zone rl_blog_auth {
+			match {
+				path /ghost/api/admin/session/* /ghost/api/admin/authentication/*
+			}
+			key {remote_host}
+			events 15
+			window 1m
+		}
+	}
+
+	reverse_proxy http://{$MAC_IP}:2368
+}
+
 # ── Nimbus (running HERE on the Pi, not the Mac) ──────────────────────────
 # Clean public URL https://dashboard.mathewcsims.uk. Unlike every other app,
 # Nimbus is a separate docker-compose project also on the Pi (see ../nimbus/),

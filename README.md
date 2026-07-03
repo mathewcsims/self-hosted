@@ -16,6 +16,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Vikunja](https://vikunja.io) | `vikunja.mathewcsims.uk` | Mac |
 | [Nimbus](https://github.com/Turbootzz/Nimbus) | `dashboard.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 | [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) | `speedtest.mathewcsims.uk` | Pi (LAN-only — no WAN access at all) |
+| [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 
 ## Architecture, in short
 
@@ -24,6 +25,7 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ cp.mathewcsims.uk                → Mac
                                   ├─ prospect-ukri-tus.mathewcsims.uk → Mac
                                   ├─ vikunja.mathewcsims.uk           → Mac
+                                  ├─ blog.mathewcsims.uk              → Mac
                                   ├─ dashboard.mathewcsims.uk         → itself (Pi)
                                   └─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
 ```
@@ -45,6 +47,7 @@ file, never in a tracked one:
 | `vikunja/.env` | `.env.example` |
 | `nimbus/.env` | `.env.example` |
 | `speedtest-tracker/.env` | `.env.example` |
+| `blog/.env` | `.env.example` |
 | `pi-reverse-proxy/.env` | `.env.example` |
 
 To stand this up from scratch (or recreate a secret file), copy the matching
@@ -60,6 +63,7 @@ this repo is infrastructure-as-code only, never the data the apps hold.
 copyparty/            compose.yaml, config, and data (Mac)
 memos-prospect-ukri-tus/  compose.yaml and data (Mac)
 vikunja/               compose.yaml and data (Mac)
+blog/                  compose.yaml, MySQL, and Ghost content (Mac)
 nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)

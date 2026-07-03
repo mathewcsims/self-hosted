@@ -749,6 +749,126 @@ create it as root first and fixing ownership after is the harder path.
 
 ---
 
+## Ghost blog (https://blog.mathewcsims.uk)
+
+[Ghost](https://ghost.org) — replaces paid Ghost(Pro) hosting. Two
+containers, Mac like copyparty/Memos/Vikunja/Donetick: `ghost` (the app) and
+`blog-db` (MySQL 8). Unlike every other app here, Ghost's own docs are
+explicit that **MySQL 8 is the only supported database in production** —
+sqlite works in dev but isn't QA'd for production, so this needed a real DB
+sidecar (same pattern as Nimbus's `nimbus-db`), not the sqlite-in-one-container
+approach used elsewhere.
+
+**Image**: `ghost:6.50.0`, pinned to an exact version, not `:latest`.
+Independently checked GitHub's advisory database (`api.github.com/advisories?
+ecosystem=npm&affects=ghost`, not just trusted a summary): several real past
+CVEs — critical SQL injection in the Content API, a critical cache-poisoning
+XSS disclosed literally the day before this was deployed, RCE via malicious
+themes, CSRF/2FA bypasses — every one's vulnerable range caps out at or below
+6.36.0, so 6.50.0 is patched against all of them. The theme-RCE class
+specifically only applies if you install untrusted third-party themes —
+deliberately staying on the bundled default (Casper/"source") theme, not
+installing anything else, keeps that whole risk class off the table rather
+than just "currently patched."
+
+**The setup-wizard race condition — a real, documented risk for self-hosted
+Ghost:** there's no CLI/env-var way to seed the owner account; the *first*
+visitor to reach `/ghost/` completes setup and becomes the owner, and Ghost's
+own community/security discussions confirm this has bitten people who exposed
+an unconfigured instance publicly. Closed here by sequencing: brought Ghost up
+reachable only via the Mac's LAN IP (`10.0.1.14:2368`, no Caddy wiring yet),
+completed the owner-account setup immediately via the Admin API's own
+`POST /ghost/api/admin/authentication/setup/` endpoint (confirmed
+`{"setup":[{"status":true}]}` afterward, meaning the endpoint is now
+permanently closed to anyone else), and only *then* added the
+`blog.mathewcsims.uk` Caddyfile block — the setup window was never open to
+the internet, not even briefly.
+
+**Mail is not optional here, unlike everywhere else in this repo.** Beyond
+staff invites and password-reset — genuinely necessary since there's no other
+account-recovery path for a self-hosted instance — it turned out Ghost also
+requires email verification for every *new session login* by default (a
+"new device detected" 6-digit code flow), so without SMTP configured, normal
+day-to-day admin login doesn't work at all, not just password recovery.
+Configured with Proton Mail (STARTTLS on 587 — `mail__options__secure` is
+deliberately `"false"`, since Ghost/Nodemailer treats 587 as a
+STARTTLS-upgrade connection, not implicit TLS).
+
+**A genuine Admin-API gotcha, not a security thing:** Ghost's session-cookie
+auth enforces a same-origin CSRF check (`session.origin` must match the
+request's `Origin` header, and once set on a session it's compared on every
+subsequent request) — scripting the login flow with `curl` requires sending
+a consistent `Origin: https://blog.mathewcsims.uk` header from the *first*
+request onward, or later requests 401 with no useful error message pointing
+at the real cause. Confirmed directly from Ghost's own source
+(`session-service.js`'s `cookieCsrfProtection`), not guessed. The 2FA
+verification flow itself is `PUT /ghost/api/admin/session/verify/` with
+`{"token": "<6-digit code>"}`, reusing the same session cookie the initial
+`POST /session/` call set — also not documented anywhere obvious, found by
+reading Ghost's actual route registration
+(`web/api/endpoints/admin/routes.js`).
+
+**No curl/wget in this image** (confirmed by exec'ing in) — the healthcheck
+uses `node`'s own `http` module instead (`node -e "require('http').get(...)"`),
+since `node` is the one thing guaranteed present in a Node.js app image.
+
+**Hardening, all in `pi-reverse-proxy/Caddyfile`'s `blog.mathewcsims.uk`
+block:** the shared security-headers snippet and general rate-limit zone
+(same as every other app), plus a dedicated strict zone
+(`rl_blog_auth`, 15 requests/min/IP) scoped to
+`/ghost/api/admin/session/*` and `/ghost/api/admin/authentication/*` —
+supplementary to Ghost's own built-in login/password-reset limit (5/hour/IP,
+per its docs), same defense-in-depth reasoning as every other app here.
+Verified live: rapid POSTs to `/ghost/api/admin/session/` return real
+responses then a plain empty-bodied `429` (Caddy's own signature — Ghost's
+own limiter returns a structured JSON error instead, so the two are
+distinguishable in logs).
+
+**Importing the existing post from Ghost(Pro):** the paid-hosted site had
+exactly one real post. Its content was recovered from the site's own public
+RSS feed (`content:encoded` includes full post HTML, not just an excerpt)
+combined with a screenshot for the parts the feed fetch didn't capture before
+the source went briefly unreachable, then recreated via the Admin API
+(`POST /ghost/api/admin/posts/?source=html`, which accepts raw HTML and lets
+Ghost convert it to its native Lexical format itself — confirmed the
+kg-bookmark-card figure in the original HTML correctly became a native
+Lexical `bookmark` node, not just inert embedded markup). Original
+`published_at`, tags, slug, and feature image/caption were all preserved.
+The Admin API key used for this was a temporary Custom Integration, created
+via the Admin UI (Settings → Integrations) since integration creation itself
+isn't exposed via the API — deleted again immediately after the import, since
+it had no further purpose and a full-admin-scoped key sitting around
+unused is needless standing risk.
+
+A quirk worth knowing: Ghost auto-seeds a "Coming soon" placeholder post,
+timestamped at first-boot time — since Ghost sorts by `published_at`
+descending, this placeholder (today's date) outranked the imported post
+(backdated to Dec 2025) on the homepage until it was deleted
+(`DELETE /ghost/api/admin/posts/<id>/`).
+
+**To bring it up:**
+1. **Mac:** `cd blog && podman compose up -d` — starts on `10.0.1.14:2368`,
+   MySQL alongside it. **Do not wire up Caddy yet.**
+2. Complete owner setup immediately via the Admin API before doing anything
+   else (see SETUP.md's race-condition note above for the exact call) —
+   don't use the web wizard for this on a from-scratch deploy, since that
+   would mean briefly leaving `/ghost/` reachable pre-setup once Caddy is
+   added.
+3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+4. **DNS:** nothing to add — the existing wildcard record covers this
+   subdomain (this domain previously had an explicit record pointing at
+   Ghost(Pro)'s hosting from before the migration; it turned out to already
+   be repointed by the time of deployment, so no separate action was needed
+   here, but don't assume that's true for every domain being migrated onto
+   this stack later).
+5. **DrayTek LAN DNS**: add `blog.mathewcsims.uk` → `10.0.1.19`, same as
+   every other app.
+6. Log in at `https://blog.mathewcsims.uk/ghost/` with the owner credentials
+   from `blog/.env`.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:

@@ -1,0 +1,99 @@
+# Ghost (https://ghost.org) — self-hosted blog, replacing paid Ghost(Pro)
+# hosting at blog.mathewcsims.uk. Same architecture as every other Mac app
+# here: TLS and the public hostname are handled by the Caddy reverse proxy
+# on the Pi (see ../pi-reverse-proxy/); this Mac only serves plain HTTP on
+# the LAN.
+#
+# MySQL, not sqlite: Ghost's own docs are explicit that "MySQL 8 is the only
+# supported database in production" (sqlite works in dev but isn't QA'd for
+# production use, and Ghost's own Docker image made MySQL the default as of
+# 5.9) — so unlike Vikunja/Donetick this needs a real DB sidecar, same
+# pattern as Nimbus's nimbus-db.
+#
+# All secrets live in ./.env (gitignored — see .env.example for the
+# template).
+name: blog
+
+services:
+  db:
+    # MySQL 8 — pinned to an exact patch version, not a floating `:8` tag.
+    image: mysql:8.4.6
+    container_name: blog-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ghost
+      MYSQL_USER: ghost
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./db:/var/lib/mysql
+    # No `ports:` — reached only by the ghost service, by container name,
+    # over this project's own default network. Never exposed to the LAN.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  ghost:
+    # Pinned to an exact version, not :latest — checked GitHub Security
+    # Advisories directly (github.com/advisories, npm ecosystem, "ghost"):
+    # several real past CVEs (critical SQL injection in the Content API,
+    # critical cache-poisoning XSS, RCE via malicious themes, CSRF/2FA
+    # bypasses) but every one caps out at or below 6.36.0 — 6.50.0 is
+    # current and patched against all of them. The theme-RCE class
+    # specifically only applies if you install untrusted third-party
+    # themes — deliberately staying on the bundled default (Casper) theme
+    # here, not installing anything else, to keep that whole class of risk
+    # off the table entirely rather than just "patched for now."
+    image: ghost:6.50.0
+    container_name: ghost
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Do NOT set `user:` — on podman-machine (macOS) the container's root
+    # maps to your host user, giving sane ownership on the bind mount below
+    # (same reasoning as copyparty/Vikunja/Donetick's compose.yaml).
+    environment:
+      url: https://blog.mathewcsims.uk
+      NODE_ENV: production
+
+      database__client: mysql
+      database__connection__host: db
+      database__connection__user: ghost
+      database__connection__password: ${DB_PASSWORD}
+      database__connection__database: ghost
+
+      # SMTP — needed for staff invites, password-reset emails, and (as
+      # discovered during setup) mandatory device-verification emails on
+      # every new session login, so this isn't optional even for day-to-day
+      # admin use. Proton Mail, STARTTLS on 587 (not implicit TLS — secure
+      # is deliberately "false" here since Ghost/Nodemailer treats 587 as
+      # STARTTLS-upgrade, matching Proton's own documented SMTP settings).
+      mail__transport: SMTP
+      mail__options__host: ${SMTP_HOST}
+      mail__options__port: ${SMTP_PORT}
+      mail__options__secure: "false"
+      mail__options__auth__user: ${SMTP_USER}
+      mail__options__auth__pass: ${SMTP_PASSWORD}
+      mail__from: ${MAIL_FROM}
+    volumes:
+      - ./content:/var/lib/ghost/content
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address. The router does NOT forward
+      # 2368, so this is never directly internet-facing.
+      - "10.0.1.14:2368:2368"
+    healthcheck:
+      # No curl/wget in this image (confirmed by exec'ing in and checking) —
+      # `node` is the only thing guaranteed present, so it's the healthcheck
+      # tool instead.
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:2368', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
