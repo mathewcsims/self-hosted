@@ -801,17 +801,17 @@ individual keys on top.
   fix](#vikunja-httpsvikunjamathewcsimsuk) — Donetick has no app-specific
   timezone config key, just the standard container `TZ`.
 
-**Registration — a real, temporary exception to this repo's usual "never
-open, not even briefly" rule:** Donetick has **no CLI or env-var way to seed
-the first account** (confirmed — no equivalent to Vikunja's `user create` or
-Speedtest Tracker's `ADMIN_EMAIL`/`ADMIN_PASSWORD`). The only way to create
-an account is the normal signup form, so `DT_IS_USER_CREATION_DISABLED`
-starts `"false"` (open) for exactly as long as it takes to create the one
-account this instance needs (confirmed as a single-user instance —
-mat@mathewcsims.uk), then gets flipped to `"true"` and redeployed
-(`podman compose up -d`, not `restart` — env changes need that). **This is
-the one pending step after initial setup — see the note at the end of this
-section.**
+**Registration is deliberately left open** — `DT_IS_USER_CREATION_DISABLED:
+"false"`, and unlike Vikunja (which holds private information and never
+allows registration, not even briefly) this is meant to be shareable with
+other people later if wanted. Same reasoning and same standing instruction as
+Memos's deliberately-open registration above — **don't disable this without
+checking first.** Donetick has no CLI or env-var way to seed a specific
+first account anyway (no equivalent to Vikunja's `user create` or Speedtest
+Tracker's `ADMIN_EMAIL`/`ADMIN_PASSWORD`), so leaving signup open is also
+just how any account, including your own, gets created here. Brute-force/
+spam protection on signup itself is the Caddy-layer `rl_donetick_auth` zone
+(see above), not an app-level registration gate.
 
 **To bring it up:**
 1. **Mac:** `cd donetick && podman compose up -d` — starts on `10.0.1.14:2021`.
@@ -821,14 +821,11 @@ section.**
    subdomain already.
 4. **DrayTek LAN DNS**: add `donetick.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
-5. Visit `https://donetick.mathewcsims.uk`, sign up with your own email and a
-   password of your choosing (Donetick, not this repo, generates/stores that
-   — there's no way for a strong password to be pre-generated for you here
-   the way admin accounts are elsewhere in this repo, since it's your
-   personal login).
-6. **Once signed up**, set `DT_IS_USER_CREATION_DISABLED=true` in
-   `donetick/compose.yaml` and `podman compose up -d` again — this closes
-   registration permanently. Don't skip this step.
+5. Visit `https://donetick.mathewcsims.uk` and sign up with your own email
+   and a password of your choosing (Donetick, not this repo, generates/
+   stores that — there's no way for a strong password to be pre-generated
+   for you here the way admin accounts are elsewhere in this repo, since
+   it's your personal login).
 
 ---
 
