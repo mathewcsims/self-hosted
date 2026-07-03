@@ -121,40 +121,6 @@ vikunja.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3456
 }
 
-# ── Donetick (running on the Mac) ────────────────────────────────────────
-# Clean public URL https://donetick.mathewcsims.uk. Same pattern as Vikunja
-# above — recurring-chore tracker, distinct app from Vikunja's project/work
-# tasks (see donetick/compose.yaml for the split reasoning). Not LAN-only:
-# unlike Speedtest Tracker (measuring the Pi's own connection) or the router
-# admin, this needs to work from anywhere, same as every other login-gated
-# app here.
-donetick.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit donetick
-
-	# Donetick has its own built-in rate limiter, but it can't see real
-	# per-client IPs behind this reverse proxy (no trusted-proxy/
-	# X-Forwarded-For config exists in its config schema — confirmed by
-	# reading it), so its own limit only ever sees "the Caddy container" as
-	# one client. This zone is the real compensating control, same reasoning
-	# as Nimbus's. Every sensitive action (login, signup, password reset/
-	# change, token refresh, logout, MFA verify, OAuth callback) lives under
-	# this one path prefix — confirmed directly from the app's own route
-	# registration (internal/user/handler.go's Routes func), not guessed.
-	rate_limit {
-		zone rl_donetick_auth {
-			match {
-				path /api/v1/auth/*
-			}
-			key {remote_host}
-			events 20
-			window 1m
-		}
-	}
-
-	reverse_proxy http://{$MAC_IP}:2021
-}
-
 # ── Nimbus (running HERE on the Pi, not the Mac) ──────────────────────────
 # Clean public URL https://dashboard.mathewcsims.uk. Unlike every other app,
 # Nimbus is a separate docker-compose project also on the Pi (see ../nimbus/),
