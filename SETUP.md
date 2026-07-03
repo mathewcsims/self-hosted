@@ -846,6 +846,75 @@ descending, this placeholder (today's date) outranked the imported post
 (backdated to Dec 2025) on the homepage until it was deleted
 (`DELETE /ghost/api/admin/posts/<id>/`).
 
+**Web analytics (Stats page), backed by Tinybird:** Ghost's native Stats
+page is powered by [Tinybird](https://tinybird.co), its official analytics
+partner since Ghost 6.0. Cookie-less by design — visitor uniqueness uses a
+daily-rotating salted signature, not cookies or raw-IP geolocation, so no
+cookie-banner obligation per Ghost's own docs.
+
+- **Extra services**: `traffic-analytics` (long-running — anonymizes/salts
+  visitor identifiers before forwarding page-hit events to Tinybird) and
+  two one-time setup jobs, `tinybird-sync`/`tinybird-deploy` (deploy Ghost's
+  bundled Tinybird schema — datasources, pipes, materialized views — into
+  your workspace). All under the `analytics` Compose profile
+  (`podman compose --profile analytics up -d`), adapted from Ghost's own
+  official reference (github.com/TryGhost/ghost-docker) for this repo's
+  split topology: their reference assumes Caddy is co-located with Ghost on
+  one host, reaching `traffic-analytics` by container name with no
+  published port; ours runs Caddy on the Pi, so `traffic-analytics` gets a
+  published port on the Mac's LAN IP instead (`10.0.1.14:3001`), matching
+  every other Mac-resident service, with a path-based route in
+  `pi-reverse-proxy/Caddyfile` (`/.ghost/analytics/**` → that port,
+  verbatim pattern/rewrite from Ghost's own reference Caddy snippet).
+- **Skipped `tb login` entirely** — Ghost's documented setup flow runs an
+  extra `tinybird-login` container through the Tinybird CLI's browser/
+  device-code OAuth flow first. That flow reliably failed to complete in
+  this environment (device-code method never picked up browser approval
+  even after confirming; the browser-callback method's `localhost:<port>`
+  redirect isn't reachable from inside a podman container's own network
+  namespace, and installing the CLI natively on the Mac to work around that
+  network mismatch got the callback listening correctly but the flow still
+  never completed — root cause not identified, possibly a Tinybird-side
+  quirk unrelated to this stack). Route not pursued further: `tb` has a
+  fully-documented, non-interactive alternative — `--token`/`TB_TOKEN`
+  (confirmed against Tinybird's own CI/CD docs) takes priority over any
+  `.tinyb` login-flow file. `tinybird-deploy` here authenticates with the
+  **workspace admin token**, copied directly from the Tinybird dashboard's
+  Settings → Tokens page — no CLI login needed at all, and no compose
+  service equivalent to `tinybird-login` exists in this repo's version.
+- **A real bug hit and fixed**: `tinybird__workspaceId` is easy to get
+  wrong if you're not careful about *which* ID a Tinybird admin token's
+  payload actually encodes — the token itself is a JWT-shaped string
+  (`p.<base64 payload>.<signature>`) whose decoded payload has fields `u`
+  (the actual workspace ID) and `id` (the *token's own* ID, not the
+  workspace's) — using the wrong one here caused every Stats-page query to
+  fail with a genuine `403 Forbidden` from Tinybird (Ghost's own logs
+  showed `Error in Tinybird API request to .../v0/pipes/api_top_pages.json:
+  Response code 403`), even though the events were being ingested into
+  Tinybird successfully the entire time (confirmed via `traffic-analytics`'
+  own logs showing "response received" for real browser-triggered events).
+  Don't decode the token by hand to get the workspace ID — confirm it
+  properly instead: `podman compose --profile analytics run --rm
+  --entrypoint sh tinybird-deploy -c "cd /data/tinybird && tb --token
+  $TINYBIRD_ADMIN_TOKEN --host $TINYBIRD_API_URL info"` prints the
+  authoritative `workspace_id` directly.
+- **A benign warning, not a real gap**: `traffic-analytics` logs
+  `HmacValidationDisabled` on startup. No corresponding env var/config
+  exists in the service's own `.env.example` or public config — this looks
+  like it's relevant to Ghost(Pro)'s multi-tenant hosted infrastructure
+  (verifying which hosted site a request belongs to), not something a
+  single self-hosted instance needs to configure.
+- **Fetching the tracker token** (created automatically by `tinybird-deploy`,
+  needed for `traffic-analytics`' own config) needs care: never print a
+  live Tinybird token to a terminal/log/file directly — fetch and write it
+  to `.env` in one step instead:
+  ```python
+  import json, urllib.request
+  # read TINYBIRD_ADMIN_TOKEN from .env, GET /v0/tokens, filter name=="tracker",
+  # write TINYBIRD_TRACKER_TOKEN=<value> back into .env — see git history for
+  # the exact script used here if you need to redo this.
+  ```
+
 **To bring it up:**
 1. **Mac:** `cd blog && podman compose up -d` — starts on `10.0.1.14:2368`,
    MySQL alongside it. **Do not wire up Caddy yet.**
@@ -866,6 +935,21 @@ descending, this placeholder (today's date) outranked the imported post
    every other app.
 6. Log in at `https://blog.mathewcsims.uk/ghost/` with the owner credentials
    from `blog/.env`.
+7. **Web analytics (optional)**: create a Tinybird account/workspace at
+   [cloud.tinybird.co](https://cloud.tinybird.co), copy the workspace admin
+   token and workspace ID into `blog/.env` (`TINYBIRD_ADMIN_TOKEN`,
+   `TINYBIRD_WORKSPACE_ID` — get the ID via `tb info`, not by decoding the
+   token, see the note above) and the API host (`TINYBIRD_API_URL`,
+   matching the region chosen at signup), then:
+   ```sh
+   podman compose --profile analytics run --rm tinybird-sync
+   podman compose --profile analytics run --rm tinybird-deploy
+   # fetch the resulting "tracker" token into .env — see the Python
+   # snippet above, never print it directly
+   podman compose --profile analytics up -d
+   ```
+   Then copy the updated `pi-reverse-proxy/Caddyfile` to the Pi and restart
+   Caddy again, for the `/.ghost/analytics/**` route.
 
 ---
 

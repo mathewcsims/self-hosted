@@ -53,6 +53,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      tinybird-sync:
+        condition: service_completed_successfully
+        required: false
+      tinybird-deploy:
+        condition: service_completed_successfully
+        required: false
     # Do NOT set `user:` — on podman-machine (macOS) the container's root
     # maps to your host user, giving sane ownership on the bind mount below
     # (same reasoning as copyparty/Vikunja/Donetick's compose.yaml).
@@ -79,6 +85,23 @@ services:
       mail__options__auth__user: ${SMTP_USER}
       mail__options__auth__pass: ${SMTP_PASSWORD}
       mail__from: ${MAIL_FROM}
+
+      # Web analytics — Ghost's own native Stats page, backed by Tinybird
+      # (ghost.org's official analytics partner as of Ghost 6.0). Cookie-less
+      # by design: visitor uniqueness uses a daily-rotating salted signature,
+      # not cookies or raw-IP geolocation, so no cookie-banner obligation per
+      # Ghost's own docs. Values verbatim from Ghost's official reference
+      # compose (github.com/TryGhost/ghost-docker) except for how the
+      # Tinybird workspace itself gets set up — see the tinybird-sync/
+      # tinybird-deploy services below and SETUP.md for why this uses a
+      # pre-existing admin token instead of Ghost's documented `tb login`
+      # flow (that flow's browser/device-code OAuth handshake never
+      # completed in this environment, root cause not identified).
+      tinybird__tracker__endpoint: https://blog.mathewcsims.uk/.ghost/analytics/api/v1/page_hit
+      tinybird__adminToken: ${TINYBIRD_ADMIN_TOKEN:-}
+      tinybird__workspaceId: ${TINYBIRD_WORKSPACE_ID:-}
+      tinybird__tracker__datasource: analytics_events
+      tinybird__stats__endpoint: ${TINYBIRD_API_URL:-https://api.tinybird.co}
     volumes:
       - ./content:/var/lib/ghost/content
     ports:
@@ -97,3 +120,83 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  # ── Tinybird-backed web analytics (Ghost's Stats page) ────────────────
+  # traffic-analytics is Ghost's own official service (github.com/TryGhost/
+  # ghost-docker), adapted for this repo's split topology: their reference
+  # assumes Caddy runs on the SAME host as Ghost, reaching traffic-analytics
+  # by container name with no published port. Our Caddy runs on the Pi, so
+  # this needs a published port on the Mac's LAN IP instead, same pattern as
+  # every other Mac-resident service — see pi-reverse-proxy/Caddyfile's
+  # blog.mathewcsims.uk block for the matching route.
+  #
+  # tinybird-sync/tinybird-deploy are a ONE-TIME setup step (see SETUP.md),
+  # not part of normal `up -d` — they deploy Ghost's bundled Tinybird
+  # datasource/pipe schema into your workspace. Ghost's own documented flow
+  # uses an extra `tinybird-login` container running `tb login`'s browser/
+  # device-code OAuth flow first; that flow never completed in this
+  # environment (browser approval never got picked up by the polling CLI,
+  # and the alternate localhost-callback method wasn't fully testable
+  # either) — root cause not identified, possibly network/proxy-related.
+  # Skipped entirely here: tinybird-deploy authenticates with a pre-existing
+  # workspace admin token (copied directly from the Tinybird dashboard's
+  # Settings → Tokens page, no CLI login needed at all) via `tb`'s
+  # documented --token flag.
+  traffic-analytics:
+    image: ghost/traffic-analytics:1.0.265@sha256:14121127f23440f64e725bec2370d9de0d64ba956c8d3001478ce922e94348d7
+    container_name: blog-traffic-analytics
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PROXY_TARGET: ${TINYBIRD_API_URL:-https://api.tinybird.co}/v0/events
+      SALT_STORE_TYPE: file
+      SALT_STORE_FILE_PATH: /data/salts.json
+      TINYBIRD_TRACKER_TOKEN: ${TINYBIRD_TRACKER_TOKEN:-}
+    volumes:
+      - ./traffic-analytics-data:/data
+    ports:
+      - "10.0.1.14:3001:3000"
+    profiles: [analytics]
+
+  tinybird-sync:
+    # Same image as the `ghost` service above (deliberately, per Ghost's own
+    # comment in their reference config) — copies the Tinybird
+    # datasource/pipe schema bundled inside the Ghost image itself into a
+    # shared volume, so tinybird-deploy can apply it. No auth needed for
+    # this step, it's a plain file copy.
+    image: ghost:6.50.0
+    container_name: blog-tinybird-sync
+    command: >
+      sh -c "
+        if [ -d /var/lib/ghost/current/core/server/data/tinybird ]; then
+          rm -rf /data/tinybird/*;
+          cp -rf /var/lib/ghost/current/core/server/data/tinybird/* /data/tinybird/;
+          echo 'Tinybird files synced into shared volume.';
+        else
+          echo 'Tinybird source directory not found.';
+        fi
+      "
+    volumes:
+      - tinybird_files:/data/tinybird
+    profiles: [analytics]
+    restart: "no"
+
+  tinybird-deploy:
+    build:
+      context: ./tinybird
+      dockerfile: Dockerfile
+    container_name: blog-tinybird-deploy
+    working_dir: /data/tinybird
+    # --token/TB_TOKEN is `tb`'s own documented non-interactive auth
+    # mechanism (confirmed against Tinybird's CI/CD docs) — takes priority
+    # over any .tinyb file, so this never touches the login flow at all.
+    command: sh -c "tb --token ${TINYBIRD_ADMIN_TOKEN:?TINYBIRD_ADMIN_TOKEN is required} --host ${TINYBIRD_API_URL:?TINYBIRD_API_URL is required} --cloud deploy"
+    volumes:
+      - tinybird_files:/data/tinybird
+    depends_on:
+      tinybird-sync:
+        condition: service_completed_successfully
+    profiles: [analytics]
+
+volumes:
+  tinybird_files:

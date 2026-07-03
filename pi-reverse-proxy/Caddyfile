@@ -148,6 +148,19 @@ blog.mathewcsims.uk {
 		}
 	}
 
+	# Web analytics (Ghost's Stats page, backed by Tinybird) — the ghost-stats.js
+	# script on public pages posts page-hit events here. Routed to
+	# traffic-analytics (see ../blog/compose.yaml), NOT to Ghost itself —
+	# pattern and path-stripping verbatim from Ghost's own reference Caddy
+	# config (github.com/TryGhost/ghost-docker), just pointed at this
+	# service's published Mac port instead of a co-located container name,
+	# same adaptation as everything else in this Caddyfile.
+	@analytics_paths path_regexp analytics_match ^(.*)/\.ghost/analytics(.*)$
+	handle @analytics_paths {
+		rewrite * {re.analytics_match.2}
+		reverse_proxy http://{$MAC_IP}:3001
+	}
+
 	reverse_proxy http://{$MAC_IP}:2368
 }
 
