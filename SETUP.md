@@ -732,9 +732,11 @@ podman run --rm -v "$PWD/files:/files" -v "$PWD/db:/db" docker.io/library/alpine
 1. **Mac:** `cd vikunja && podman compose up -d`.
 2. Create the admin account (see above) — do this before exposing it publicly.
 3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and reload Caddy.
-4. **DNS:** a wildcard record already covers new subdomains here — check
-   `python3 -c "import socket; print(socket.gethostbyname('yourdomain'))"`
-   resolves before assuming you need to add anything at the registrar.
+4. **DNS:** add an explicit `A` record for `vikunja` → the Pi's WAN IP at the
+   registrar (there is no blanket wildcard covering `*.mathewcsims.uk` — every
+   hostname in this repo has its own individually-created record; see the
+   [ArchiveBox DNS note](#archivebox-httpsarchiveboxmathewcsimsuk) for the one
+   exception and how records get added via the DigitalOcean API).
 5. **DrayTek LAN DNS**: add `vikunja.mathewcsims.uk` → `10.0.1.19`, same as
    the other apps, for clean access from inside your own network.
 6. Watch `docker compose logs -f caddy` (in `pi-reverse-proxy/`) for the cert,
@@ -751,9 +753,10 @@ should live on the box that's online regardless of the Mac's state.
 
 **Unlike every other app in this repo, access is LAN-only, not
 internet-facing-with-a-login.** Same pattern as `mc37.mathewcsims.uk` (the
-DrayTek router admin): a real public DNS record and Caddy-issued Let's
-Encrypt cert exist (a wildcard already covers new subdomains here — nothing
-to add at the registrar), but `pi-reverse-proxy/Caddyfile`'s
+DrayTek router admin): a real public DNS record (its own individually-created
+`A` record — see the [DNS note below](#archivebox-httpsarchiveboxmathewcsimsuk)
+for why there's no blanket wildcard) and Caddy-issued Let's Encrypt cert
+exist, but `pi-reverse-proxy/Caddyfile`'s
 `speedtest.mathewcsims.uk` block gates on `remote_ip private_ranges` and
 `abort`s any non-LAN source before it ever reaches the app — confirmed by
 inspecting Caddy's live JSON config (`docker exec caddy wget -qO-
@@ -824,8 +827,10 @@ create it as root first and fixing ownership after is the harder path.
    `docker compose restart caddy` (no Dockerfile change, so a restart is
    enough — see the [Operations](#operations) section for when a rebuild is
    needed instead).
-3. **DNS:** nothing to add — the existing wildcard record covers this
-   subdomain already.
+3. **DNS:** add an explicit `A` record for `speedtest` → the Pi's WAN IP at
+   the registrar — there is no blanket wildcard, so every new subdomain needs
+   its own record (see the [ArchiveBox DNS
+   note](#archivebox-httpsarchiveboxmathewcsimsuk)).
 4. **DrayTek LAN DNS** (Applications ▸ LAN DNS / DNS Cache): add
    `speedtest.mathewcsims.uk` → `10.0.1.19`, same as every other app, so LAN
    devices resolve straight to the Pi rather than round-tripping out to the
@@ -1012,12 +1017,14 @@ cookie-banner obligation per Ghost's own docs.
    added.
 3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
    `docker compose restart caddy`.
-4. **DNS:** nothing to add — the existing wildcard record covers this
-   subdomain (this domain previously had an explicit record pointing at
-   Ghost(Pro)'s hosting from before the migration; it turned out to already
-   be repointed by the time of deployment, so no separate action was needed
-   here, but don't assume that's true for every domain being migrated onto
-   this stack later).
+4. **DNS:** nothing to add — `blog` already had its own individually-created
+   `A` record from before the migration (previously pointing at Ghost(Pro)'s
+   hosting), and it turned out to already be repointed at the Pi's WAN IP by
+   the time of deployment, so no separate action was needed here. There is no
+   blanket wildcard covering `*.mathewcsims.uk` (see the [ArchiveBox DNS
+   note](#archivebox-httpsarchiveboxmathewcsimsuk)) — don't assume an existing
+   record, repointed or otherwise, exists for every domain being migrated onto
+   this stack later.
 5. **DrayTek LAN DNS**: add `blog.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 6. Log in at `https://blog.mathewcsims.uk/ghost/` with the owner credentials
@@ -1058,19 +1065,19 @@ repo's own content — name, tagline, links) is copied on top, overwriting
 just that one file.
 
 **Apex domain, not a subdomain — different DNS handling from every other
-app here.** The existing wildcard record covers `*.mathewcsims.uk`
-automatically, as it has for every other app in this repo, but a wildcard
-does not cover the bare apex (`mathewcsims.uk` itself) — that needed its own
-explicit A record, pointed directly at the Pi's WAN IP by the domain owner
-rather than through anything in this repo.
+app here.** There is no blanket wildcard covering `*.mathewcsims.uk` — every
+hostname in this repo, including the bare apex (`mathewcsims.uk` itself), has
+its own individually-created `A` record pointed directly at the Pi's WAN IP
+(see the [ArchiveBox DNS
+note](#archivebox-httpsarchiveboxmathewcsimsuk) for the one genuine wildcard
+exception and how records get added via the DigitalOcean API).
 
 **To bring it up:**
 1. **Mac:** `cd landing-page && podman compose up -d` — starts on
    `10.0.1.14:3080`.
 2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
    `docker compose restart caddy`.
-3. **DNS:** an explicit A record for the bare domain, not the wildcard —
-   see above.
+3. **DNS:** an explicit `A` record for the bare domain — see above.
 4. **DrayTek LAN DNS**: add `mathewcsims.uk` → `10.0.1.19`, same as every
    other app.
 
