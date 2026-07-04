@@ -1,0 +1,95 @@
+# Karakeep (https://github.com/karakeep-app/karakeep) — self-hosted
+# bookmark-everything app: links, notes, images, full-page archival (via
+# monolith), video archiving (yt-dlp), full-text search, AI-based tagging.
+#
+# Migrated from a separate Tailscale-sidecar-based deployment
+# (~/ScaleTail/services/karakeep/) into this repo, on the public hostname
+# karakeep.mathewcsims.uk instead — same architecture as every other Mac app
+# here: Caddy on the Pi terminates TLS and proxies to plain HTTP on the Mac.
+# Existing data (bookmarks, assets, search index) was moved in unchanged, not
+# recreated — see ./data and ./meilisearch-data.
+#
+# ── Image: pinned, not the floating `release` tag ──────────────────────────
+# The original deployment used `${KARAKEEP_VERSION:-release}`, a floating
+# tag. Checked GitHub security advisories directly: 5 disclosed
+# (4 high-severity — two SSRF protection bypasses, a stored-XSS via the
+# Reddit plugin bypassing DOMPurify, and an XSS in the assets feature — plus
+# one low-severity auth-timing user-enumeration issue). All fixed by 0.32.0,
+# which is what was already running (confirmed via image build date) and is
+# also the latest release as of this migration — pinned explicitly instead
+# of left floating, so an upgrade is a deliberate, reviewed decision.
+#
+# All secrets live in ./.env (gitignored — see .env.example for the template).
+name: karakeep
+
+services:
+  web:
+    image: ghcr.io/karakeep-app/karakeep:0.32.0
+    container_name: karakeep
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MEILI_ADDR: http://meilisearch:7700
+      BROWSER_WEB_URL: http://chrome:9222
+      DATA_DIR: /data
+      TZ: Europe/London
+      MAX_ASSET_SIZE_MB: "50"
+      NEXTAUTH_URL: https://karakeep.mathewcsims.uk
+
+      # No self-registration — was open (DISABLE_SIGNUPS=false) under the
+      # old Tailscale-only deployment, where only devices on the tailnet
+      # could even reach the signup page. Now that this is a public
+      # hostname, closed permanently, same reasoning as Vikunja/Ghost
+      # elsewhere in this repo. Existing account(s) are unaffected.
+      DISABLE_SIGNUPS: "true"
+      DISABLE_PASSWORD_AUTH: "false"
+
+      # Off by default upstream — no built-in login rate limiting unless
+      # explicitly enabled. Supplemented by a Caddy-layer zone on the actual
+      # NextAuth credentials-callback path (see ../pi-reverse-proxy/Caddyfile).
+      RATE_LIMITING_ENABLED: "true"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - meilisearch
+      - chrome
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address. The router does NOT forward
+      # 3000, so this is never directly internet-facing.
+      - "10.0.1.14:3000:3000"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "next-server"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Headless Chrome for screenshot/full-page-archival capture. Internal
+  # only — no published port, reached by `web` over the compose network.
+  chrome:
+    image: gcr.io/zenika-hub/alpine-chrome:123
+    container_name: karakeep-chrome
+    restart: unless-stopped
+    command:
+      - --no-sandbox
+      - --disable-gpu
+      - --disable-dev-shm-usage
+      - --remote-debugging-address=0.0.0.0
+      - --remote-debugging-port=9222
+      - --hide-scrollbars
+
+  # Full-text search backend. Internal only.
+  meilisearch:
+    image: getmeili/meilisearch:v1.11.1
+    container_name: karakeep-meilisearch
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - ./meilisearch-data:/meili_data

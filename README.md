@@ -18,6 +18,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) | `speedtest.mathewcsims.uk` | Pi (LAN-only — no WAN access at all) |
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 | [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
+| [Karakeep](https://github.com/karakeep-app/karakeep) | `karakeep.mathewcsims.uk` | Mac (migrated from a separate Tailscale-only deployment) |
 
 ## Architecture, in short
 
@@ -28,6 +29,7 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ prospect-ukri-tus.mathewcsims.uk → Mac
                                   ├─ vikunja.mathewcsims.uk           → Mac
                                   ├─ blog.mathewcsims.uk              → Mac
+                                  ├─ karakeep.mathewcsims.uk          → Mac
                                   ├─ dashboard.mathewcsims.uk         → itself (Pi)
                                   └─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
 ```
@@ -50,6 +52,7 @@ file, never in a tracked one:
 | `nimbus/.env` | `.env.example` |
 | `speedtest-tracker/.env` | `.env.example` |
 | `blog/.env` | `.env.example` |
+| `karakeep/.env` | `.env.example` |
 | `pi-reverse-proxy/.env` | `.env.example` |
 
 To stand this up from scratch (or recreate a secret file), copy the matching
@@ -67,6 +70,7 @@ memos-prospect-ukri-tus/  compose.yaml and data (Mac)
 vikunja/               compose.yaml and data (Mac)
 blog/                  compose.yaml, MySQL, and Ghost content (Mac)
 landing-page/          compose.yaml, static site content (Mac, no secrets)
+karakeep/              compose.yaml, bookmark/asset data, search index (Mac)
 nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)

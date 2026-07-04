@@ -291,6 +291,34 @@ mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3080
 }
 
+# ── Karakeep (running on the Mac) ──────────────────────────────────────────
+# Clean public URL https://karakeep.mathewcsims.uk. Migrated from a separate
+# Tailscale-sidecar-only deployment — this Caddy block is now its only
+# ingress. Same pattern as every other Mac app: Caddy terminates TLS and
+# proxies to plain-HTTP Karakeep. Registration is closed
+# (DISABLE_SIGNUPS=true in ../karakeep/compose.yaml) now that this is public.
+karakeep.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit karakeep
+
+	# Karakeep's own RATE_LIMITING_ENABLED covers its API generally, but this
+	# Caddy-layer zone specifically targets the NextAuth credentials-login
+	# callback — same defense-in-depth reasoning as every other app's auth
+	# endpoint in this repo.
+	rate_limit {
+		zone rl_karakeep_auth {
+			match {
+				path /api/auth/callback/credentials
+			}
+			key {remote_host}
+			events 15
+			window 1m
+		}
+	}
+
+	reverse_proxy http://{$MAC_IP}:3000
+}
+
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.

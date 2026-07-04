@@ -989,6 +989,59 @@ rather than through anything in this repo.
 
 ---
 
+## Karakeep (https://karakeep.mathewcsims.uk)
+
+[Karakeep](https://github.com/karakeep-app/karakeep) — self-hosted
+bookmark-everything app: links, notes, images, full-page archival (via
+monolith), video archiving (yt-dlp), full-text search (Meilisearch),
+AI-based tagging.
+
+**Migrated from a separate deployment, not set up fresh.** It previously ran
+at `~/ScaleTail/services/karakeep/` (a personal clone of
+[tailscale-dev/ScaleTail](https://github.com/tailscale-dev/ScaleTail)'s
+template collection), reachable only via a Tailscale sidecar
+(`network_mode: service:tailscale`, no other ingress at all). Moved into
+this repo and onto the public `karakeep.mathewcsims.uk` hostname instead,
+same architecture as every other Mac app here — Caddy on the Pi terminates
+TLS, proxies to plain HTTP on the Mac. The Tailscale sidecar and its auth
+key were dropped entirely; existing data (`./data`, `./meilisearch-data`)
+was moved in unchanged, not recreated, so bookmarks/assets/search index all
+survived the move.
+
+**Image, pinned:** the original deployment floated on
+`ghcr.io/karakeep-app/karakeep:release`. Checked GitHub security advisories
+directly: 5 disclosed (4 high — two SSRF protection bypasses, a stored-XSS
+via the Reddit plugin bypassing DOMPurify, an XSS in the assets feature —
+plus one low-severity auth-timing user-enumeration issue). All fixed by
+`0.32.0`, which is what was already running (confirmed via image build
+date) and also the latest release at migration time — pinned explicitly
+now instead of left floating.
+
+**Hardening decisions made (see `karakeep/compose.yaml`):**
+- `DISABLE_SIGNUPS=true` — was `false` (open) under the Tailscale-only
+  deployment, safe there since only tailnet devices could reach the signup
+  page at all. Closed now that this is a public hostname.
+- `RATE_LIMITING_ENABLED=true` — off by default upstream. Supplemented by a
+  Caddy-layer zone on the actual NextAuth credentials-callback path
+  (`/api/auth/callback/credentials`), same defense-in-depth pattern as
+  every other app's auth endpoint in this repo.
+- `NEXTAUTH_SECRET`/`MEILI_MASTER_KEY` carried over unchanged from the old
+  deployment (not regenerated) — preserves existing sessions and
+  Meilisearch's access to the migrated index.
+
+**To bring it up on a fresh machine:**
+1. **Mac:** `cd karakeep && podman compose up -d` — starts on
+   `10.0.1.14:3000`.
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** needs its own explicit A record for `karakeep.mathewcsims.uk` —
+   no blanket wildcard exists (confirmed against the actual DNS zone during
+   the ArchiveBox work), every single-hostname app here has its own record.
+4. **DrayTek LAN DNS**: add `karakeep.mathewcsims.uk` → `10.0.1.19`, same as
+   every other app.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
