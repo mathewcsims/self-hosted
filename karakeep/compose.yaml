@@ -75,6 +75,20 @@ services:
       # there's no reason to keep that ceiling this low.
       INFERENCE_CONTEXT_LENGTH: "8192"
 
+      # Full offline copies of every bookmark, not just a screenshot —
+      # protects against link rot the same way ArchiveBox did, just built
+      # into Karakeep already (uses monolith to bundle a page + all its
+      # assets into one self-contained file), no extra infrastructure.
+      CRAWLER_FULL_PAGE_ARCHIVE: "true"
+      CRAWLER_STORE_PDF: "true"
+
+      # Both off by default: 5s for monolith to fetch and inline every
+      # asset on a real page is too tight, and the overall 60s per-bookmark
+      # job budget doesn't leave enough room for navigate + screenshot +
+      # monolith + PDF all sequentially once the latter two are enabled.
+      CRAWLER_MONOLITH_TIMEOUT_SEC: "60"
+      CRAWLER_JOB_TIMEOUT_SEC: "180"
+
       # Explicit for clarity, even though "true" is already the upstream
       # default — this IS the feature being turned on here.
       INFERENCE_ENABLE_AUTO_TAGGING: "true"
