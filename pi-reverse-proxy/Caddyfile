@@ -291,6 +291,35 @@ mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3080
 }
 
+# ── ArchiveBox (running on the Mac) ───────────────────────────────────────
+# Clean public URL https://archivebox.mathewcsims.uk. Same pattern as every
+# other Mac app: Caddy terminates TLS and proxies to plain-HTTP ArchiveBox.
+# Fully private (PUBLIC_INDEX/PUBLIC_ADD_VIEW both False in its own config —
+# see ../archivebox/compose.yaml) and JS replay of archived pages is
+# disabled (SERVER_SECURITY_MODE=safe-onedomain-nojsreplay), so this doesn't
+# need the wildcard-subdomain treatment ArchiveBox's own docs otherwise
+# recommend for that risk.
+archivebox.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit archivebox
+
+	# ArchiveBox has no built-in login rate limiting at all (unlike Ghost/
+	# Vikunja above) — this Caddy-layer zone on the Django admin login is
+	# the only brute-force protection it gets.
+	rate_limit {
+		zone rl_archivebox_auth {
+			match {
+				path /admin/login/*
+			}
+			key {remote_host}
+			events 15
+			window 1m
+		}
+	}
+
+	reverse_proxy http://{$MAC_IP}:8000
+}
+
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.

@@ -1,0 +1,13 @@
+[Unit]
+Description=Mount WD NAS archive-box NFS export for ArchiveBox
+After=network-online.target
+Wants=network-online.target
+Before=podman.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/archivebox-nfs-mount.sh
+
+[Install]
+WantedBy=multi-user.target

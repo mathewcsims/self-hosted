@@ -989,6 +989,97 @@ rather than through anything in this repo.
 
 ---
 
+## ArchiveBox (https://archivebox.mathewcsims.uk)
+
+[ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) — self-hosted web
+archiving (wget mirror, screenshot, PDF, headless-Chrome DOM dump, media via
+yt-dlp, etc. per URL). Fully private: no anonymous browsing, no anonymous
+submission, private-by-default snapshots.
+
+**Image, pinned:** no stable numbered release exists right now — the project
+is permanently on an rc train for its 0.9.x/0.10 rewrite. Checked GitHub
+security advisories directly: a critical RCE (CVE-2026-42601 /
+GHSA-3h23-7824-pj8r, CVSS 9.8 — unvalidated `config` JSON on the `/add`
+endpoint, pre-auth when `PUBLIC_ADD_VIEW=True`) affects `<= 0.8.6rc0`; pinned
+to `0.9.35rc102`, well past that fix boundary, and to the exact tag (not the
+floating `dev` tag the official docker-compose.yml defaults to) so an
+upgrade is a deliberate decision.
+
+**Hardening decisions made (see `archivebox/compose.yaml` for the full
+reasoning):**
+- `PUBLIC_INDEX=False`, `PUBLIC_ADD_VIEW=False`, `PERMISSIONS=private` — no
+  anonymous access to anything, and this closes the CVE above regardless.
+- `ARCHIVEDOTORG_ENABLED=False` — ArchiveBox's own security docs warn URLs
+  (including embedded secret tokens) get submitted to archive.org
+  *unfiltered* otherwise, defeating the point of a private archive.
+- `SERVER_SECURITY_MODE=safe-onedomain-nojsreplay` — archived pages can
+  replay embedded JavaScript, a real XSS/session-hijack risk if that runs
+  same-origin as the admin panel. Upstream's fix is per-snapshot random
+  subdomains (`safe-subdomains-fullreplay`), needing wildcard DNS + a
+  wildcard TLS cert (DNS-01) — a much bigger change to this repo's Caddy
+  setup than any other app here. Chose the simpler, still-safe route
+  instead: single domain, JS never executes on replay at all.
+- Caddy-side rate limit on `/admin/login/*` — ArchiveBox has no built-in
+  login throttling at all (unlike Ghost/Vikunja elsewhere in this repo).
+
+**Storage: NAS over NFS, not local disk.** ArchiveBox's own docs are
+explicit that `data/index.sqlite3` must stay on a local, fsync-capable
+filesystem (SQLite's WAL locking doesn't work reliably over NFS/SMB), while
+`data/archive/` (the bulk content — screenshots, WARCs, media, PDFs) is
+officially supported on slower remote storage. So `./data` (this Mac's SSD)
+holds the index, and `/data/archive` is bind-mounted to a WD My Cloud EX2
+Ultra NFS export instead.
+
+That NFS mount happens **inside the podman-machine VM itself**, not on the
+macOS host — see `archivebox/nfs-mount/`. First attempt mounted NFS on the
+Mac host under `/private` (one of podman-machine's default virtiofs shares
+into the VM) and relied on virtiofs to pass it through; confirmed empirically
+that this doesn't work reliably — virtiofs does not cross a submount
+boundary, so the VM's mount table listed the share but every file operation
+through it failed with ENOENT. Mounting natively inside the VM's own Linux
+kernel (Fedora CoreOS, which already ships `nfs-utils` and the kernel
+modules) sidesteps that entirely, and is one less moving part than a
+host-side LaunchDaemon.
+
+The NAS applies `root_squash` (writes from the VM's root user land owned by
+a NAS-side mapped UID/GID, not root) — the export root itself is
+pre-existing and owned by real root, so ArchiveBox's own init (which chmods
+whatever directory it's given) fails against it with `EPERM`. Fixed by
+bind-mounting a *subdirectory* of the NFS mount instead of the export root:
+that subdirectory is created by the mount script (so it's owned by the same
+mapped UID ArchiveBox itself is squashed to), and chmod-ing something you
+own always works, root_squash or not.
+
+**To bring it up on a fresh machine:**
+1. **NAS:** enable NFS in the WD dashboard (Settings → Network → NFS
+   Service), then on the target share (Shares → *share* → NFS Access → On),
+   restrict the allowed IP to the Mac's LAN IP specifically (not `*`).
+2. **Podman VM:** copy `archivebox/nfs-mount/archivebox-nfs-mount.sh` and
+   `archivebox-nfs-mount.service` into the VM and enable the service:
+   ```
+   podman machine ssh podman-machine-default -- 'cat > /etc/archivebox-nfs-mount.sh' < archivebox/nfs-mount/archivebox-nfs-mount.sh
+   podman machine ssh podman-machine-default -- 'chmod +x /etc/archivebox-nfs-mount.sh'
+   podman machine ssh podman-machine-default -- 'cat > /etc/systemd/system/archivebox-nfs-mount.service' < archivebox/nfs-mount/archivebox-nfs-mount.service
+   podman machine ssh podman-machine-default -- 'systemctl daemon-reload && systemctl enable --now archivebox-nfs-mount.service'
+   ```
+   This runs automatically on every `podman machine start` from then on —
+   no per-boot action needed on the Mac side.
+3. **Mac:** `cd archivebox && podman compose up -d` — starts on
+   `10.0.1.14:8000`. `ADMIN_USERNAME`/`ADMIN_PASSWORD` in `.env` bootstrap
+   the one superuser account on first run only.
+4. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+5. **DNS:** covered by the existing `*.mathewcsims.uk` wildcard — nothing
+   extra needed, unlike the landing page's bare apex.
+
+**Offsite backup:** not set up yet (deliberately deferred) — the NAS is the
+only copy right now. A nightly `rclone sync` from the NAS archive folder to
+something like Backblaze B2 would add real offsite redundancy without ever
+writing live through a cloud FUSE mount; revisit once there's enough
+archived content to make that worth setting up.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
