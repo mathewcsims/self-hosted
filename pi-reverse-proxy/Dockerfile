@@ -6,17 +6,10 @@
 # is the standard, actively-maintained module for this. Built in via xcaddy
 # rather than downloaded as a binary, so the result is reproducible from this
 # Dockerfile and stays on the official Alpine base for the final image.
-#
-# caddy-dns/digitalocean: needed for the archivebox.mathewcsims.uk wildcard
-# cert (DNS-01 challenge, the only way to get a wildcard cert — HTTP-01,
-# used everywhere else in this Caddyfile, can't validate one). DNS is
-# managed at DigitalOcean; this module lets Caddy create/clean up the
-# challenge TXT record itself via their API.
 FROM caddy:2-builder-alpine AS builder
 
 RUN xcaddy build \
-	--with github.com/mholt/caddy-ratelimit \
-	--with github.com/caddy-dns/digitalocean
+	--with github.com/mholt/caddy-ratelimit
 
 FROM caddy:2-alpine
 

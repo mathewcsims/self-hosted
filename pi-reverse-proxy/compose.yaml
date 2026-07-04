@@ -13,10 +13,9 @@
 services:
   caddy:
     # Built from ./Dockerfile, NOT the stock caddy:2-alpine image — adds the
-    # caddy-ratelimit and caddy-dns/digitalocean modules (see Dockerfile for
-    # why). `docker compose build` (or `up --build`) compiles it; still
-    # multi-arch-correct since the build runs natively on whatever host it's
-    # built on (the Pi, arm64).
+    # caddy-ratelimit module (see Dockerfile for why). `docker compose build`
+    # (or `up --build`) compiles it; still multi-arch-correct since the build
+    # runs natively on whatever host it's built on (the Pi, arm64).
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,7 +28,6 @@ services:
       CP_DOMAIN: ${CP_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
       MAC_IP: ${MAC_IP}
-      DO_API_TOKEN: ${DO_API_TOKEN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data            # issued certs + ACME account — persist this!

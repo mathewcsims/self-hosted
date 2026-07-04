@@ -291,50 +291,6 @@ mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3080
 }
 
-# ── ArchiveBox (running on the Mac) ───────────────────────────────────────
-# Clean public URL https://archivebox.mathewcsims.uk. Same pattern as every
-# other Mac app: Caddy terminates TLS and proxies to plain-HTTP ArchiveBox.
-# Fully private (PUBLIC_INDEX/PUBLIC_ADD_VIEW both False in its own config —
-# see ../archivebox/compose.yaml).
-#
-# SERVER_SECURITY_MODE=safe-subdomains-fullreplay: each archived snapshot is
-# served from its own random subdomain (snap-<id>.archivebox.mathewcsims.uk),
-# scoping admin session cookies away from replayed content — confirmed
-# directly from ArchiveBox's own source (config/common.py) that this is the
-# only mode it doesn't flag as "unsafe" in its own UI; every single-domain
-# mode, even with JS replay disabled, still shares an origin with the admin
-# panel. That means a wildcard, which Let's Encrypt can only issue via a
-# DNS-01 challenge (not the HTTP-01 every other site here uses) — hence the
-# `tls dns digitalocean` below, needing DO_API_TOKEN in ./.env and the
-# caddy-dns/digitalocean module (see ./Dockerfile). Also needs its own
-# *.archivebox.mathewcsims.uk wildcard DNS record — the existing
-# *.mathewcsims.uk wildcard only covers one label, same reasoning as the
-# landing page's bare-apex DNS note above.
-archivebox.mathewcsims.uk, *.archivebox.mathewcsims.uk {
-	tls {
-		dns digitalocean {env.DO_API_TOKEN}
-	}
-
-	import security_headers
-	import general_ratelimit archivebox
-
-	# ArchiveBox has no built-in login rate limiting at all (unlike Ghost/
-	# Vikunja above) — this Caddy-layer zone on the Django admin login is
-	# the only brute-force protection it gets.
-	rate_limit {
-		zone rl_archivebox_auth {
-			match {
-				path /admin/login/*
-			}
-			key {remote_host}
-			events 15
-			window 1m
-		}
-	}
-
-	reverse_proxy http://{$MAC_IP}:8000
-}
-
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.
