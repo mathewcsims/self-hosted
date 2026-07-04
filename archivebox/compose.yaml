@@ -62,18 +62,20 @@ services:
       # BASE_URL + SERVER_SECURITY_MODE itself — nothing extra to set for
       # running behind a TLS-terminating reverse proxy.
 
-      # Archived pages can replay embedded JavaScript from the original
-      # page, which is a real XSS/session-hijack risk if that JS runs
-      # same-origin as the admin panel. The upstream-recommended fix is
-      # per-snapshot random subdomains (safe-subdomains-fullreplay), but
-      # that needs wildcard DNS + a wildcard TLS cert (DNS-01), a much bigger
-      # change to this repo's Caddy setup than every other single-hostname
-      # app here. Chose the simpler, still-safe alternative instead: single
-      # domain, no JS execution on replay at all — snapshots render as
-      # static content, so the whole embedded-JS attack class doesn't apply
-      # regardless of domain. Revisit only if full-fidelity replay of
-      # JS-heavy pages turns out to matter in practice.
-      SERVER_SECURITY_MODE: safe-onedomain-nojsreplay
+      # Originally set to safe-onedomain-nojsreplay (single domain, no JS
+      # execution on replay) to avoid the wildcard-DNS/DNS-01 complexity of
+      # subdomain mode. Reconsidered after checking ArchiveBox's own source
+      # (config/common.py, system_warnings_banner): it flags *every*
+      # non-subdomain mode as "unsafe" in its own UI, onedomain-nojsreplay
+      # included — same-origin cookies are still attached to same-origin
+      # requests regardless of whether JS executes, so the risk isn't fully
+      # eliminated, just narrowed. Moved to the real fix instead: each
+      # snapshot gets its own random subdomain
+      # (snap-<id>.archivebox.mathewcsims.uk), fully scoping admin session
+      # cookies away from replayed content. Needs a wildcard DNS record +
+      # DNS-01 cert issuance — see ../pi-reverse-proxy/Caddyfile and
+      # ../pi-reverse-proxy/Dockerfile.
+      SERVER_SECURITY_MODE: safe-subdomains-fullreplay
 
       # Private instance, full stop — no anonymous browsing, no anonymous
       # submission (PUBLIC_ADD_VIEW=True is also literally the pre-auth

@@ -1012,13 +1012,21 @@ reasoning):**
 - `ARCHIVEDOTORG_ENABLED=False` — ArchiveBox's own security docs warn URLs
   (including embedded secret tokens) get submitted to archive.org
   *unfiltered* otherwise, defeating the point of a private archive.
-- `SERVER_SECURITY_MODE=safe-onedomain-nojsreplay` — archived pages can
-  replay embedded JavaScript, a real XSS/session-hijack risk if that runs
-  same-origin as the admin panel. Upstream's fix is per-snapshot random
-  subdomains (`safe-subdomains-fullreplay`), needing wildcard DNS + a
-  wildcard TLS cert (DNS-01) — a much bigger change to this repo's Caddy
-  setup than any other app here. Chose the simpler, still-safe route
-  instead: single domain, JS never executes on replay at all.
+- `SERVER_SECURITY_MODE=safe-subdomains-fullreplay` — each archived snapshot
+  is served from its own subdomain (e.g.
+  `web.archivebox.mathewcsims.uk`, random per-snapshot ones for replay),
+  scoping admin session cookies away from archived content entirely.
+  Originally shipped with `safe-onedomain-nojsreplay` (single domain, JS
+  disabled on replay) to avoid the wildcard DNS/cert work below — reversed
+  after actually reading ArchiveBox's own source
+  (`config/common.py`/`system_warnings_banner`): it flags *every*
+  non-subdomain mode as "unsafe" in its own UI, onedomain-nojsreplay
+  included, because same-origin cookies still get attached to same-origin
+  requests regardless of whether JS executes — disabling JS narrows the
+  risk but doesn't eliminate it. Needs a `*.archivebox.mathewcsims.uk`
+  wildcard DNS record (see below) and DNS-01 cert issuance, since
+  Let's Encrypt can't validate a wildcard via the HTTP-01 challenge every
+  other site here uses.
 - Caddy-side rate limit on `/admin/login/*` — ArchiveBox has no built-in
   login throttling at all (unlike Ghost/Vikunja elsewhere in this repo).
 
@@ -1067,10 +1075,32 @@ own always works, root_squash or not.
 3. **Mac:** `cd archivebox && podman compose up -d` — starts on
    `10.0.1.14:8000`. `ADMIN_USERNAME`/`ADMIN_PASSWORD` in `.env` bootstrap
    the one superuser account on first run only.
-4. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
-   `docker compose restart caddy`.
-5. **DNS:** covered by the existing `*.mathewcsims.uk` wildcard — nothing
-   extra needed, unlike the landing page's bare apex.
+4. **DNS:** this app needs a genuine wildcard record,
+   `*.archivebox.mathewcsims.uk` → the Pi's WAN IP — unlike every other app
+   in this repo. (Correction to earlier notes elsewhere in this file: there
+   is no actual `*.mathewcsims.uk` wildcard covering everything — checked
+   directly via the DigitalOcean API, and every other hostname here has its
+   own individually-added A record. That's fine for apps with one fixed
+   hostname, but ArchiveBox generates unpredictable per-snapshot subdomains,
+   which genuinely can't be enumerated in advance, hence the real wildcard.)
+5. **Caddy build:** the `archivebox.mathewcsims.uk` block needs DNS-01 cert
+   issuance for the wildcard, which needs the `caddy-dns/digitalocean`
+   module (already added to `pi-reverse-proxy/Dockerfile`) and a
+   `DO_API_TOKEN` in `pi-reverse-proxy/.env` (DigitalOcean → Settings → API
+   → Generate New Token, DNS scope). Copy the updated Caddyfile/Dockerfile/
+   compose.yaml over, then `docker compose build && docker compose up -d`
+   on the Pi (a `docker compose restart` alone won't pick up the new module
+   — the image itself needs rebuilding).
+
+**Known cosmetic bug, not a security issue:** `libdns/digitalocean`'s
+`idFromRecord` (confirmed by reading its source) expects its own custom
+record type when deleting the temporary ACME challenge TXT record, but
+Caddy's cert-renewal cleanup passes back a generic one — the type
+assertion fails silently, leaving a stray `_acme-challenge.archivebox` TXT
+record in DigitalOcean DNS after every renewal. Cert issuance itself always
+succeeds regardless; this is purely leftover DNS clutter, harmless, and not
+worth automating cleanup for given it only happens ~6x/year. Delete it
+manually via the DO dashboard/API if it ever bothers you.
 
 **Offsite backup:** not set up yet (deliberately deferred) — the NAS is the
 only copy right now. A nightly `rclone sync` from the NAS archive folder to
