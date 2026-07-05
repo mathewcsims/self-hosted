@@ -1,0 +1,21 @@
+# pf anchor: restrict copyparty (3923) and Vikunja (3456) on this Mac to
+# LAN-published-port access from the Pi (10.0.1.19) only. Caddy on the Pi
+# is the only intended path in for every app in this repo — this closes
+# the gap where any other device on the LAN could otherwise reach these
+# two ports directly, bypassing Caddy entirely (still gated by each app's
+# own login, but an unnecessary extra path in).
+#
+# Scoped to exactly these two ports/this one destination IP — nothing else
+# on this Mac is affected. Tried an app-level fix first (copyparty's --ipa
+# option) but it doesn't work behind podman's published-port NAT, which
+# only ever exposes its own internal gateway IP as the connection source,
+# never the real LAN IP — see copyparty/cfg/copyparty.conf's comment and
+# https://github.com/9001/copyparty/issues/1109. Vikunja has no equivalent
+# app-level option at all, so this firewall-layer rule is the only lever
+# for either app.
+#
+# "quick" + top-to-bottom order matters: the allow rule for the Pi must
+# come before the catch-all block, since "quick" stops evaluation at the
+# first match.
+pass in quick log proto tcp from 10.0.1.19 to 10.0.1.14 port { 3923, 3456 }
+block in quick log proto tcp from any to 10.0.1.14 port { 3923, 3456 }

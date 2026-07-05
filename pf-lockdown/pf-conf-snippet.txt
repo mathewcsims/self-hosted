@@ -1,0 +1,6 @@
+# Append this to /etc/pf.conf (after Apple's own anchors — don't replace
+# anything already there). See SETUP.md's "Restricting LAN-only ports"
+# section for the one-time install commands.
+
+anchor "com.mathewcsims.lan-lockdown"
+load anchor "com.mathewcsims.lan-lockdown" from "/etc/pf.anchors/com.mathewcsims.lan-lockdown"

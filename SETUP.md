@@ -1301,17 +1301,60 @@ docker compose pull nimbus && docker compose up -d
 - The Pi's Caddy serves only the five configured hostnames and refuses any
   other hostname or bare-IP hit (`:80`/`:443` catch-all blocks at the bottom
   of the Caddyfile just `abort`) — so scanning the public IP reveals nothing.
-- **Optional — lock copyparty/Vikunja to the Pi only.** Right now anything on
-  your LAN can reach `10.0.1.14:3923` or `:3456` directly (still needs a
-  login). To restrict either to the Pi only, add a macOS packet-filter rule
-  allowing that port only from `10.0.1.19`, or run the app with its own IP
-  allow-list. Ask me and I'll wire it up.
+- **Restricting LAN-only ports.** See the dedicated section below.
 - Keep every image updated (the `pull && up -d` commands above) — but review
   before pulling: copyparty, Nimbus, and Vikunja are all pinned to an exact
   tag/digest deliberately (see each app's compose.yaml), so an upgrade is a
   conscious decision, not something that happens silently on a routine
   restart.
 - Use a long unique admin password per app (already generated where relevant).
+
+### Restricting LAN-only ports (copyparty, Vikunja)
+
+Every Mac-hosted app publishes its port bound to `10.0.1.14`, reachable by
+any device on the LAN, not just the Pi's Caddy — intended to be reached
+only via Caddy's TLS + rate-limiting, with direct LAN access as an
+unnecessary (if still login-gated) extra path in. Fixed for copyparty and
+Vikunja specifically via a macOS `pf` firewall rule — see `pf-lockdown/`.
+
+**Why not fix this at the app level instead?** Tried copyparty's own
+`--ipa` (IP allow-list) option first — it doesn't work here. Behind
+podman's published-port NAT, copyparty only ever sees podman's *internal
+gateway IP* as the connection source, never the real LAN IP (confirmed
+against [copyparty issue
+#1109](https://github.com/9001/copyparty/issues/1109)) — setting `ipa` to
+the Pi's IP blocked the Pi too, along with everyone else. Vikunja has no
+equivalent option at all. A firewall-layer rule was the only approach that
+actually works for either.
+
+**What the rule does:** `pf-lockdown/com.mathewcsims.lan-lockdown` allows
+TCP to `10.0.1.14` ports `3923`/`3456` from `10.0.1.19` (the Pi) only, and
+blocks everyone else — scoped to exactly those two ports; nothing else on
+this Mac is affected.
+
+**One-time setup (needs sudo — run these yourself, not via the agent):**
+
+```
+sudo mkdir -p /etc/pf.anchors
+sudo cp pf-lockdown/com.mathewcsims.lan-lockdown /etc/pf.anchors/
+sudo chown root:wheel /etc/pf.anchors/com.mathewcsims.lan-lockdown
+cat pf-lockdown/pf-conf-snippet.txt | sudo tee -a /etc/pf.conf
+sudo cp pf-lockdown/uk.mathewcsims.pf-lan-lockdown.plist /Library/LaunchDaemons/
+sudo chown root:wheel /Library/LaunchDaemons/uk.mathewcsims.pf-lan-lockdown.plist
+sudo chmod 644 /Library/LaunchDaemons/uk.mathewcsims.pf-lan-lockdown.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/uk.mathewcsims.pf-lan-lockdown.plist
+```
+
+This runs the reload script (which enables `pf` if it isn't already, then
+loads the ruleset) at every boot — no per-reboot action needed after this.
+
+**Verify it worked:**
+
+```
+sudo pfctl -a com.mathewcsims.lan-lockdown -s rules   # confirm the rules loaded
+curl http://10.0.1.14:3923/       # from the Mac itself — should now be blocked
+ssh mathew@babel 'curl http://10.0.1.14:3923/'   # from the Pi — should still work
+```
 
 ### Hardening pass (copyparty, Nimbus, Caddy, Memos)
 

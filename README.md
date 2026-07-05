@@ -76,5 +76,8 @@ pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker com
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass
                        at deploy time — see SETUP.md
+pf-lockdown/           macOS pf firewall rules restricting copyparty/Vikunja
+                       to LAN-published-port access from the Pi only
 SETUP.md               full setup, deployment, and troubleshooting guide
+SECURITY.md            how to report a vulnerability
 ```
