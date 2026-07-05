@@ -1,0 +1,38 @@
+# Vikunja webhook -> Discord relay. Bridges two schemas that don't line up:
+# Vikunja's webhook feature (Settings > Webhook Notifications) POSTs its own
+# JSON ({event_name, time, data}) to a target URL; Apprise's /notify endpoint
+# (see ../apprise/) requires a {title, body} shape instead. Confirmed by
+# testing directly against the live Apprise container: posting a
+# Vikunja-shaped payload gets a 400 "Payload lacks minimum requirements" —
+# there's no way to wire the two together without something in between.
+#
+# Runs HERE on the Pi (not the Mac), fronted by Caddy at
+# vikunja-relay.mathewcsims.uk (LAN-gated, same pattern as Speedtest
+# Tracker/Apprise — see ../pi-reverse-proxy/Caddyfile) so Vikunja on the Mac
+# can reach it over a real hostname+TLS+LAN-gate, consistent with everything
+# else in this repo, rather than a bare published port. Joins `pi-shared` to
+# be reached by Caddy AND to reach the `apprise` container by name for the
+# forward.
+#
+# HMAC-SHA256 verification (X-Vikunja-Signature header, per Vikunja's own
+# webhook docs) is the real access control here — WEBHOOK_SECRET must match
+# exactly what's entered in Vikunja's own "Secret" field for the webhook.
+services:
+  vikunja-webhook-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vikunja-webhook-relay
+    restart: unless-stopped
+    environment:
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+    # No `ports:` — reached only by Caddy (vikunja-relay.mathewcsims.uk,
+    # LAN-gated), over `pi-shared`, by container name. Same no-published-port
+    # pattern as every other Pi-resident app in this repo.
+    networks:
+      - pi-shared
+
+networks:
+  pi-shared:
+    external: true
+    name: pi-shared

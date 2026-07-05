@@ -1,0 +1,43 @@
+# Apprise API (https://github.com/caronc/apprise-api) — a lightweight HTTP
+# front-end for the Apprise notification library. Stores one or more
+# notification-target URLs under a "config key", then anything on the LAN
+# can POST to /notify/<key> to fan a message out to every target registered
+# under that key, without the caller ever needing to know the underlying
+# webhook itself. Runs HERE on the Pi (not the Mac) for the same resilience
+# reason as ../nimbus/ and ../speedtest-tracker/ — a notifier can't depend on
+# the Mac being up, since the Mac going down is exactly the kind of thing
+# you want a notification about.
+#
+# NOTE: this is the `caronc/apprise` image (the actual apprise-api project) —
+# `caronc/apprise-api` is not a real published image, easy to mistype.
+#
+# Apprise has ZERO built-in authentication (confirmed in its own README) —
+# anyone who can reach it can read/write stored config and send
+# notifications through it. Caddy gates apprise.mathewcsims.uk to LAN
+# source IPs only (see ../pi-reverse-proxy/Caddyfile, same pattern as
+# Speedtest Tracker), since there's no in-app auth option to layer on top of
+# instead.
+#
+# No secrets in this file: the Discord webhook is registered into Apprise's
+# persistent config store once, after first startup, by
+# ../scripts/pass-seed-apprise.sh (fetches from Proton Pass, feeds it via
+# stdin into a script mounted read-only below) — never baked into an image
+# or env var here.
+services:
+  apprise:
+    image: caronc/apprise:1.5.1@sha256:1871ed736799f6320d5061b72a60507f62c8747026e830175dc4b9f8adbf78dd
+    container_name: apprise
+    restart: unless-stopped
+    volumes:
+      - ./config:/config
+      - ./scripts:/scripts:ro
+    # No `ports:` — reached only by Caddy (apprise.mathewcsims.uk, LAN-gated)
+    # over `pi-shared`, by container name. Same no-published-port pattern as
+    # Nimbus/Speedtest Tracker.
+    networks:
+      - pi-shared
+
+networks:
+  pi-shared:
+    external: true
+    name: pi-shared

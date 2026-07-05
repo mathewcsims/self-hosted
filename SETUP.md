@@ -8,8 +8,15 @@ recipe — see "Adding another app" near the end.
 |-----|-----|---------|-------|
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
-| Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
 | Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
+| Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
+| Speedtest Tracker | `https://speedtest.mathewcsims.uk` | **Pi**, LAN-only | admin credentials set at first boot, see its section below |
+| Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
+| Landing page | `https://mathewcsims.uk` | Mac `:3080` | static site, no login |
+| Karakeep | `https://karakeep.mathewcsims.uk` | Mac `:3000` | set up on first visit; signups disabled |
+| Apprise API | `https://apprise.mathewcsims.uk` | **Pi**, LAN-only | no login — LAN-gate is the only access control |
+| Uptime Kuma | `https://status.mathewcsims.uk` | **Pi** | set up on first visit; 2FA recommended |
+| Vikunja webhook relay | `https://vikunja-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — HMAC-signed requests only |
 
 ## Architecture
 
@@ -20,17 +27,19 @@ recipe — see "Adding another app" near the end.
                              │  forwarded to the Pi (10.0.1.19)
                              ▼
        ┌──────────────────────────────────────────────────┐
-       │  Raspberry Pi 10.0.1.19                           │
-       │  • Caddy: terminates HTTPS (Let's Encrypt, auto)  │
-       │  • routes by hostname:                            │
-       │      cp.mathewcsims.uk                → Mac:3923  │
-       │      prospect-ukri-tus.mathewcsims.uk → Mac:5230  │
-       │      vikunja.mathewcsims.uk           → Mac:3456  │
-       │      dashboard.mathewcsims.uk         → Nimbus,   │
-       │        a SEPARATE compose stack ALSO on this Pi,  │
-       │        reached by container name over a shared    │
-       │        Docker network — no host port published    │
-       │  • refuses any other hostname / bare IP           │
+       │ Raspberry Pi 10.0.1.19                           │
+       │ • Caddy: terminates HTTPS (Let's Encrypt, auto)  │
+       │ • Routes by hostname to either a Mac app (LAN    │
+       │   http) or a Pi-resident compose stack (by       │
+       │   container name over `pi-shared` — no host      │
+       │   port published):                               │
+       │     Mac:    mathewcsims.uk, cp, prospect-ukri-   │
+       │             tus, vikunja, blog, karakeep         │
+       │     Pi:     dashboard (Nimbus), status (Kuma),   │
+       │             speedtest*, apprise*, vikunja-relay* │
+       │     router: mc37* (its own admin UI)             │
+       │             (* = LAN clients only, WAN aborted)  │
+       │ • Refuses any other hostname / bare IP           │
        └──────────────────────────┬───────────────────────┘
                                   │ LAN http (one hop per Mac app)
                                   ▼
@@ -39,22 +48,28 @@ recipe — see "Adding another app" near the end.
                        copyparty  :3923  (data on disk)
                        memos-prospect-ukri-tus  :5230  (sqlite)
                        vikunja  :3456  (sqlite)
+                       blog (Ghost)  :2368  (MySQL)
+                       landing-page  :3080  (static)
+                       karakeep  :3000  (sqlite + Meilisearch)
 ```
 
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
 Let's Encrypt validation works normally and public URLs are clean, no ports.
-Nimbus is deliberately Pi-resident (not Mac-resident like the others) so the
-monitoring dashboard itself stays up if the Mac goes down for maintenance —
-see its section below for the different (and tighter) networking pattern that
-comes from Caddy and the monitored app being on the same host.
+Several apps (Nimbus, Speedtest Tracker, Apprise, Uptime Kuma, the Vikunja
+webhook relay) are deliberately Pi-resident rather than Mac-resident — either
+for resilience (the thing telling you something's down shouldn't depend on
+the Mac being up) or because they're pure machine-to-machine plumbing with no
+reason to cross hosts — see each app's own section below for the (tighter)
+networking pattern that comes from Caddy and the app being on the same host.
 
 ### File map
 
 `self-hosted/` holds one subfolder per app. Shared, cross-app bits
-(`autostart/`, `pi-reverse-proxy/`, this doc) live at the root. Everything
-deploys to the **Mac** except `pi-reverse-proxy/` and `nimbus/`, which deploy
-to the **Pi** (copied over and run with `docker compose`, not `podman compose`
-— the Pi runs Docker, not podman).
+(`autostart/`, `pi-reverse-proxy/`, `scripts/`, `pf-lockdown/`, this doc) live
+at the root. Apps deploy to the **Mac** (`podman compose`) by default; several
+deploy to the **Pi** instead (copied over and run with `docker compose`, not
+`podman compose` — the Pi runs Docker, not podman) — each app's own section
+below says which.
 
 | Path | Runs on | Purpose |
 |------|---------|---------|
@@ -66,18 +81,34 @@ to the **Pi** (copied over and run with `docker compose`, not `podman compose`
 | `copyparty/inbox/` | **Mac** | password drop-box uploads land here |
 | `memos-prospect-ukri-tus/compose.yaml` | **Mac** | Memos, container `memos-prospect-ukri-tus` (plain HTTP on the LAN) |
 | `memos-prospect-ukri-tus/data/` | **Mac** | Memos' sqlite DB + attachments |
-| `vikunja/compose.yaml` | **Mac** | Vikunja, pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from `.env` |
-| `vikunja/.env` | **Mac** | **real service secret — gitignored**; see `.env.example` |
+| `vikunja/compose.yaml` | **Mac** | Vikunja, pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
 | `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
 | `vikunja/files/` | **Mac** | task attachments |
-| `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only router-admin site); also creates the `pi-shared` Docker network |
+| `blog/compose.yaml` | **Mac** | Ghost + MySQL + traffic-analytics; reads secrets from Proton Pass |
+| `blog/db/` | **Mac** | **Ghost's MySQL datadir** |
+| `blog/content/` | **Mac** | **your posts, images, themes live here** |
+| `blog/traffic-analytics-data/` | **Mac** | Tinybird-backed analytics data |
+| `landing-page/compose.yaml` | **Mac** | static site for the bare apex domain — no secrets, no data dir |
+| `karakeep/compose.yaml` | **Mac** | Karakeep + Meilisearch; reads secrets from Proton Pass |
+| `karakeep/data/` | **Mac** | **your bookmarks/assets/archives live here** |
+| `karakeep/meilisearch-data/` | **Mac** | search index |
+| `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
 | `pi-reverse-proxy/.env` | **Pi** | domain, email, Mac IP — gitignored; see `.env.example` |
-| `nimbus/compose.yaml` | **Pi** | Nimbus: `nimbus` app + `nimbus-db` (Postgres); joins `pi-shared`; reads secrets from `.env` |
-| `nimbus/.env` | **Pi** | **real DB/JWT/admin/OIDC secrets — gitignored**; see `.env.example` |
+| `nimbus/compose.yaml` | **Pi** | Nimbus: `nimbus` app + `nimbus-db` (Postgres); joins `pi-shared`; reads secrets from Proton Pass |
 | `nimbus/db/` | **Pi** | **your monitoring config/history lives here** (Postgres datadir) |
 | `nimbus/uploads/` | **Pi** | Nimbus file uploads (e.g. custom icons) |
+| `speedtest-tracker/compose.yaml` | **Pi**, LAN-only | periodic speed tests, charted over time; reads secrets from Proton Pass |
+| `speedtest-tracker/config/` | **Pi** | **your speed test history lives here** |
+| `apprise/compose.yaml` | **Pi**, LAN-only | generic Discord notification relay for any script to `curl`; no secrets in the compose file itself |
+| `apprise/scripts/seed.py` | **Pi** | no-secrets helper invoked by `scripts/pass-seed-apprise.sh` to register the Discord webhook after deploy |
+| `apprise/config/` | **Pi** | **the registered notification-target config lives here** |
+| `uptime-kuma/compose.yaml` | **Pi** | uptime monitoring + public status page; no secrets — admin account set up via its own first-visit wizard |
+| `uptime-kuma/data/` | **Pi** | **your monitors, history, and settings live here** |
+| `vikunja-webhook-relay/compose.yaml` + `Dockerfile` + `relay.py` | **Pi**, LAN-only | bridges Vikunja's webhook payload shape to Apprise's `/notify` shape; reads `WEBHOOK_SECRET` from Proton Pass |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
+| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time |
+| `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only |
 
 ### Known values
 
@@ -1131,6 +1162,205 @@ now instead of left floating.
 
 ---
 
+## Apprise API (https://apprise.mathewcsims.uk) — LAN-only, runs on the Pi
+
+[Apprise API](https://github.com/caronc/apprise-api) — a small HTTP front-end
+for the [Apprise](https://github.com/caronc/apprise) notification library.
+Register one or more notification-target URLs under a "config key", then
+anything on the LAN can `POST /notify/<key>` to fan a message out to every
+target under that key, without the caller needing to know the underlying
+webhook. Runs on the **Pi**, not the Mac, same resilience reasoning as
+Nimbus/Speedtest Tracker: the Mac being down is exactly the kind of thing
+you want a notification about, so the notifier can't depend on it being up.
+
+**Chosen over building notifications straight into each app** because most
+apps here (Karakeep, backup scripts, etc.) have no native Discord/webhook
+support of their own — Apprise gives a single stable endpoint any script can
+`curl`, with the actual Discord webhook kept out of every individual app's
+config.
+
+**Image**: `caronc/apprise` (NOT `caronc/apprise-api` — that name isn't a
+real published image), pinned to `1.5.1` by tag and digest.
+
+**No built-in authentication at all** (confirmed in Apprise's own README) —
+anyone who can reach it can read/write stored config and send notifications
+through it. `pi-reverse-proxy/Caddyfile`'s `apprise.mathewcsims.uk` block
+gates on `remote_ip private_ranges` and `abort`s any non-LAN source, same
+LAN-only pattern as Speedtest Tracker — there's no in-app auth option to
+layer on top of instead.
+
+**Discord webhook, never stored in this repo:** the "Apprise" Proton Pass
+item holds one field, `DISCORD_WEBHOOK` (the raw
+`https://discord.com/api/webhooks/<id>/<token>` URL from Discord's own
+integration settings). `scripts/pass-seed-apprise.sh` fetches it, converts it
+to Apprise's own `discord://<id>/<token>/` scheme, and feeds it — over stdin
+the whole way (ssh stdin → a remote `read` → a here-string into `docker
+exec`'s stdin, landing in `apprise/scripts/seed.py`) — into a `POST /add/`
+call against the container, registering it under the config key
+`self-hosted`. Nothing secret ever touches a Bash argument, an env var, or a
+file. Re-run this script any time the webhook is rotated in Pass.
+
+**To bring it up on a fresh machine:**
+1. **Pi:** copy the `apprise/` folder over (`scp -r`) and
+   `docker compose up -d` — joins `pi-shared`, no port published to the host
+   at all (bring `pi-reverse-proxy` up first if `pi-shared` doesn't exist
+   yet).
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** its own explicit `A` record for `apprise.mathewcsims.uk` — no
+   blanket wildcard.
+4. **DrayTek LAN DNS**: add `apprise.mathewcsims.uk` → `10.0.1.19`, same as
+   every other app.
+5. From the Mac (or anywhere with `pass-cli` access to the vault): run
+   `./scripts/pass-seed-apprise.sh` to register the Discord webhook.
+6. Test from a LAN machine:
+   `curl -X POST https://apprise.mathewcsims.uk/notify/self-hosted -d 'body=test'`
+   — a message should land in Discord within a couple of seconds.
+
+---
+
+## Uptime Kuma (https://status.mathewcsims.uk) — runs on the Pi
+
+[Uptime Kuma](https://github.com/louislam/uptime-kuma) — self-hosted uptime
+monitoring and public status page for every hostname in this repo. Runs on
+the **Pi**, not the Mac, for the same resilience reason as Nimbus: the thing
+telling you an app is down needs to still be up itself if the Mac isn't.
+
+**Image**: `louislam/uptime-kuma`, pinned to `2.4.0` by tag and digest.
+Checked Uptime Kuma's own published security advisories: 4 historical CVEs
+found, all patched well before this release.
+
+**Login is Socket.IO-based, not a REST path** (confirmed by reading
+`server/server.js` and `server/socket-handlers/general-socket-handler.js` at
+this exact tag) — the usual Caddy path-matched rate-limit zone used for
+every other app's auth endpoint in this repo doesn't apply here, and Kuma's
+own rate limiter is a single global counter, not per-IP. Only the general
+per-IP zone (`status.mathewcsims.uk`'s `general_ratelimit` import) covers
+login attempts. **Enable Two-Factor Authentication in Settings after first
+login** as the compensating control — this is genuinely important here,
+more so than for the other admin-login apps in this repo.
+
+**Notifications go through Kuma's OWN bundled Apprise CLI or its native
+Discord provider (Settings → Notifications), not through the standalone
+Apprise container above.** Kuma bundles its own `apprise` binary and shells
+out to it locally (`server/notification-providers/apprise.js`) — routing
+through the separate `apprise-api` container would just be an unnecessary
+extra hop for Kuma's own alerts. The standalone Apprise container stays
+useful for everything else that wants to fire a notification without
+embedding a webhook of its own.
+
+**No env-var-based admin bootstrap exists for this app** (confirmed —
+unlike Nimbus's `INITIAL_ADMIN_EMAIL`/`PASSWORD`), so the very first visit
+to `https://status.mathewcsims.uk` runs Kuma's own setup wizard: choose an
+admin username and password there directly, nothing to configure in
+`compose.yaml` for this.
+
+**To bring it up on a fresh machine:**
+1. **Pi:** copy the `uptime-kuma/` folder over (`scp -r`) and
+   `docker compose up -d` — joins `pi-shared`, no port published to the host
+   at all.
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** its own explicit `A` record for `status.mathewcsims.uk` — no
+   blanket wildcard. No DrayTek LAN DNS override is needed here (unlike the
+   LAN-only apps) since this one is meant to be fully public.
+4. Visit `https://status.mathewcsims.uk`, complete the setup wizard (admin
+   username/password), then:
+   - Enable 2FA in Settings.
+   - Enable "Trust Proxy" in Settings → General, so Kuma logs/displays real
+     client IPs rather than Caddy's own container IP.
+   - Add a monitor for each public hostname in the [Apps](README.md#apps)
+     table.
+   - Wire up a notification provider (native Discord webhook, or the
+     bundled Apprise CLI) under Settings → Notifications, and attach it to
+     each monitor.
+
+---
+
+## Vikunja webhook relay (https://vikunja-relay.mathewcsims.uk) — LAN-only, runs on the Pi
+
+A small purpose-built bridge, not a third-party app: Vikunja's own webhook
+feature (Settings → Webhook Notifications) POSTs its own JSON shape
+(`{event_name, time, data}`) to a target URL when task events fire; the
+Apprise container's `/notify` endpoint (see above) requires a `{title,
+body}` shape instead. Confirmed directly against the live Apprise
+container: posting a Vikunja-shaped payload gets back
+`{"error": "Payload lacks minimum requirements"}` (400) — the two don't
+line up on their own, and Vikunja has no native Discord/Apprise
+notification provider of its own (unlike Uptime Kuma) to fall back on
+either. `vikunja-webhook-relay/relay.py` sits in between: verifies
+Vikunja's `X-Vikunja-Signature` (HMAC-SHA256 of the raw body, per
+[Vikunja's webhook docs](https://vikunja.io/docs/webhooks/)), pulls the
+task title out of `task.overdue`/`task.reminder.fired`/`tasks.overdue`
+events, and forwards a proper `{title, body}` to the Apprise container by
+container name over `pi-shared`.
+
+**Own code, not a pulled image** — `vikunja-webhook-relay/Dockerfile`
+builds from `python:3.13-alpine`, pinned by tag and digest, running
+`relay.py` (stdlib only, no extra pip dependencies to track for CVEs).
+
+**Real access control is HMAC verification inside the relay itself**, not
+the LAN-gate — `WEBHOOK_SECRET` must match exactly what's entered in
+Vikunja's own "Secret" field, and every request is rejected with 401
+unless the signature checks out. The LAN-gate on
+`vikunja-relay.mathewcsims.uk` (same `remote_ip private_ranges` + `abort`
+pattern as Apprise/Speedtest Tracker) is defense in depth on top of that,
+for consistency with every other machine-to-machine app in this repo.
+
+**To bring it up on a fresh machine:**
+1. Generate the secret and create its Pass item — run this yourself, under
+   your own personal `pass-cli` session (agent tokens are read-only, can't
+   create items):
+   ```
+   ./scripts/pass-create-vikunja-relay-secret.sh
+   ```
+   It prints the generated secret once at the end — copy it for step 4.
+2. **Pi:** copy the `vikunja-webhook-relay/` folder over (`scp -r`), then
+   deploy with secrets fetched live from Pass:
+   ```
+   ./scripts/pass-deploy-remote.sh vikunja-webhook-relay mathew@babel '~/vikunja-webhook-relay'
+   ```
+   Quote the tilde — an unquoted `~/vikunja-webhook-relay` expands on the
+   Mac (this machine), not the Pi, before it ever reaches `ssh`. First
+   deploy auto-builds the image since none exists yet on the Pi; after
+   editing `relay.py`/`Dockerfile`, redeploy with
+   `docker compose up -d --build` explicitly instead — this project uses
+   `build:`, not a pulled `image:`, so a plain `up -d` won't pick up code
+   changes to an image that already exists.
+3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+4. **DNS:** its own explicit `A` record for `vikunja-relay.mathewcsims.uk`,
+   plus a DrayTek LAN DNS entry → `10.0.1.19` (same as every other
+   LAN-only app, since Caddy's LAN-gate needs the request to actually
+   arrive from a private IP).
+5. In Vikunja itself (Settings → Webhook Notifications): **Target URL** =
+   `https://vikunja-relay.mathewcsims.uk/webhook`, **Secret** = the value
+   from step 1, then tick whichever events you want notifications for.
+6. Test end-to-end with a correctly-signed request (this is how the
+   initial deploy was verified — computes the HMAC using the real secret,
+   fetched from Pass, entirely in-memory, never printed):
+   ```sh
+   pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "VikunjaWebhookRelay" --output json \
+       | python3 -c '
+   import json, sys, hmac, hashlib, subprocess
+   d = json.load(sys.stdin)
+   secret = None
+   for s in d["item"]["content"]["content"]["Custom"]["sections"]:
+       for f in s["section_fields"]:
+           if f["name"] == "WEBHOOK_SECRET":
+               secret = list(f["content"].values())[0]
+   body = b"""{"event_name":"task.overdue","time":"2026-07-05T12:00:00Z","data":{"task":{"title":"Test"}}}"""
+   sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+   subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}\n",
+       "-X", "POST", "https://vikunja-relay.mathewcsims.uk/webhook",
+       "-H", f"X-Vikunja-Signature: {sig}", "--data-binary", body])
+   '
+   ```
+   A `200` here, followed by "Sent Discord notification" in
+   `docker logs apprise` on the Pi, confirms the full chain end-to-end.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
@@ -1192,6 +1422,42 @@ if the Mac is down)
 5. Auto-start: nothing to add — Docker's `restart: unless-stopped` + Docker
    starting at boot (Pi default) covers it, same as Caddy. The Mac's
    `autostart/` launchd agent is irrelevant to anything Pi-resident.
+
+**If the app has no authentication of its own, or is pure machine-to-machine
+plumbing** (Apprise, Speedtest Tracker, the Vikunja webhook relay): gate the
+Caddy hostname block to LAN clients only, rather than exposing it to the
+internet with just a hope that whatever's behind it is safe. The pattern is
+always the same — see `apprise.mathewcsims.uk` in `pi-reverse-proxy/Caddyfile`
+for a concrete example:
+```
+example.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit example
+
+	@lan remote_ip private_ranges
+	handle @lan {
+		reverse_proxy example-container:port
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+```
+A real public `A` record is still needed for cert issuance even though only
+LAN clients can ever use the site — the DrayTek LAN DNS entry is what makes
+LAN devices actually resolve to the Pi's LAN IP instead of round-tripping out
+to the WAN IP and back in.
+
+**If the app is our own code, not a pulled image** (the Vikunja webhook
+relay): use `build: {context: ., dockerfile: Dockerfile}` in place of
+`image:`, and pin the Dockerfile's own `FROM` by tag and digest, same
+discipline as every pulled image elsewhere in this repo. The first
+`docker compose up -d` on a fresh machine builds automatically since no
+image exists yet — but after editing the app's own code, a plain `up -d`
+will **not** pick up the change (compose only builds when the image is
+missing), so redeploy with `docker compose up -d --build` explicitly
+instead.
 
 ---
 

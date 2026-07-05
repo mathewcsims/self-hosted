@@ -19,6 +19,9 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 | [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
 | [Karakeep](https://github.com/karakeep-app/karakeep) | `karakeep.mathewcsims.uk` | Mac (migrated from a separate Tailscale-only deployment) |
+| [Apprise API](https://github.com/caronc/apprise-api) | `apprise.mathewcsims.uk` | Pi (LAN-only — generic notification relay to Discord) |
+| [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
+| Vikunja webhook relay (this repo) | `vikunja-relay.mathewcsims.uk` | Pi (LAN-only — bridges Vikunja's webhook events to Apprise) |
 
 ## Architecture, in short
 
@@ -31,7 +34,10 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ blog.mathewcsims.uk              → Mac
                                   ├─ karakeep.mathewcsims.uk          → Mac
                                   ├─ dashboard.mathewcsims.uk         → itself (Pi)
-                                  └─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
+                                  ├─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
+                                  ├─ apprise.mathewcsims.uk           → itself (Pi, LAN clients only)
+                                  ├─ status.mathewcsims.uk            → itself (Pi)
+                                  └─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
 ```
 
 Each app is its own `podman-compose`/`docker-compose` project in its own
@@ -72,6 +78,9 @@ landing-page/          compose.yaml, static site content (Mac, no secrets)
 karakeep/              compose.yaml, bookmark/asset data, search index (Mac)
 nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
+apprise/               compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
+uptime-kuma/           compose.yaml (Pi — deployed via scp + docker compose)
+vikunja-webhook-relay/ compose.yaml + Dockerfile + relay.py (Pi — deployed via scp + docker compose, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass

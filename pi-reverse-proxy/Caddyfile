@@ -319,6 +319,65 @@ karakeep.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3000
 }
 
+# ── Apprise (running HERE on the Pi, LAN-ONLY) ────────────────────────────
+# Clean public URL https://apprise.mathewcsims.uk, but only for LAN clients —
+# same pattern as Speedtest Tracker above: a real public A-record lets Caddy
+# obtain a Let's Encrypt cert, but only private/LAN source IPs get proxied
+# through. Apprise has NO built-in authentication at all (confirmed in its
+# own README) — this LAN-gate is its only access control, since there's no
+# in-app auth option to layer on top of instead. See ../apprise/compose.yaml.
+apprise.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit apprise
+
+	@lan remote_ip private_ranges
+	handle @lan {
+		reverse_proxy apprise:8000
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
+# ── Uptime Kuma (running HERE on the Pi) ──────────────────────────────────
+# Clean public URL https://status.mathewcsims.uk — a public status page plus
+# a login-gated admin dashboard for monitoring every other hostname in this
+# repo. Caddy's reverse_proxy automatically upgrades WebSocket connections
+# (Kuma's live dashboard runs over Socket.IO) — nothing extra needed here for
+# that. Only the general per-IP rate limit applies: Kuma's login is
+# Socket.IO-based, not a REST path, so the usual path-matched Caddy auth zone
+# (see every other app above) doesn't apply here — 2FA in Kuma's own Settings
+# is the compensating control instead. See ../uptime-kuma/compose.yaml.
+status.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit status
+	reverse_proxy uptime-kuma:3001
+}
+
+# ── Vikunja webhook relay (running HERE on the Pi, LAN-ONLY) ─────────────
+# Clean public URL https://vikunja-relay.mathewcsims.uk, but only for LAN
+# clients — same pattern as Apprise/Speedtest Tracker above. Bridges
+# Vikunja's webhook payload shape to Apprise's /notify shape (see
+# ../vikunja-webhook-relay/compose.yaml for why this exists at all — the two
+# don't line up without something in between). The real access control is
+# HMAC-SHA256 verification inside the relay itself (X-Vikunja-Signature),
+# not this LAN-gate — but every other machine-to-machine app in this repo
+# gets one anyway, so this does too, for consistency and defense in depth.
+vikunja-relay.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit vikunja_relay
+
+	@lan remote_ip private_ranges
+	handle @lan {
+		reverse_proxy vikunja-webhook-relay:8080
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.
