@@ -105,7 +105,12 @@ services:
       # 3000, so this is never directly internet-facing.
       - "10.0.1.14:3000:3000"
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "next-server"]
+      # Inherited from the original ScaleTail template as `pgrep -f
+      # next-server` — that binary doesn't exist in this image at all
+      # (confirmed: `exec: pgrep: not found`), so the check always failed
+      # regardless of actual app health, showing "unhealthy" forever. This
+      # image does have wget, and Karakeep exposes a real health endpoint.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
