@@ -263,11 +263,23 @@ dashboard.mathewcsims.uk {
 # Caddy's own container IP as the "client", not real LAN clients — the
 # request-source check has to happen here, at the actual network edge, not
 # in the app.
+#
+# `100.64.0.0/10` alongside `private_ranges`: Tailscale assigns every
+# device an IP in this CGNAT range, which Caddy's own `private_ranges`
+# shortcut does NOT include (confirmed directly from Caddy's source,
+# internal/ranges.go — it's just RFC1918 + loopback). Without this, a
+# connection arriving via the tailnet (e.g. babel, this same Pi, acting as
+# a Tailscale subnet router/exit node) would always be rejected here, even
+# though it's exactly the kind of "trusted network" access this LAN-gate is
+# meant to allow. This alone only helps once the connection actually
+# *arrives* carrying a Tailscale-range source IP — see SETUP.md's Tailscale
+# DNS section for the other half (making these hostnames resolve to
+# 10.0.1.19 in the first place while tailnet-connected).
 speedtest.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit speedtest
 
-	@lan remote_ip private_ranges
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		reverse_proxy speedtest-tracker:80
 	}
@@ -330,7 +342,7 @@ apprise.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit apprise
 
-	@lan remote_ip private_ranges
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		reverse_proxy apprise:8000
 	}
@@ -368,7 +380,7 @@ vikunja-relay.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit vikunja_relay
 
-	@lan remote_ip private_ranges
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		reverse_proxy vikunja-webhook-relay:8080
 	}
@@ -397,7 +409,7 @@ backup.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit backup
 
-	@lan remote_ip private_ranges
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		reverse_proxy https://kopia-server:51515 {
 			transport http {
@@ -420,7 +432,7 @@ backup.mathewcsims.uk {
 # "LAN DNS" entry (mc37.mathewcsims.uk → 10.0.1.19) so LAN devices reach the Pi
 # directly and their source IP is private (passing the check below).
 mc37.mathewcsims.uk {
-	@lan remote_ip private_ranges
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		reverse_proxy https://10.0.1.1:8443 {
 			transport http {

@@ -465,6 +465,44 @@ resolved the hostname.
 
 ---
 
+## Accessing LAN-only apps over Tailscale
+
+The Pi runs Tailscale, configured as both a subnet router (advertising the
+LAN) and an exit node — meaning devices elsewhere can reach this network
+through it, including while off any physical LAN entirely. Every LAN-gated
+app in this repo (`mc37`, `speedtest`, `apprise`, `vikunja-relay`, `backup`)
+needs two separate things to actually be reachable this way, and both were
+missing until this was diagnosed directly (bug report → root-caused → fixed
+→ verified working, not assumed):
+
+1. **Caddy has to trust the connection's source IP.** Every LAN-gated block
+   uses `@lan remote_ip private_ranges 100.64.0.0/10` — the appended CIDR is
+   Tailscale's own address range for every device on a tailnet. Caddy's
+   built-in `private_ranges` shortcut does **not** include this (confirmed
+   directly from Caddy's own source — it's just the standard RFC1918 ranges
+   plus loopback), so without this addition, a tailnet-sourced connection
+   was always rejected here regardless of anything else.
+
+2. **The hostname has to actually resolve to the Pi's LAN IP while
+   tailnet-connected**, not the public IP — otherwise the request just goes
+   out to the internet and back in through the router like any other WAN
+   client, and gets the same "closed connection" as anyone else. This is a
+   [Tailscale DNS](https://tailscale.com/kb/1054/dns) setting, not something
+   this repo configures directly. One specific trap worth knowing:
+   Tailscale's **split DNS** (per-domain nameserver overrides) is ignored by
+   default on devices using an exit node — only a **global** nameserver
+   (applied to all DNS queries, not tied to one domain) reliably applies
+   regardless of exit-node use. If DNS resolution for these hostnames is
+   handled by a global nameserver that already returns LAN IPs for private
+   subdomains (rather than a per-domain split-DNS rule), this works
+   correctly without any further Tailscale-side configuration.
+
+With both of these true, a LAN-gated app is reachable over Tailscale exactly
+as if you were on the physical LAN — confirmed working end-to-end, not just
+theorized.
+
+---
+
 ## Router admin via mc37.mathewcsims.uk (LAN-only)
 
 A second Caddy site proxies `https://mc37.mathewcsims.uk` → the DrayTek admin at
