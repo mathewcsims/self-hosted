@@ -75,6 +75,30 @@ services:
       VIKUNJA_SERVICE_IPEXTRACTIONMETHOD: xff
       VIKUNJA_SERVICE_TRUSTEDPROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 
+      # Vikunja's outgoing-request client (used for webhook delivery and
+      # Trello/Todoist migration imports) has a built-in SSRF guard
+      # (code.dny.dev/ssrf) that blocks any target resolving to a
+      # non-globally-routable IP by default — confirmed directly from
+      # pkg/utils/httpclient.go. This silently blocked every webhook to
+      # ../vikunja-webhook-relay/ (LAN-hosted, resolves via DrayTek LAN DNS
+      # to 10.0.1.19): Vikunja's own logs showed the reminder cron firing
+      # exactly on time and the event dispatching correctly, but the actual
+      # HTTP POST was rejected before it left the container with "prohibited
+      # IP address: 10.0.1.19 is not a permitted destination (denied by:
+      # 10.0.0.0/8)". The SSRF guard exists to stop an attacker-controlled
+      # account from using a webhook target to probe the internal network —
+      # not a real risk here, since self-registration is permanently off
+      # (VIKUNJA_SERVICE_ENABLEREGISTRATION above) and "mat" is the only
+      # account that will ever exist. Confirmed explicitly with the user
+      # before enabling — this is the officially supported way to allow a
+      # self-hosted, same-LAN webhook target, rather than relying on the
+      # router's NAT hairpin behavior (uncertain, and would round-trip two
+      # LAN devices through the internet for no reason). Env var change —
+      # needs `podman compose up -d` (via scripts/pass-deploy.sh, never a
+      # bare `podman compose up -d`, or VIKUNJA_SERVICE_SECRET silently
+      # reverts to blank), not `restart`.
+      VIKUNJA_OUTGOINGREQUESTS_ALLOWNONROUTABLEIPS: "true"
+
       # Not needed: this proxies cross-origin requests for the desktop app,
       # which isn't in use. Our reverse-proxied web UI is same-origin (no CORS
       # involved at all), so disabling this is pure attack-surface reduction.
