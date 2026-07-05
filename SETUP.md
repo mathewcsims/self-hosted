@@ -17,6 +17,7 @@ recipe — see "Adding another app" near the end.
 | Apprise API | `https://apprise.mathewcsims.uk` | **Pi**, LAN-only | no login — LAN-gate is the only access control |
 | Uptime Kuma | `https://status.mathewcsims.uk` | **Pi** | set up on first visit; 2FA recommended |
 | Vikunja webhook relay | `https://vikunja-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — HMAC-signed requests only |
+| Kopia backups | `https://backup.mathewcsims.uk` | **Pi**, LAN-only (Mac also backs up, no daemon) | username + password, see its section below |
 
 ## Architecture
 
@@ -26,21 +27,22 @@ recipe — see "Adding another app" near the end.
                DrayTek Vigor2866  (WAN 80/443)
                              │  forwarded to the Pi (10.0.1.19)
                              ▼
-       ┌──────────────────────────────────────────────────┐
-       │ Raspberry Pi 10.0.1.19                           │
-       │ • Caddy: terminates HTTPS (Let's Encrypt, auto)  │
-       │ • Routes by hostname to either a Mac app (LAN    │
-       │   http) or a Pi-resident compose stack (by       │
-       │   container name over `pi-shared` — no host      │
-       │   port published):                               │
-       │     Mac:    mathewcsims.uk, cp, prospect-ukri-   │
-       │             tus, vikunja, blog, karakeep         │
-       │     Pi:     dashboard (Nimbus), status (Kuma),   │
-       │             speedtest*, apprise*, vikunja-relay* │
-       │     router: mc37* (its own admin UI)             │
-       │             (* = LAN clients only, WAN aborted)  │
-       │ • Refuses any other hostname / bare IP           │
-       └──────────────────────────┬───────────────────────┘
+       ┌───────────────────────────────────────────────────┐
+       │ Raspberry Pi 10.0.1.19                            │
+       │ • Caddy: terminates HTTPS (Let's Encrypt, auto)   │
+       │ • Routes by hostname to either a Mac app (LAN     │
+       │   http) or a Pi-resident compose stack (by        │
+       │   container name over `pi-shared` — no host       │
+       │   port published):                                │
+       │     Mac:    mathewcsims.uk, cp, prospect-ukri-    │
+       │             tus, vikunja, blog, karakeep          │
+       │     Pi:     dashboard (Nimbus), status (Kuma),    │
+       │             speedtest*, apprise*, vikunja-relay*, │
+       │             backup* (Kopia)                       │
+       │     router: mc37* (its own admin UI)              │
+       │             (* = LAN clients only, WAN aborted)   │
+       │ • Refuses any other hostname / bare IP            │
+       └──────────────────────────┬────────────────────────┘
                                   │ LAN http (one hop per Mac app)
                                   ▼
                      Mac 10.0.1.14 — one podman-compose
@@ -56,7 +58,8 @@ recipe — see "Adding another app" near the end.
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
 Let's Encrypt validation works normally and public URLs are clean, no ports.
 Several apps (Nimbus, Speedtest Tracker, Apprise, Uptime Kuma, the Vikunja
-webhook relay) are deliberately Pi-resident rather than Mac-resident — either
+webhook relay, Kopia's server) are deliberately Pi-resident rather than
+Mac-resident — either
 for resilience (the thing telling you something's down shouldn't depend on
 the Mac being up) or because they're pure machine-to-machine plumbing with no
 reason to cross hosts — see each app's own section below for the (tighter)
@@ -106,8 +109,11 @@ below says which.
 | `uptime-kuma/compose.yaml` | **Pi** | uptime monitoring + public status page; no secrets — admin account set up via its own first-visit wizard |
 | `uptime-kuma/data/` | **Pi** | **your monitors, history, and settings live here** |
 | `vikunja-webhook-relay/compose.yaml` + `Dockerfile` + `relay.py` | **Pi**, LAN-only | bridges Vikunja's webhook payload shape to Apprise's `/notify` shape; reads `WEBHOOK_SECRET` from Proton Pass |
+| `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
+| `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
+| `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data + the NAS share |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
-| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time |
+| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only |
 
 ### Known values
@@ -117,6 +123,7 @@ below says which.
 | Mac LAN IP | `10.0.1.14` |
 | Pi LAN IP | `10.0.1.19` |
 | Public/WAN IP | `curl -4 ifconfig.me` (static) |
+| NAS ("Eddie") | `eddie.nas` / `10.0.1.12`, SMB — see the Kopia section for the `AppleBackups` share |
 
 Give **both the Pi and the Mac a fixed LAN IP** via a DrayTek DHCP reservation
 (Part 4) so the forward and proxy config never break.
@@ -283,6 +290,50 @@ Verify once propagated (from anywhere):
 dig +short cp.mathewcsims.uk        # must return your WAN IP
 ```
 
+### Automating this: `scripts/dns-digitalocean.sh` and `scripts/dns-nextdns.sh`
+
+Both the registrar (DigitalOcean, which manages `mathewcsims.uk`'s DNS) and
+NextDNS (used as the LAN resolver — see "Accessing from inside your own
+LAN" below) have API tokens stored in Proton Pass, letting these two steps
+be scripted instead of done by hand in each dashboard for every new app:
+
+- **"Digital Ocean DNS"** Pass item — `DIGITAL_OCEAN_DNS_TOKEN`, a token
+  scoped to DNS management. `scripts/dns-digitalocean.sh` manages the
+  actual public `A` records:
+  ```
+  ./scripts/dns-digitalocean.sh list
+  ./scripts/dns-digitalocean.sh add <subdomain> <ip>      # e.g. add cp 185.137.221.35
+  ./scripts/dns-digitalocean.sh remove <subdomain>
+  ```
+  DigitalOcean's API takes the record name *relative* to the zone (`cp`,
+  not `cp.mathewcsims.uk`; `@` for the bare apex) — confirmed directly
+  against the live API, not assumed.
+
+- **"NextDNS"** Pass item — `NEXT_DNS_TOKEN`. `scripts/dns-nextdns.sh`
+  manages the LAN rewrites (what this repo used to call "DrayTek LAN DNS,"
+  before establishing that it's actually a NextDNS feature — see below):
+  ```
+  ./scripts/dns-nextdns.sh list
+  ./scripts/dns-nextdns.sh add <fqdn> <ip>                # e.g. add cp.mathewcsims.uk 10.0.1.19
+  ./scripts/dns-nextdns.sh remove <fqdn>
+  ```
+  Rewrites aren't in NextDNS's own public API docs (https://nextdns.github.io/api/,
+  still marked "beta") at all — confirmed by fetching a live profile object
+  directly and finding a real `rewrites` array despite its absence from the
+  documented schema. The profile ID is auto-discovered via `GET /profiles`
+  each run, so nothing needs hardcoding.
+
+Both scripts fetch their token from Pass and call the API entirely from
+within a single Python process (`urllib.request`, not a `curl` subprocess)
+so the token never touches an external command's argv. Neither needs a
+personal pass-cli session — like the deploy scripts, they auto-login using
+`SECRET_ACCESS_TOKEN` from the repo-root `.env` if no session is active.
+
+NextDNS's API sits behind Cloudflare, which 403s (error 1010) against
+Python's default `urllib` User-Agent — worth knowing if you ever see that
+specific error from a modified version of this script; a plain identifying
+`User-Agent` header clears it.
+
 ---
 
 ## Part 4 — DrayTek Vigor2866
@@ -393,17 +444,24 @@ permissions are `w: inbox` + `A: admin` on the `[/inbox]` volume.
 ## Accessing from inside your own LAN (split DNS)
 
 From *outside* (mobile data) `https://cp.mathewcsims.uk` goes WAN IP → router →
-Pi and just works. From *inside* your LAN it may time out, because many routers
-(including the DrayTek by default here) don't "hairpin" a connection to your own
-public IP back inside. Cleanest fix — make the name resolve straight to the Pi
+Pi and just works. From *inside* your LAN it may time out, since NAT hairpin
+support varies by router and hasn't been reliably established one way or the
+other here. Regardless of whether hairpin works, it's worth avoiding the
+round-trip anyway — two devices on the same network shouldn't need to go out
+to the WAN and back. Cleanest way — make the name resolve straight to the Pi
 for LAN clients:
 
-**DrayTek ▸ Applications ▸ LAN DNS / DNS Cache** → add a profile:
-- Domain name: `cp.mathewcsims.uk`
-- IP address: `10.0.1.19` (the Pi)
+**NextDNS rewrite** (not a DrayTek feature — this repo previously
+mis-described this as "DrayTek LAN DNS," which was never actually in use):
+add a rewrite for `cp.mathewcsims.uk` → `10.0.1.19` (the Pi) in your NextDNS
+configuration.
 
-Now LAN devices reach the Pi directly (valid cert, no router round-trip), while
-the outside world still uses the public IP.
+Now LAN devices (using NextDNS as their resolver) reach the Pi directly (valid
+cert, no router round-trip), while the outside world still uses the public IP.
+Access control for LAN-only apps in this repo is never based on this DNS
+behavior — it's Caddy's own `remote_ip private_ranges` check against the
+real source IP of the connection, which holds regardless of how the client
+resolved the hostname.
 
 ---
 
@@ -415,10 +473,12 @@ A second Caddy site proxies `https://mc37.mathewcsims.uk` → the DrayTek admin 
 
 1. **Public A record** (registrar): `mc37` → your WAN IP. Needed only so Caddy
    can obtain a Let's Encrypt cert; actual access is still blocked to non-LAN.
-2. **DrayTek LAN DNS** (Applications ▸ LAN DNS / DNS Cache): `mc37.mathewcsims.uk`
-   → `10.0.1.19`. This makes LAN devices reach the Pi directly, so their source
-   IP is private and passes the guard. (LAN devices must use the DrayTek as their
-   DNS resolver for this to apply.)
+2. **NextDNS rewrite**: `mc37.mathewcsims.uk` → `10.0.1.19`. This makes LAN
+   devices reach the Pi directly, so their source IP is private and passes the
+   guard. (Devices must be using NextDNS as their resolver for this to apply —
+   this is a NextDNS-level rewrite, not a DrayTek router feature, despite the
+   name of this section's original heading; corrected after testing showed the
+   DrayTek's own "LAN DNS" feature was never actually in use here.)
 3. Copy the updated `Caddyfile` to the Pi and `docker compose restart caddy`.
 
 The admin site's hostname (`mc37.mathewcsims.uk`) and backend (`10.0.1.1:8443`)
@@ -442,7 +502,7 @@ stay distinct from an unrelated pre-existing Memos stack on this Mac.
 2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
    `docker compose restart caddy`.
 3. **DNS** (registrar): add `A` record `prospect-ukri-tus` → your WAN IP.
-4. **DrayTek LAN DNS** (Applications ▸ LAN DNS / DNS Cache): add
+4. **NextDNS rewrite**: add
    `prospect-ukri-tus.mathewcsims.uk` → `10.0.1.19`, so LAN devices resolve
    straight to the Pi (same reasoning as the `cp` entry below).
 5. Watch `docker compose logs -f caddy` on the Pi for the cert, then visit
@@ -574,7 +634,7 @@ join it (it already is, so this only matters if you ever tear both down).
    docker compose logs -f nimbus   # watch first-boot migrations
    ```
 3. **DNS** (registrar): add `A` record `dashboard` → your WAN IP.
-4. **DrayTek LAN DNS**: add `dashboard.mathewcsims.uk` → `10.0.1.19`.
+4. **NextDNS rewrite**: add `dashboard.mathewcsims.uk` → `10.0.1.19`.
 5. Watch `docker compose logs -f caddy` (in `pi-reverse-proxy/`) for the cert,
    then visit `https://dashboard.mathewcsims.uk`.
 
@@ -767,7 +827,7 @@ podman run --rm -v "$PWD/files:/files" -v "$PWD/db:/db" docker.io/library/alpine
    registrar (there is no blanket wildcard covering `*.mathewcsims.uk` — every
    hostname in this repo has its own individually-created record, added via
    the DigitalOcean API).
-5. **DrayTek LAN DNS**: add `vikunja.mathewcsims.uk` → `10.0.1.19`, same as
+5. **NextDNS rewrite**: add `vikunja.mathewcsims.uk` → `10.0.1.19`, same as
    the other apps, for clean access from inside your own network.
 6. Watch `docker compose logs -f caddy` (in `pi-reverse-proxy/`) for the cert,
    then visit `https://vikunja.mathewcsims.uk`.
@@ -859,7 +919,7 @@ create it as root first and fixing ownership after is the harder path.
 3. **DNS:** add an explicit `A` record for `speedtest` → the Pi's WAN IP at
    the registrar — there is no blanket wildcard, so every new subdomain needs
    its own record, added via the DigitalOcean API.
-4. **DrayTek LAN DNS** (Applications ▸ LAN DNS / DNS Cache): add
+4. **NextDNS rewrite**: add
    `speedtest.mathewcsims.uk` → `10.0.1.19`, same as every other app, so LAN
    devices resolve straight to the Pi rather than round-tripping out to the
    WAN IP and back in (NAT hairpinning) — some routers don't support that
@@ -1053,7 +1113,7 @@ cookie-banner obligation per Ghost's own docs.
    individually-created `A` record, added via the DigitalOcean API — so don't
    assume an existing record, repointed or otherwise, exists for every domain
    being migrated onto this stack later.
-5. **DrayTek LAN DNS**: add `blog.mathewcsims.uk` → `10.0.1.19`, same as
+5. **NextDNS rewrite**: add `blog.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 6. Log in at `https://blog.mathewcsims.uk/ghost/` with the owner credentials
    from `blog/.env`.
@@ -1104,7 +1164,7 @@ added via the DigitalOcean API.
 2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
    `docker compose restart caddy`.
 3. **DNS:** an explicit `A` record for the bare domain — see above.
-4. **DrayTek LAN DNS**: add `mathewcsims.uk` → `10.0.1.19`, same as every
+4. **NextDNS rewrite**: add `mathewcsims.uk` → `10.0.1.19`, same as every
    other app.
 
 ---
@@ -1157,7 +1217,7 @@ now instead of left floating.
 3. **DNS:** needs its own explicit A record for `karakeep.mathewcsims.uk` —
    no blanket wildcard exists (confirmed against the actual DNS zone during
    the ArchiveBox work), every single-hostname app here has its own record.
-4. **DrayTek LAN DNS**: add `karakeep.mathewcsims.uk` → `10.0.1.19`, same as
+4. **NextDNS rewrite**: add `karakeep.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 
 ---
@@ -1209,7 +1269,7 @@ file. Re-run this script any time the webhook is rotated in Pass.
    `docker compose restart caddy`.
 3. **DNS:** its own explicit `A` record for `apprise.mathewcsims.uk` — no
    blanket wildcard.
-4. **DrayTek LAN DNS**: add `apprise.mathewcsims.uk` → `10.0.1.19`, same as
+4. **NextDNS rewrite**: add `apprise.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 5. From the Mac (or anywhere with `pass-cli` access to the vault): run
    `./scripts/pass-seed-apprise.sh` to register the Discord webhook.
@@ -1262,7 +1322,7 @@ admin username and password there directly, nothing to configure in
 2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
    `docker compose restart caddy`.
 3. **DNS:** its own explicit `A` record for `status.mathewcsims.uk` — no
-   blanket wildcard. No DrayTek LAN DNS override is needed here (unlike the
+   blanket wildcard. No NextDNS rewrite is needed here (unlike the
    LAN-only apps) since this one is meant to be fully public.
 4. Visit `https://status.mathewcsims.uk`, complete the setup wizard (admin
    username/password), then:
@@ -1330,7 +1390,7 @@ for consistency with every other machine-to-machine app in this repo.
 3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
    `docker compose restart caddy`.
 4. **DNS:** its own explicit `A` record for `vikunja-relay.mathewcsims.uk`,
-   plus a DrayTek LAN DNS entry → `10.0.1.19` (same as every other
+   plus a NextDNS rewrite → `10.0.1.19` (same as every other
    LAN-only app, since Caddy's LAN-gate needs the request to actually
    arrive from a private IP).
 5. In Vikunja itself (Settings → Webhook Notifications): **Target URL** =
@@ -1358,6 +1418,207 @@ for consistency with every other machine-to-machine app in this repo.
    ```
    A `200` here, followed by "Sent Discord notification" in
    `docker logs apprise` on the Pi, confirms the full chain end-to-end.
+
+---
+
+## Kopia backups (https://backup.mathewcsims.uk) — server on the Pi, LAN-only
+
+[Kopia](https://kopia.io) backs up every app's own data — both Mac and Pi —
+plus a Time Machine share on the NAS, to Backblaze B2. Client-side encryption
+is on by default (not optional, unlike rclone which needs `crypt` bolted on),
+snapshots are content-defined-chunked so repeat backups only upload what
+changed, and scheduling is automatic.
+
+**Architecture — two independent Kopia instances sharing one B2 repository:**
+- **`kopia-server/` (Pi, always-on)** — runs `kopia server start` in a
+  container, connected DIRECTLY to B2 (not proxying anyone). Backs up the
+  Pi's own app data on a daily schedule, hosts the web UI at
+  `backup.mathewcsims.uk` (LAN-gated, same pattern as Apprise/Speedtest
+  Tracker), and is the designated maintenance owner (garbage collection) for
+  the whole shared repository.
+- **`kopia-mac/` (Mac, no persistent daemon)** — connects to the SAME B2
+  repository directly, but has no long-running process. A launchd job
+  (`uk.mathewcsims.kopia-mac-backup`, matching the `autostart/` pattern)
+  triggers `kopia snapshot create` daily, mounting the NAS share first.
+
+Both instances writing directly to the same repository is safe — Kopia
+designates one `user@hostname` as maintenance owner automatically (the Pi,
+since it's always on; the Mac only runs on a schedule, so it's the wrong
+host to own garbage collection). The web UI shows snapshots from **both**
+hosts, since Kopia stores snapshot manifests in the repository itself, not
+per-server — connect any client to the shared repo and it sees everyone's
+history.
+
+**Real access control on the web UI is a username+password** (`--server-username`/
+`--server-password`, HTTP basic auth against Kopia's own auth, not the
+full multi-user `kopia server user add` system — this is a single-person
+setup, so the simpler mode is enough). The LAN-gate is defense in depth on
+top of that, same reasoning as every other admin surface in this repo — but
+more so here: this UI can browse, restore, and delete every backup this
+whole stack has.
+
+**TLS, unlike every other backend in this Caddyfile:** Kopia's web/API server
+needs a real (if self-signed) TLS cert to work correctly — `--insecure` and
+`--disable-csrf-token-checks` both turned out to be dev/debug-only flags in
+Kopia's own source (confirmed directly:
+`// disable CSRF token checks - used for development/debugging only`), not
+something to copy from a docs example into production. `--tls-generate-cert`
+creates a self-signed cert on first boot only (must be omitted on later
+boots, or the server refuses to start — `kopia-server/entrypoint.sh` handles
+this by checking whether the cert file already exists). Caddy connects to it
+over HTTPS with `tls_insecure_skip_verify`, same pattern as the `mc37`
+router-admin block.
+
+**The `kopia/kopia` Docker image's own `ENTRYPOINT` is just the bare `kopia`
+binary** (confirmed from its `tools/docker/Dockerfile`) — no repository
+connect/create logic built in. `kopia-server/entrypoint.sh` handles the
+one-time bootstrap: try `kopia repository connect b2` first, fall back to
+`kopia repository create b2` if that fails (meaning no repository exists yet
+at this bucket — true only for the very first machine to ever touch it),
+then set the global retention policy, set this Pi as maintenance owner, and
+configure + run an initial snapshot for every directory under `/data/`.
+
+**Retention policy** (set globally, once, during first-ever bootstrap —
+adjustable later from the web UI): keep the 5 most recent snapshots, 30
+daily, 12 weekly, 24 monthly, 3 annual. All sources snapshot once daily.
+
+**Known future migration:** every operation currently logs `The B2 storage
+provider is deprecated and will be removed in the future, use the
+S3-compatible storage provider instead` — Kopia's own native `b2` backend
+(what `kopia repository create/connect b2` uses) is being phased out in
+favor of connecting to B2 via its S3-compatible API instead (Kopia's `s3`
+backend, pointed at B2's S3 endpoint). Not urgent — `b2` still works fully
+today — but expect to migrate the repository connection (not the data
+itself) to `s3` at some point before `b2` is actually removed.
+
+**Secrets, spread across two Proton Pass items** (kopia-server needs both,
+which is why it has its own deploy script rather than reusing the
+one-item-per-app convention):
+- **"Kopia"** — `REPOSITORY_PASSWORD` (the actual encryption key for every
+  snapshot — lose it and the backup is unrecoverable; leak it and every
+  backed-up file is exposed), `SERVER_CONTROL_PASSWORD` (for
+  `kopia server refresh`/admin control commands), `WEBUI_PASSWORD` (the
+  actual web UI login). All three generated by
+  `scripts/pass-create-kopia-secrets.sh` — no values typed anywhere, pure
+  `openssl rand` output piped straight into the Pass item.
+- **"Backblaze B2"** — `B2_BUCKET`, `B2_KEY_ID`, `B2_APPLICATION_KEY`
+  (scoped to just this bucket, not a master key). Created via
+  `scripts/pass-import-b2-credentials.sh`, which prompts interactively
+  (`read -s` for the hidden fields) — nothing passed as a script argument.
+- **"NAS Eddie"** — `NAS_HOST`, `NAS_SHARE`, `NAS_USER`, `NAS_PASSWORD` for
+  the SMB share holding the NAS content to back up. Created via
+  `scripts/pass-import-nas-credentials.sh`, same interactive-prompt pattern.
+  In practice, `kopia-mac/backup.sh` doesn't use this item at all — see the
+  NAS mount note below.
+
+**NAS mount uses the macOS Keychain, not this Pass item, for the actual
+mount step.** `mount_smbfs` takes credentials only via its URL argument —
+there's no way to pipe a password to it, so it would always be visible
+(briefly) in `ps` output if fetched from Pass at mount time. The safe fix:
+add the NAS credentials to Keychain once, manually, via Finder
+(Cmd+K → `smb://eddie.nas/AppleBackups` → tick "remember password") — after
+that, `mount_smbfs "//kopla-user@eddie.nas/AppleBackups" <mountpoint>` pulls
+the password from Keychain automatically, with no password anywhere in the
+script, the launchd job, or Pass. The "NAS Eddie" Pass item still exists as
+the durable record of what those credentials are, for whenever they need
+rotating.
+
+**Two quirks found while actually testing this, both now handled in
+`backup.sh`:**
+- The mount point is `~/nas-mounts/AppleBackups`, not `/Volumes/AppleBackups`
+  — macOS only lets a privileged process (Finder's own mount helper,
+  effectively) create new directories directly under `/Volumes`; a plain
+  `mkdir` there fails with "Permission denied", confirmed directly. A path
+  under `$HOME` has no such restriction, so `backup.sh` creates it with a
+  normal `mkdir -p` before mounting.
+- Keychain access for a non-interactive `mount_smbfs` call depends on the
+  calling process's session context, not just the stored item itself —
+  confirmed by testing the exact same command from two different contexts:
+  it failed with "Authentication error" run from one shell context, then
+  succeeded silently (no prompt at all) run from a real logged-in Terminal
+  session. launchd LaunchAgents run inside the user's actual login session,
+  matching the context that worked — so the real scheduled job should
+  behave like the successful case, not the failing one. Worth re-confirming
+  after the first real scheduled run actually happens, rather than assuming.
+
+**To bring the Pi side up on a fresh machine:**
+1. Generate the three Kopia secrets and import the B2 + NAS credentials —
+   run these yourself, under your own personal `pass-cli` session:
+   ```
+   ./scripts/pass-create-kopia-secrets.sh
+   ./scripts/pass-import-b2-credentials.sh
+   ./scripts/pass-import-nas-credentials.sh
+   ```
+2. **Pi:** copy the `kopia-server/` folder over (`scp -r`), then deploy with
+   secrets merged from both Pass items:
+   ```
+   ./scripts/pass-deploy-kopia-server.sh mathew@babel '~/kopia-server'
+   ```
+   Quote the tilde — same reasoning as the Vikunja webhook relay's redeploy
+   command. First deploy auto-builds the image; after editing
+   `entrypoint.sh`/`Dockerfile`, rebuild explicitly with
+   `docker compose build` first (no secrets needed for a build step), then
+   redeploy through the script above so the recreated container gets the
+   real secrets injected — a bare `docker compose up -d` on its own will
+   blank every Pass-sourced env var, including `KOPIA_PASSWORD`.
+3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+4. **DNS:** its own explicit `A` record for `backup.mathewcsims.uk`, plus a
+   NextDNS rewrite → `10.0.1.19` for LAN clients (see "Accessing from inside
+   your own LAN" above for what this does and doesn't guarantee).
+
+**To bring the Mac side up on a fresh machine:**
+1. `brew install kopia`.
+2. Connect to the same repository (interactively, one time — fetches the
+   repository password and B2 credentials from Pass, never printed):
+   ```sh
+   KOPIA_PASSWORD="$(pass-cli item view --vault-name "Self-Hosted Secrets" --item-title Kopia --output json | python3 -c '...REPOSITORY_PASSWORD...')" \
+   B2_BUCKET="..." B2_KEY_ID="..." B2_APPLICATION_KEY="..." \
+   kopia repository connect b2 --bucket="$B2_BUCKET" --key-id="$B2_KEY_ID" --key="$B2_APPLICATION_KEY" --override-hostname=mathews-mac
+   ```
+   (`--override-hostname` gives this Mac's snapshots a clean, stable name in
+   the shared repository, instead of whatever macOS calls the machine.)
+3. Add the NAS credentials to Keychain once, via Finder (see above) — do
+   this before the first scheduled run, or the launchd job will just log a
+   failed mount and continue with local sources only. Worth testing the
+   mount once from a real logged-in Terminal session first (not e.g. an
+   SSH session or a restricted subprocess context) — Keychain access for a
+   non-interactive `mount_smbfs` call turned out to depend on the calling
+   process's session context, not just the stored item (see the quirks
+   note above).
+4. Install the LaunchAgent:
+   ```
+   cp kopia-mac/uk.mathewcsims.kopia-mac-backup.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/uk.mathewcsims.kopia-mac-backup.plist
+   ```
+   Runs daily at 02:00 — see `kopia-mac/backup.sh` for the exact source
+   list. No Pass access needed at run time: `kopia repository connect`
+   persists locally, so `kopia snapshot create` just works without
+   re-supplying the repository password each run.
+
+**Offline copy on an external HDD:** `scripts/mirror-backup-to-external-drive.sh`
+mirrors the entire B2 bucket (already encrypted by Kopia — no extra
+encryption needed) onto a drive whenever it's plugged in — no automatic
+schedule, since the drive isn't always connected:
+```
+./scripts/mirror-backup-to-external-drive.sh /Volumes/YourDriveName
+```
+Uses `rclone sync` (not `copy`) so the drive stays an *exact* mirror,
+including deletions — not an ever-growing pile of old copies. Credentials
+flow the same way as everywhere else: fetched from the "Backblaze B2" Pass
+item, passed to `rclone` purely as `RCLONE_B2_ACCOUNT`/`RCLONE_B2_KEY`
+environment variables (`RCLONE_CONFIG=/dev/null` so no `rclone.conf` is
+ever read or written), confirmed working directly against the live bucket
+rather than assumed from rclone's docs (which don't actually show this
+exact on-the-fly connection-string form).
+
+Since the bucket is just Kopia's own repository storage, the resulting
+mirror is a complete, independently-restorable repository on its own —
+restorable with nothing but the `kopia` binary and the repository password
+from the "Kopia" Pass item, even with zero B2 access:
+```
+kopia repository connect filesystem --path=/Volumes/YourDriveName/kopia-mirror
+```
 
 ---
 
@@ -1392,8 +1653,8 @@ Every Mac app so far follows the same shape — copy it for the next one:
      block on the Pi — one source of truth if the Mac's LAN IP ever changes.
      Only hardcode a backend IP too when it's genuinely a one-off (e.g. the
      DrayTek's own IP in the `mc37` block, which nothing else references).
-6. DNS: public `A` record (registrar) for cert issuance, plus a DrayTek LAN DNS
-   entry so LAN devices resolve straight to the Pi.
+6. DNS: public `A` record (registrar) for cert issuance, plus a NextDNS
+   rewrite so LAN devices resolve straight to the Pi.
 7. Copy the Caddyfile to the Pi, `docker compose restart caddy`.
 
 **If the app needs a database** (copyparty/Memos didn't, but some apps will):
@@ -1418,7 +1679,7 @@ if the Mac is down)
 3. Bring `pi-reverse-proxy` up first if `pi-shared` doesn't exist yet (it
    already does — this only matters after a full teardown of both stacks).
 4. DNS + Caddy hostname block: same as the Mac-app recipe (hardcode the
-   hostname; registrar `A` record + DrayTek LAN DNS entry).
+   hostname; registrar `A` record + NextDNS rewrite).
 5. Auto-start: nothing to add — Docker's `restart: unless-stopped` + Docker
    starting at boot (Pi default) covers it, same as Caddy. The Mac's
    `autostart/` launchd agent is irrelevant to anything Pi-resident.
@@ -1445,7 +1706,7 @@ example.mathewcsims.uk {
 }
 ```
 A real public `A` record is still needed for cert issuance even though only
-LAN clients can ever use the site — the DrayTek LAN DNS entry is what makes
+LAN clients can ever use the site — the NextDNS rewrite is what makes
 LAN devices actually resolve to the Pi's LAN IP instead of round-tripping out
 to the WAN IP and back in.
 

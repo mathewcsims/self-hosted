@@ -378,6 +378,39 @@ vikunja-relay.mathewcsims.uk {
 	}
 }
 
+# ── Kopia backup server (running HERE on the Pi, LAN-ONLY) ───────────────
+# Clean public URL https://backup.mathewcsims.uk, but only for LAN clients —
+# same pattern as Apprise/Speedtest Tracker above, and for the same reason
+# as every other admin surface in this repo: this can browse AND restore
+# (and, if compromised, delete) every backup this stack has, so it never
+# gets anywhere near the internet even with a login in front of it.
+#
+# Unlike every other backend in this Caddyfile, Kopia's server is HTTPS
+# with a self-signed cert (its own web UI needs TLS to work correctly, and
+# Kopia's own reverse-proxy docs recommend real TLS on the backend rather
+# than its `--insecure` mode, which is a hidden/dev-only flag in Kopia's
+# own source — not something to rely on in production). Caddy still
+# terminates the real public-facing TLS; this is just the internal hop to
+# a self-signed cert over the trusted `pi-shared` network, same reasoning
+# as the mc37 router-admin block below.
+backup.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit backup
+
+	@lan remote_ip private_ranges
+	handle @lan {
+		reverse_proxy https://kopia-server:51515 {
+			transport http {
+				tls_insecure_skip_verify # Kopia's own self-signed cert
+			}
+		}
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── DrayTek router admin (LAN-ONLY) ──────────────────────────────────────
 # Values hardcoded on purpose: they're fixed, and an empty env var here would
 # produce a keyless "{ }" block that crashes Caddy on startup.

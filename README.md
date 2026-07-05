@@ -22,6 +22,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Apprise API](https://github.com/caronc/apprise-api) | `apprise.mathewcsims.uk` | Pi (LAN-only — generic notification relay to Discord) |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 | Vikunja webhook relay (this repo) | `vikunja-relay.mathewcsims.uk` | Pi (LAN-only — bridges Vikunja's webhook events to Apprise) |
+| [Kopia](https://kopia.io) | `backup.mathewcsims.uk` | Pi (LAN-only — encrypted, deduplicated backups to Backblaze B2) |
 
 ## Architecture, in short
 
@@ -37,7 +38,8 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
                                   ├─ apprise.mathewcsims.uk           → itself (Pi, LAN clients only)
                                   ├─ status.mathewcsims.uk            → itself (Pi)
-                                  └─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
+                                  ├─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
+                                  └─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
 ```
 
 Each app is its own `podman-compose`/`docker-compose` project in its own
@@ -64,8 +66,28 @@ plain gitignored file, not a Pass item. And the repo-root `.env` holds
 `SECRET_ACCESS_TOKEN` — the durable, vault-scoped PAT the deploy tooling
 uses to reach every other secret in the first place.
 
+DNS itself is scriptable too: `scripts/dns-digitalocean.sh` and
+`scripts/dns-nextdns.sh` manage the registrar's public `A` records and the
+NextDNS LAN rewrites respectively, both using API tokens from Pass —
+adding a new app's DNS no longer means a manual trip to either dashboard.
+
 Runtime data (actual files, notes, databases, sessions) is gitignored too —
 this repo is infrastructure-as-code only, never the data the apps hold.
+
+## Backups
+
+Every app's own data — Mac and Pi — plus a Time Machine share on the NAS,
+gets backed up by [Kopia](https://kopia.io): encrypted client-side before it
+ever leaves either machine, deduplicated so repeat backups only upload
+what changed, and scheduled automatically. The Pi runs an always-on Kopia
+server (`kopia-server/`) that also hosts a web UI at
+`backup.mathewcsims.uk` (LAN-only) for browsing and restoring snapshots
+from every host. The Mac (`kopia-mac/`) has no persistent daemon — a
+launchd job triggers scheduled snapshots directly, mirroring the pattern
+`autostart/` already uses for podman. Backblaze B2 is the actual storage
+backend; see [SETUP.md](SETUP.md)'s Kopia section for the full architecture,
+retention policy, and how to periodically mirror the whole (already
+encrypted) B2 bucket onto an offline external drive.
 
 ## Layout
 
@@ -81,6 +103,8 @@ speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, 
 apprise/               compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 uptime-kuma/           compose.yaml (Pi — deployed via scp + docker compose)
 vikunja-webhook-relay/ compose.yaml + Dockerfile + relay.py (Pi — deployed via scp + docker compose, LAN-only)
+kopia-server/          compose.yaml + Dockerfile + entrypoint.sh (Pi — deployed via scp + docker compose, LAN-only)
+kopia-mac/             backup.sh + LaunchAgent plist (Mac — scheduled snapshots, no compose project)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass

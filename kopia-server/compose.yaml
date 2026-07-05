@@ -1,0 +1,69 @@
+# Kopia (https://kopia.io) — encrypted, deduplicated, incremental backups to
+# Backblaze B2, with a web UI for browsing/restoring snapshots. Runs HERE on
+# the Pi (always-on), fronted by Caddy at backup.mathewcsims.uk (LAN-gated —
+# see ../pi-reverse-proxy/Caddyfile). This instance:
+#   - backs up the Pi's own app data directories (mounted read-only below)
+#     on a daily schedule
+#   - is the designated "maintenance owner" for the shared B2 repository
+#     (see entrypoint.sh) — the Mac also connects to this same repository
+#     directly (not through this server), but since it only runs on a
+#     launchd schedule rather than continuously, the always-on Pi is the
+#     right host to own garbage collection
+#   - hosts the web UI, which shows snapshots from EVERY host sharing this
+#     repository (Mac included), since Kopia stores snapshot manifests in
+#     the repository itself, not per-server
+#
+# Own code (small entrypoint wrapper), not a bare pulled image — see
+# Dockerfile. All credentials come from Proton Pass at deploy time via
+# scripts/pass-deploy-kopia-server.sh (not the usual pass-deploy-remote.sh —
+# this app needs secrets merged from two separate Pass items), never
+# committed here.
+name: kopia-server
+
+services:
+  kopia-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kopia-server
+    # Recommended directly in Kopia's own install docs: Docker containers
+    # get random hostnames otherwise, and the hostname is what identifies
+    # this host's snapshots in the shared repository — persisted at first
+    # connect/create, so keep this stable across rebuilds.
+    hostname: babel
+    restart: unless-stopped
+    environment:
+      # The repository's actual encryption key — Kopia's own client-side
+      # encryption, not optional and not something rclone/B2 ever needs to
+      # know about.
+      KOPIA_PASSWORD: ${REPOSITORY_PASSWORD}
+      B2_BUCKET: ${B2_BUCKET}
+      B2_KEY_ID: ${B2_KEY_ID}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
+      # Web UI login — not a secret env var name, just a fixed username;
+      # the actual password is.
+      WEBUI_USERNAME: mat
+      WEBUI_PASSWORD: ${WEBUI_PASSWORD}
+      SERVER_CONTROL_PASSWORD: ${SERVER_CONTROL_PASSWORD}
+    volumes:
+      - ./config:/app/config
+      - ./cache:/app/cache
+      - ./logs:/app/logs
+      - ./tmp:/tmp:shared
+      # Pi app data directories, read-only — each becomes its own Kopia
+      # snapshot source (see entrypoint.sh's bootstrap loop over /data/*/).
+      - ../nimbus/db:/data/nimbus-db:ro
+      - ../nimbus/uploads:/data/nimbus-uploads:ro
+      - ../uptime-kuma/data:/data/uptime-kuma:ro
+      - ../speedtest-tracker/config:/data/speedtest-tracker:ro
+      - ../apprise/config:/data/apprise:ro
+    # No `ports:` — reached only by Caddy (backup.mathewcsims.uk, LAN-gated),
+    # over `pi-shared`, by container name. Same no-published-port pattern as
+    # every other Pi-resident app in this repo.
+    networks:
+      - pi-shared
+
+networks:
+  pi-shared:
+    external: true
+    name: pi-shared

@@ -28,6 +28,10 @@ karakeep/data/
 karakeep/meilisearch-data/
 apprise/config/
 uptime-kuma/data/
+kopia-server/config/
+kopia-server/cache/
+kopia-server/logs/
+kopia-server/tmp/
 
 # ── Tool-local / editor state ───────────────────────────────────────────
 # Claude Code's own local session cache — unrelated to this project, and
