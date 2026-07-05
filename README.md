@@ -43,7 +43,7 @@ another app.
 ## Secrets — this repo holds none
 
 Every real password, API key, and OAuth client secret lives in **Proton
-Pass** (the "Agent Secrets" vault), one item per app, fetched live at
+Pass** (the "Self-Hosted Secrets" vault), one item per app, fetched live at
 deploy time — never written to a `.env` file on disk. See
 [SETUP.md](SETUP.md)'s "Secrets management" section for the full model
 (why, how the agent's read-only access works, and the `scripts/pass-*.sh`
@@ -52,9 +52,11 @@ fields each app's Pass item needs, but there's no real `.env` to copy
 anymore — `cp .env.example .env` is no longer the onboarding step it used
 to be.
 
-The one exception: `pi-reverse-proxy/.env` holds non-secret configuration
+Two exceptions: `pi-reverse-proxy/.env` holds non-secret configuration
 (domain names, the Mac's LAN IP) rather than credentials, so it stays as a
-plain gitignored file, not a Pass item.
+plain gitignored file, not a Pass item. And the repo-root `.env` holds
+`SECRET_ACCESS_TOKEN` — the durable, vault-scoped PAT the deploy tooling
+uses to reach every other secret in the first place.
 
 Runtime data (actual files, notes, databases, sessions) is gitignored too —
 this repo is infrastructure-as-code only, never the data the apps hold.

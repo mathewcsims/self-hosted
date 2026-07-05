@@ -18,20 +18,35 @@ ITEM_TITLE="${1:?Usage: $0 <item-title> <field-name> <output-path>}"
 FIELD="${2:?Usage: $0 <item-title> <field-name> <output-path>}"
 OUTPUT="${3:?Usage: $0 <item-title> <field-name> <output-path>}"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
 export PROTON_PASS_SESSION_DIR="${PROTON_PASS_SESSION_DIR:-/tmp/pass-agent-selfhosted}"
+mkdir -p "$PROTON_PASS_SESSION_DIR"
 
 if ! pass-cli info >/dev/null 2>&1; then
-    echo "pass-cli agent session is not active or has expired (PATs last 24h)." >&2
-    echo "Ask for a fresh Personal Access Token, then run:" >&2
-    echo "  export PROTON_PASS_SESSION_DIR=\"$PROTON_PASS_SESSION_DIR\"" >&2
-    echo "  PROTON_PASS_PERSONAL_ACCESS_TOKEN=\"...\" pass-cli login" >&2
-    exit 1
+    if [ ! -f "$REPO_ROOT/.env" ]; then
+        echo "No active pass-cli session, and no $REPO_ROOT/.env to auto-login with." >&2
+        exit 1
+    fi
+    echo "No active pass-cli session — logging in with SECRET_ACCESS_TOKEN from .env..."
+    set -a
+    . "$REPO_ROOT/.env"
+    set +a
+    export PROTON_PASS_PERSONAL_ACCESS_TOKEN="$SECRET_ACCESS_TOKEN"
+    pass-cli login >/dev/null
+    unset PROTON_PASS_PERSONAL_ACCESS_TOKEN SECRET_ACCESS_TOKEN
+    if ! pass-cli info >/dev/null 2>&1; then
+        echo "Login failed — SECRET_ACCESS_TOKEN in .env may be revoked or expired." >&2
+        echo "Update self-hosted/.env with a fresh token and retry." >&2
+        exit 1
+    fi
 fi
 
 echo "Rendering \"$ITEM_TITLE\" field \"$FIELD\" to $OUTPUT..."
 
 PROTON_PASS_AGENT_REASON="Rendering $ITEM_TITLE/$FIELD to $OUTPUT for deploy" \
-    pass-cli item view --vault-name "Agent Secrets" --item-title "$ITEM_TITLE" --field "$FIELD" > "$OUTPUT"
+    pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "$ITEM_TITLE" --field "$FIELD" > "$OUTPUT"
 chmod 600 "$OUTPUT"
 
 echo "Done."

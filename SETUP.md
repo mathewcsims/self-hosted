@@ -94,13 +94,16 @@ Give **both the Pi and the Mac a fixed LAN IP** via a DrayTek DHCP reservation
 
 ## Secrets management (Proton Pass)
 
-Every app's real secrets live in **Proton Pass**, in a vault named "Agent
-Secrets" — one custom item per app, each field named after the env var it
-holds (e.g. the "Vikunja" item has a `VIKUNJA_SERVICE_SECRET` field).
-Nothing is ever written to a `.env` file as a persistent artifact; secrets
-are fetched live at deploy time and either exported directly into the shell
-for that one `compose up` call, or (for the one app that needs an actual
-config file on disk) rendered fresh each time.
+Every app's real secrets live in **Proton Pass**, in a vault named
+"Self-Hosted Secrets" (named specifically so it's obvious at a glance
+which agent/project a shared vault belongs to, if you end up sharing
+others with different agents later) — one custom item per app, each field
+named after the env var it holds (e.g. the "Vikunja" item has a
+`VIKUNJA_SERVICE_SECRET` field). Nothing is ever written to a `.env` file
+as a persistent artifact; secrets are fetched live at deploy time and
+either exported directly into the shell for that one `compose up` call, or
+(for the one app that needs an actual config file on disk) rendered fresh
+each time.
 
 **Why this exists:** replaces the earlier gitignored-`.env`-per-app model.
 Centralizes every credential in one auditable place instead of scattered
@@ -117,16 +120,16 @@ delete them**, regardless of the vault's sharing role. This means:
   *different* session directory from the agent's), can create or update
   items in the vault.
 - The agent side can only ever *consume* secrets that already exist there.
-- PATs expire after 24 hours. There's no way to auto-refresh one — a human
-  has to generate a fresh PAT and re-run `pass-cli login` under the agent's
-  session directory whenever it lapses.
 
-```
-# One-time (or after a PAT expires): agent login
-export PROTON_PASS_SESSION_DIR="/tmp/pass-agent-selfhosted"
-PROTON_PASS_PERSONAL_ACCESS_TOKEN="<fresh PAT>" pass-cli login
-pass-cli info   # confirm logged in
-```
+**Auto-login via `self-hosted/.env`.** A durable, read-only,
+`Self-Hosted Secrets`-vault-scoped PAT lives in `SECRET_ACCESS_TOKEN`, in a
+gitignored `.env` file at the repo root (not per-app — this is the
+credential used to reach every other credential). Every `pass-cli`-based
+deploy script checks for an active session first and, if none exists,
+logs in automatically using this token — no manual `pass-cli login` step
+needed in normal operation. If that token itself is ever revoked or
+rotated, update `self-hosted/.env` with a fresh one; the scripts will pick
+it up on their next run.
 
 **Creating/updating a secret (you, not the agent):**
 

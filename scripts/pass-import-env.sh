@@ -30,7 +30,7 @@ if [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
-echo "Importing $ENV_FILE as Pass item \"$ITEM_TITLE\" in vault \"Agent Secrets\"..."
+echo "Importing $ENV_FILE as Pass item \"$ITEM_TITLE\" in vault \"Self-Hosted Secrets\"..."
 
 python3 -c '
 import json, re, sys
@@ -49,7 +49,7 @@ template = {
     "sections": [{"section_name": "Secrets", "fields": fields}],
 }
 json.dump(template, sys.stdout)
-' "$ENV_FILE" "$ITEM_TITLE" "$APP_DIR" | pass-cli item create custom --vault-name "Agent Secrets" --from-template -
+' "$ENV_FILE" "$ITEM_TITLE" "$APP_DIR" | pass-cli item create custom --vault-name "Self-Hosted Secrets" --from-template -
 
 echo "Done. Verify with:"
-echo "  pass-cli item view --vault-name \"Agent Secrets\" --item-title \"$ITEM_TITLE\""
+echo "  pass-cli item view --vault-name \"Self-Hosted Secrets\" --item-title \"$ITEM_TITLE\""

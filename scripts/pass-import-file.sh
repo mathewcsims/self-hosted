@@ -23,7 +23,7 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
-echo "Importing $FILE as Pass item \"$TITLE\" (field: $FIELD) in vault \"Agent Secrets\"..."
+echo "Importing $FILE as Pass item \"$TITLE\" (field: $FIELD) in vault \"Self-Hosted Secrets\"..."
 
 python3 -c '
 import json, sys
@@ -40,7 +40,7 @@ template = {
     ]}],
 }
 json.dump(template, sys.stdout)
-' "$FILE" "$TITLE" "$FIELD" "$FILE" | pass-cli item create custom --vault-name "Agent Secrets" --from-template -
+' "$FILE" "$TITLE" "$FIELD" "$FILE" | pass-cli item create custom --vault-name "Self-Hosted Secrets" --from-template -
 
 echo "Done. Verify with:"
-echo "  pass-cli item view --vault-name \"Agent Secrets\" --item-title \"$TITLE\""
+echo "  pass-cli item view --vault-name \"Self-Hosted Secrets\" --item-title \"$TITLE\""
