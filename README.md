@@ -42,22 +42,19 @@ another app.
 
 ## Secrets — this repo holds none
 
-Every real password, API key, and OAuth client secret lives in a **gitignored**
-file, never in a tracked one:
+Every real password, API key, and OAuth client secret lives in **Proton
+Pass** (the "Agent Secrets" vault), one item per app, fetched live at
+deploy time — never written to a `.env` file on disk. See
+[SETUP.md](SETUP.md)'s "Secrets management" section for the full model
+(why, how the agent's read-only access works, and the `scripts/pass-*.sh`
+tooling). `.env.example` files still exist per app as a record of which
+fields each app's Pass item needs, but there's no real `.env` to copy
+anymore — `cp .env.example .env` is no longer the onboarding step it used
+to be.
 
-| Real (gitignored) | Template (tracked) |
-|---|---|
-| `copyparty/cfg/accounts.conf` | `accounts.conf.example` |
-| `vikunja/.env` | `.env.example` |
-| `nimbus/.env` | `.env.example` |
-| `speedtest-tracker/.env` | `.env.example` |
-| `blog/.env` | `.env.example` |
-| `karakeep/.env` | `.env.example` |
-| `pi-reverse-proxy/.env` | `.env.example` |
-
-To stand this up from scratch (or recreate a secret file), copy the matching
-`.example` file, fill in real values, and see [SETUP.md](SETUP.md) for where
-each one needs to live and how to generate strong values.
+The one exception: `pi-reverse-proxy/.env` holds non-secret configuration
+(domain names, the Mac's LAN IP) rather than credentials, so it stays as a
+plain gitignored file, not a Pass item.
 
 Runtime data (actual files, notes, databases, sessions) is gitignored too —
 this repo is infrastructure-as-code only, never the data the apps hold.
@@ -75,5 +72,7 @@ nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
+scripts/               deploy tooling that fetches secrets from Proton Pass
+                       at deploy time — see SETUP.md
 SETUP.md               full setup, deployment, and troubleshooting guide
 ```

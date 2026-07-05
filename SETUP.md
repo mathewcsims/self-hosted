@@ -92,6 +92,90 @@ Give **both the Pi and the Mac a fixed LAN IP** via a DrayTek DHCP reservation
 
 ---
 
+## Secrets management (Proton Pass)
+
+Every app's real secrets live in **Proton Pass**, in a vault named "Agent
+Secrets" — one custom item per app, each field named after the env var it
+holds (e.g. the "Vikunja" item has a `VIKUNJA_SERVICE_SECRET` field).
+Nothing is ever written to a `.env` file as a persistent artifact; secrets
+are fetched live at deploy time and either exported directly into the shell
+for that one `compose up` call, or (for the one app that needs an actual
+config file on disk) rendered fresh each time.
+
+**Why this exists:** replaces the earlier gitignored-`.env`-per-app model.
+Centralizes every credential in one auditable place instead of scattered
+plaintext files, and via the Proton Pass CLI's "agent" access model, every
+read is logged with a stated reason.
+
+**The agent access model — read-only by design.** This repo's tooling
+authenticates as a Proton Pass "agent" via a scoped Personal Access Token
+(PAT), not a full account login. Proton's own agent model is deliberately
+read-only: agent-flagged PATs can view items but **cannot create, edit, or
+delete them**, regardless of the vault's sharing role. This means:
+
+- Only a human, logged into `pass-cli` under their own full account (a
+  *different* session directory from the agent's), can create or update
+  items in the vault.
+- The agent side can only ever *consume* secrets that already exist there.
+- PATs expire after 24 hours. There's no way to auto-refresh one — a human
+  has to generate a fresh PAT and re-run `pass-cli login` under the agent's
+  session directory whenever it lapses.
+
+```
+# One-time (or after a PAT expires): agent login
+export PROTON_PASS_SESSION_DIR="/tmp/pass-agent-selfhosted"
+PROTON_PASS_PERSONAL_ACCESS_TOKEN="<fresh PAT>" pass-cli login
+pass-cli info   # confirm logged in
+```
+
+**Creating/updating a secret (you, not the agent):**
+
+```
+# Log in under your OWN account, in a separate session dir
+export PROTON_PASS_SESSION_DIR="$HOME/.pass-cli-personal"
+pass-cli login   # your normal Proton Pass login
+
+# Create a new app's item from its existing .env (key=value pairs → fields)
+./scripts/pass-import-env.sh <app-dir>              # e.g. vikunja
+
+# Or for a whole-file secret (currently only copyparty's accounts.conf)
+./scripts/pass-import-file.sh <file> <item-title> <field-name>
+```
+
+**Deploying an app (the agent side, day to day):**
+
+```
+# Mac-hosted apps (vikunja, blog, karakeep, copyparty, landing-page)
+./scripts/pass-deploy.sh <app-dir>
+
+# Pi-hosted apps (nimbus, speedtest-tracker) — fetches locally, pipes the
+# export + `docker compose up -d` over SSH via stdin, so secret values
+# never appear in the SSH command line itself
+./scripts/pass-deploy-remote.sh <app-dir> <ssh-host> <remote-path>
+
+# copyparty specifically: its secret is a whole config file
+# (accounts.conf), not env vars, so it needs a render step first, then a
+# normal compose up
+./scripts/pass-render-file.sh Copyparty ACCOUNTS_CONF copyparty/cfg/accounts.conf
+cd copyparty && podman compose up -d
+```
+
+**Compose files and `env_file:`.** Every app's `compose.yaml` reads secrets
+via plain `${VAR}` interpolation, which podman/docker compose resolves from
+already-exported shell variables — exactly what `pass-deploy.sh` sets up
+before invoking `compose up`. One exception needed converting: Karakeep
+originally used `env_file: - .env`, which requires an actual file to read;
+that's now explicit `environment: VAR: ${VAR}` entries instead. If you add
+a new app whose upstream compose.yaml uses `env_file:`, convert it the same
+way rather than reintroducing a real `.env`.
+
+**The one deliberate exception:** `pi-reverse-proxy/.env` holds
+non-secret configuration (`CP_DOMAIN`, `ACME_EMAIL`, `MAC_IP`) rather than
+credentials, so it stays as a plain gitignored file — no security benefit
+to migrating config values that aren't sensitive.
+
+---
+
 ## Part 1 — Mac: copyparty
 
 1. Account passwords live in `copyparty/cfg/accounts.conf` (gitignored — copy

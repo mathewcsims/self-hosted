@@ -19,7 +19,12 @@
 # also the latest release as of this migration — pinned explicitly instead
 # of left floating, so an upgrade is a deliberate, reviewed decision.
 #
-# All secrets live in ./.env (gitignored — see .env.example for the template).
+# Secrets are fetched live from Proton Pass at deploy time (via
+# ../scripts/pass-deploy.sh, which exports them into this shell before
+# calling `podman compose up`) — never written to a .env file on disk. Was
+# `env_file: - .env` originally; converted to explicit ${VAR} references
+# since env_file needs an actual file to read, and there deliberately isn't
+# one anymore. See SETUP.md for the Pass-based secrets workflow.
 name: karakeep
 
 services:
@@ -27,9 +32,10 @@ services:
     image: ghcr.io/karakeep-app/karakeep:0.32.0
     container_name: karakeep
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       MEILI_ADDR: http://meilisearch:7700
       BROWSER_WEB_URL: http://chrome:9222
       DATA_DIR: /data
@@ -58,7 +64,7 @@ services:
       # middleman to use today. Gemini has a documented, direct,
       # OpenAI-compatible endpoint, so no extra infrastructure needed.
       OPENAI_BASE_URL: https://generativelanguage.googleapis.com/v1beta
-      # OPENAI_API_KEY itself comes from .env (via env_file above).
+      # OPENAI_API_KEY itself is set above, from Proton Pass.
 
       # gemini-2.5-flash-lite: the cheapest current Gemini model that still
       # supports image input (needed for Karakeep's image/OCR tagging) —
@@ -135,9 +141,8 @@ services:
     image: getmeili/meilisearch:v1.11.1
     container_name: karakeep-meilisearch
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - ./meilisearch-data:/meili_data

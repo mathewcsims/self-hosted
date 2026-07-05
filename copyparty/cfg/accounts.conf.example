@@ -1,11 +1,12 @@
-# Template for accounts.conf — copy this to accounts.conf (gitignored) and
-# fill in real passwords. copyparty auto-loads every *.conf file in /cfg, so
-# this merges into copyparty.conf's volume/permission definitions with no
-# other changes needed.
+# The real accounts.conf now lives as a whole-file secret in a Proton Pass
+# item ("Copyparty", field ACCOUNTS_CONF, in the Agent Secrets vault) — see
+# ../../SETUP.md's "Secrets management" section. It's rendered fresh to
+# this exact path before each deploy via ./scripts/pass-render-file.sh,
+# since copyparty needs a real file here (unlike every other app, whose
+# secrets are exported as env vars and never touch disk). This template
+# just documents the expected structure.
 #
-#   cp accounts.conf.example accounts.conf
-#   # then edit accounts.conf with real passwords
-#   # generate a strong one with: openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32
+#   # generate a strong password with: openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32
 
 [accounts]
   # username: password
