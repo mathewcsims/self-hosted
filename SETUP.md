@@ -1612,13 +1612,49 @@ ever read or written), confirmed working directly against the live bucket
 rather than assumed from rclone's docs (which don't actually show this
 exact on-the-fly connection-string form).
 
-Since the bucket is just Kopia's own repository storage, the resulting
-mirror is a complete, independently-restorable repository on its own —
-restorable with nothing but the `kopia` binary and the repository password
-from the "Kopia" Pass item, even with zero B2 access:
+**Restoring from the external drive is NOT a direct `kopia repository
+connect filesystem` against the mirrored folder** — tested this directly
+and it fails with `repository not initialized in the provided storage`,
+despite every file being present and intact. The cause: Kopia's filesystem
+backend expects every blob file to carry a `.f` suffix and live in a
+nested shard directory (e.g. `q/f8a/919e6d...-....f`) — a purely local-disk
+convention that B2's flat, unsharded object-key storage never used, so the
+mirrored files (named exactly as B2 stored them, flat, no suffix) don't
+match what the filesystem backend goes looking for. Kopia does ship an
+`rclone` repository backend that side-steps this, but it's explicitly
+marked `[Not maintained]` in Kopia's own CLI help — not something to build
+a disaster-recovery procedure around.
+
+**The verified, reliable restore path:** since the mirrored data is already
+shaped exactly right for a `b2`-type connection (unchanged since it came
+from B2), sync it back up to a bucket — the original one if it's still
+reachable, or a fresh one if not — and connect normally:
+```sh
+# 1. Create (or reuse) a B2 bucket + application key, and get the
+#    repository password from the "Kopia" Pass item's REPOSITORY_PASSWORD
+#    field. This is the one real dependency this whole procedure has: you
+#    need Proton Pass access to retrieve it, so it's worth knowing that's
+#    the case rather than assuming the drive alone is fully sufficient.
+
+# 2. Push the mirror back up (same rclone env-var pattern as the mirror
+#    script itself, just reversed):
+RCLONE_B2_ACCOUNT=<key-id> RCLONE_B2_KEY=<application-key> RCLONE_CONFIG=/dev/null \
+    rclone sync /Volumes/YourDriveName/kopia-mirror :b2:<bucket-name>
+
+# 3. Connect exactly as any other machine would:
+KOPIA_PASSWORD=<repository-password> \
+    kopia repository connect b2 --bucket=<bucket-name> --key-id=<key-id> --key=<application-key>
+
+# 4. Browse and restore:
+kopia snapshot list
+kopia restore <snapshot-id> /path/to/restore/to
 ```
-kopia repository connect filesystem --path=/Volumes/YourDriveName/kopia-mirror
-```
+This needs internet access to re-upload the mirror (the same ~10 GiB+ it
+took to download it, scaling with however much has accumulated by the time
+of a real restore) — a real cost, but a far more modest ask than needing
+the original Pi or Mac to still exist, and it only relies on Kopia's
+actively-maintained, everyday `b2` backend rather than an edge case nobody
+else is really using.
 
 ---
 

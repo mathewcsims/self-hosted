@@ -17,12 +17,20 @@
 # what you want for a periodic full mirror, not an ever-growing pile of
 # old copies.
 #
-# The resulting directory is a complete, independently-restorable Kopia
-# repository on its own: if you ever needed to restore with nothing but
-# this external drive (no B2 access at all), point `kopia repository
-# connect filesystem --path=<drive>/kopia-mirror` at it with the same
-# repository password from the "Kopia" Pass item, and browse/restore
-# exactly as you would against B2.
+# The resulting directory holds every blob from the B2 bucket, byte-for-byte
+# — but NOT a directly-connectable "filesystem" repository. Confirmed by
+# testing directly: Kopia's filesystem backend expects a `.f` suffix on
+# every blob file plus a nested shard-directory layout (e.g.
+# `q/f8a/919e6d...-....f`), neither of which B2's flat object-key storage
+# ever used, so `kopia repository connect filesystem` against this
+# directory fails with "repository not initialized in the provided
+# storage" despite every actual file being present and intact.
+#
+# To restore from this drive: `rclone sync` it back up to any B2 (or
+# S3-compatible) bucket — the data is already shaped exactly right for
+# that, unchanged since it came from B2 in the first place — then
+# `kopia repository connect b2` as normal. See SETUP.md's Kopia section for
+# the exact commands.
 #
 # Usage:
 #   ./scripts/mirror-backup-to-external-drive.sh /Volumes/YourDriveName
