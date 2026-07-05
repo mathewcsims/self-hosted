@@ -80,4 +80,11 @@ pf-lockdown/           macOS pf firewall rules restricting copyparty/Vikunja
                        to LAN-published-port access from the Pi only
 SETUP.md               full setup, deployment, and troubleshooting guide
 SECURITY.md            how to report a vulnerability
+LICENSE                MIT, with a carve-out for the Prospect logo files
 ```
+
+## License
+
+[MIT](LICENSE), with one carve-out: the Prospect logo files under
+`memos-prospect-ukri-tus/` are trademarked third-party assets, used only for
+personal branding, not licensed for reuse.
