@@ -331,6 +331,22 @@ karakeep.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3000
 }
 
+# ── TimeTagger (running on the Mac) ────────────────────────────────────────
+# Clean public URL https://time.mathewcsims.uk. Same pattern as every other
+# Mac app: Caddy terminates TLS and proxies to a plain-HTTP backend on the
+# Mac — but here that backend is oauth2-proxy, not TimeTagger itself.
+# TimeTagger has no native OAuth (unlike ../nimbus/'s Infomaniak OIDC), so
+# oauth2-proxy sits in front doing the actual Infomaniak login and only
+# forwards requests it has verified on to TimeTagger, over a network Caddy
+# can't reach at all — see ../timetagger/compose.yaml's file header for the
+# full reasoning. Caddy's normal X-Forwarded-For/-Proto/-Host is all
+# oauth2-proxy needs; nothing extra required here.
+time.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit time
+	reverse_proxy http://{$MAC_IP}:4180
+}
+
 # ── Apprise (running HERE on the Pi, LAN-ONLY) ────────────────────────────
 # Clean public URL https://apprise.mathewcsims.uk, but only for LAN clients —
 # same pattern as Speedtest Tracker above: a real public A-record lets Caddy

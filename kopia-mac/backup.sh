@@ -97,6 +97,7 @@ $REPO_ROOT/copyparty/data
 $REPO_ROOT/copyparty/public
 $REPO_ROOT/copyparty/inbox
 $REPO_ROOT/copyparty/cfg/accounts.conf
+$REPO_ROOT/timetagger/data
 "
 if [ -d "$NAS_MOUNT" ] && mount | grep -q "$NAS_MOUNT"; then
     SOURCES="$SOURCES

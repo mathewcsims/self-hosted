@@ -32,6 +32,8 @@ kopia-server/config/
 kopia-server/cache/
 kopia-server/logs/
 kopia-server/tmp/
+timetagger/data/
+timetagger/oauth2-proxy/authenticated-emails.txt
 
 # ── Tool-local / editor state ───────────────────────────────────────────
 # Claude Code's own local session cache — unrelated to this project, and

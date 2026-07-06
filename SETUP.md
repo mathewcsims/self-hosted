@@ -35,7 +35,9 @@ recipe — see "Adding another app" near the end.
        │   container name over `pi-shared` — no host       │
        │   port published):                                │
        │     Mac:    mathewcsims.uk, cp, prospect-ukri-    │
-       │             tus, vikunja, blog, karakeep          │
+       │             tus, vikunja, blog, karakeep, time    │
+       │             (time → oauth2-proxy, not the app     │
+       │             directly)                             │
        │     Pi:     dashboard (Nimbus), status (Kuma),    │
        │             speedtest*, apprise*, vikunja-relay*, │
        │             backup* (Kopia)                       │
@@ -53,6 +55,9 @@ recipe — see "Adding another app" near the end.
                        blog (Ghost)  :2368  (MySQL)
                        landing-page  :3080  (static)
                        karakeep  :3000  (sqlite + Meilisearch)
+                       timetagger's oauth2-proxy  :4180  (TimeTagger
+                         itself has NO published port — internal-network
+                         only, see the TimeTagger section below)
 ```
 
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
@@ -112,8 +117,11 @@ below says which.
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data + the NAS share |
+| `timetagger/compose.yaml` | **Mac** | TimeTagger + oauth2-proxy sidecar (Infomaniak SSO — TimeTagger has no native OAuth); reads secrets from Proton Pass |
+| `timetagger/data/` | **Mac** | **your time-tracking entries live here** |
+| `timetagger/oauth2-proxy/authenticated-emails.txt` | **Mac** | **gitignored** — the one-address login allowlist, written at deploy time by `pass-deploy-timetagger.sh` |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
-| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
+| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, `pass-create-timetagger-secrets.sh`, `pass-deploy-timetagger.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only |
 
 ### Known values
@@ -1694,6 +1702,103 @@ of a real restore) — a real cost, but a far more modest ask than needing
 the original Pi or Mac to still exist, and it only relies on Kopia's
 actively-maintained, everyday `b2` backend rather than an edge case nobody
 else is really using.
+
+---
+
+## TimeTagger (https://time.mathewcsims.uk)
+
+Tag-based time tracker (https://github.com/almarklein/timetagger), Mac-resident.
+
+**No native OAuth — confirmed directly from its source.** TimeTagger's only
+login methods are a local bcrypt password (`TIMETAGGER_CREDENTIALS`, left
+unset here so this path has zero valid users) or trusting a username handed
+to it via a header from a reverse proxy it's told to trust by source IP
+(`TIMETAGGER_PROXY_AUTH_*`, intended for pairing with something like
+Authelia). Getting real Infomaniak SSO — the same idea as Nimbus's native
+OIDC, above — means something else has to actually do the OIDC exchange
+and hand TimeTagger a verified identity. That is
+[oauth2-proxy](https://github.com/oauth2-proxy/oauth2-proxy), running as a
+sidecar in `timetagger/compose.yaml`.
+
+**Architecture:**
+
+```
+Caddy (Pi) → oauth2-proxy (Mac, LAN-IP:4180, published) → TimeTagger (Mac,
+             internal network only, no port published at all)
+```
+
+oauth2-proxy runs in full reverse-proxy ("upstream") mode, not the
+nginx-style auth_request/forward_auth sidecar mode — every request hits
+oauth2-proxy first; unauthenticated ones get redirected to Infomaniak, and
+only requests it has itself verified are forwarded to TimeTagger, with
+`X-Forwarded-Email` set to the verified address (oauth2-proxy's own
+default behavior). This is the crux of the whole setup's security:
+TimeTagger's proxy-auth trust check is "believe whatever username shows up
+in a header, if the request's source IP is on an allowlist" — get that
+allowlist wrong and anyone who can reach TimeTagger directly can set the
+header themselves and log in as you. So TimeTagger publishes no port at
+all, to the LAN or otherwise, and only exists on a private `internal`
+compose network; oauth2-proxy holds a static IP on that same network
+(`10.89.90.2`, via a fixed `10.89.90.0/28` subnet — chosen well clear of
+podman's own sequential auto-assigned `10.89.<n>.0/24` project networks),
+and `TIMETAGGER_PROXY_AUTH_TRUSTED` is that exact IP, not a range.
+
+**Login is restricted to one specific address, not "any Infomaniak user."**
+`login.infomaniak.com` is Infomaniak's identity service shared across all
+its customers (confirmed via the discovery document when Nimbus was set
+up) — a bare "successful OIDC login" check would let any Infomaniak
+customer worldwide in. `OAUTH2_PROXY_EMAIL_DOMAINS` would be equally wrong
+for the same reason. Instead this uses
+`OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE`, a file with exactly one allowed
+address, which oauth2-proxy's own validator ORs with `EMAIL_DOMAINS`
+(confirmed from source) — so leaving `EMAIL_DOMAINS` unset makes the
+email-allowlist file the only path to a valid login. That file
+(`timetagger/oauth2-proxy/authenticated-emails.txt`) is not committed —
+`scripts/pass-deploy-timetagger.sh` writes it at deploy time from the
+"TimeTagger" Pass item's `ALLOWED_EMAIL` field (oauth2-proxy has no
+env-var equivalent — confirmed from source — so this is the one thing
+`pass-deploy.sh`'s generic pattern cannot do, hence the bespoke script,
+same class of per-app variant as `pass-deploy-kopia-server.sh`).
+
+**Images:** both pinned to exact digests, not `:latest` — oauth2-proxy
+v7.15.3 is the first release with several real fixes (a critical auth
+bypass via `X-Forwarded-Uri` spoofing, a critical `auth_request`-mode
+bypass, an email-domain bypass via malformed multi-`@` claims — confirmed
+via GitHub's security-advisories API). TimeTagger runs the plain root-user
+image, not the `-nonroot` variant: the nonroot image was tried first (uid
+1000, matching the "avoid unnecessary root" reasoning used for
+Vikunja/copyparty) but failed live — podman-machine's rootless remapping
+only maps a container's ROOT user to your host user for sane bind-mount
+ownership (see Vikunja's own compose.yaml comment), not a fixed non-root
+uid, so uid 1000 could not write the bind-mounted data directory.
+
+**Bring-up:**
+
+1. Register a new OIDC application in Infomaniak's IK-AUTH
+   (`manager.infomaniak.com` → your account → Cloud/IK-AUTH) — a separate
+   client from Nimbus's, so each app's grant is independent. Redirect URI
+   must be exactly `https://time.mathewcsims.uk/oauth2/callback`.
+2. `./scripts/pass-create-timetagger-secrets.sh` — generates
+   `OAUTH2_PROXY_COOKIE_SECRET` and creates the "TimeTagger" Pass item with
+   placeholder `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` and a default
+   `ALLOWED_EMAIL`.
+3. Set the real client ID/secret from step 1 on that Pass item (correct
+   `ALLOWED_EMAIL` too, if it should not be the default):
+   ```
+   pass-cli item update --vault-name "Self-Hosted Secrets" --item-title "TimeTagger" \
+       --field OIDC_CLIENT_ID=... --field OIDC_CLIENT_SECRET=...
+   ```
+4. `./scripts/pass-deploy-timetagger.sh` — writes the email-allowlist file
+   and brings the stack up. **Never** `podman compose up -d` directly here
+   (same rule as every other Pass-backed app) — it blanks every secret.
+5. Verify: `curl -s -o /dev/null -w '%{http_code}\n' http://<mac-lan-ip>:4180/oauth2/start`
+   should 302 to `login.infomaniak.com/authorize` with the right client ID
+   and redirect URI. A direct request to `<mac-lan-ip>:8080` (TimeTagger's
+   internal port) should fail to connect at all — if it does not, the
+   security boundary above is not actually in place.
+
+**Backup:** `timetagger/data/` (TimeTagger's own datadir, holding per-user
+SQLite-backed time entries) is in `kopia-mac/backup.sh`'s `SOURCES` list.
 
 ---
 

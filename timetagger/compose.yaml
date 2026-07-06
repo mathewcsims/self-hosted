@@ -1,0 +1,178 @@
+# TimeTagger (https://github.com/almarklein/timetagger) — tag-based time
+# tracking with an interactive timeline.
+#
+# ── Why oauth2-proxy is here at all ─────────────────────────────────────────
+# TimeTagger has NO native OAuth/OIDC support — confirmed directly from its
+# source (timetagger/_config.py, timetagger/__main__.py). Its only two login
+# methods are a local bcrypt password (TIMETAGGER_CREDENTIALS, unset here —
+# see below) and trusting a username handed to it by a reverse proxy via a
+# header (TIMETAGGER_PROXY_AUTH_*), intended for pairing with something like
+# Authelia. To get real "log in with Infomaniak" SSO (the ask, matching the
+# ../nimbus/ pattern), something has to actually perform the Infomaniak OIDC
+# exchange and then hand TimeTagger a verified identity — that's oauth2-proxy
+# (github.com/oauth2-proxy/oauth2-proxy), the standard, widely-used tool for
+# exactly this "OIDC-gate an app that doesn't speak OIDC itself" job.
+#
+# ── The trust boundary — the part that actually matters here ───────────────
+# TimeTagger's proxy-auth mode is "trust whatever username shows up in a
+# header, IF the request's source IP is in a configured allowlist" — get
+# that allowlist wrong and anyone who can reach TimeTagger directly can set
+# the header themselves and log in as you, no Infomaniak involved at all.
+# So TimeTagger publishes NO port whatsoever, to the LAN or otherwise — it
+# only exists on the `internal` network below, unreachable from anywhere
+# except oauth2-proxy. oauth2-proxy is pinned to a static IP on that same
+# network (10.89.90.2, via the `internal` network's fixed subnet — podman's
+# own auto-assigned project networks are sequential 10.89.<n>.0/24s, per
+# `podman network ls`; 10.89.90.0/28 is well clear of that range so it won't
+# collide as more projects get added), and TIMETAGGER_PROXY_AUTH_TRUSTED
+# below is that exact IP — not a CIDR range, not "trust the whole subnet".
+# Only oauth2-proxy, specifically, can ever hand TimeTagger a username.
+#
+# oauth2-proxy runs in full reverse-proxy ("upstream") mode, not the
+# nginx-style auth_request/forward_auth sidecar mode: every request to
+# time.mathewcsims.uk hits oauth2-proxy first, unauthenticated ones get
+# redirected to Infomaniak, and only requests oauth2-proxy has itself
+# verified ever reach TimeTagger — with X-Forwarded-Email set to the
+# verified address (oauth2-proxy's own default behavior, `pass-basic-auth`
+# and `pass-user-headers`, both true by default — confirmed from
+# pkg/apis/options/legacy_options.go). This means only ONE port needs
+# publishing at all (oauth2-proxy's), same "reduce what's reachable" instinct
+# as ../nimbus/'s db not being published.
+#
+# ── Login is restricted to one specific person, not "any Infomaniak user" ──
+# login.infomaniak.com is Infomaniak's SHARED identity service across all its
+# customers (confirmed via the discovery document when ../nimbus/ was set up)
+# — a bare "successful OIDC login" check would let ANY Infomaniak customer
+# worldwide into this instance. oauth2-proxy's OAUTH2_PROXY_EMAIL_DOMAINS
+# would be equally wrong here for the same reason (it'd allow every
+# @infomaniak.com-issued identity, not just yours). Instead this uses
+# OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE — a file with exactly one allowed
+# address — which oauth2-proxy's own validator.go ORs with EMAIL_DOMAINS
+# (confirmed from source: `valid = isEmailValidWithDomains(...) ||
+# validUsers.IsValid(email)`), so leaving EMAIL_DOMAINS unset means the
+# email-allowlist file is the ONLY path to a valid login. That file
+# (./oauth2-proxy/authenticated-emails.txt) isn't committed — it's written
+# at deploy time by scripts/pass-deploy-timetagger.sh from the "TimeTagger"
+# Pass item's ALLOWED_EMAIL field, same "nothing sensitive on disk except via
+# the deploy step" discipline as every other app here.
+#
+# ── Images ───────────────────────────────────────────────────────────────
+# Both pinned to exact digests (not :latest) — same discipline as Vikunja's
+# pin, given Vikunja's own history of unpatched CVEs sitting on a stale
+# :latest. oauth2-proxy v7.15.3 is the first release with several real fixes
+# (GHSA-7x63-xv5r-3p2x, critical auth bypass via X-Forwarded-Uri spoofing;
+# GHSA-5hvv-m4w4-gf6v, critical auth_request-mode bypass; GHSA-c5c4-8r6x-56w3,
+# email-domain bypass via malformed multi-@ claims) — confirmed via GitHub's
+# security-advisories API, all patched at > 7.15.1. None of the older
+# skip_auth_routes-related CVEs apply here regardless (this config never
+# sets skip_auth_routes), but pinning to the patched release costs nothing.
+# TimeTagger's "-nonroot" image variant (runs as fixed uid 1000, not root)
+# was tried first, for the same reason Vikunja/copyparty avoid unnecessary
+# root — but confirmed live it doesn't work here: uid 1000 inside the
+# container can't write the bind-mounted ./data (`PermissionError: [Errno
+# 13] Permission denied: '/opt/_timetagger/users'`). Vikunja's own compose.yaml
+# comment already covers why: podman-machine's rootless remapping only maps
+# the container's ROOT user to your host user for sane bind-mount ownership
+# — a fixed non-root uid like 1000 doesn't get that treatment. So this uses
+# the default root-variant image instead, matching every other Mac app here.
+name: timetagger
+
+services:
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy@sha256:10a1165743a192e1940b4708fb9647027185ce11a681a1c5519b442ff7f1f561
+    container_name: timetagger-oauth2-proxy
+    restart: unless-stopped
+    environment:
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://login.infomaniak.com
+      OAUTH2_PROXY_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OAUTH2_PROXY_REDIRECT_URL: https://time.mathewcsims.uk/oauth2/callback
+      # Session-cookie encryption key, not an OAuth credential — generated by
+      # scripts/pass-create-timetagger-secrets.sh, stored in Pass like every
+      # other generated secret in this repo.
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      # Kept at its secure default explicitly (matches ../nimbus/'s
+      # COOKIE_SECURE reasoning): the browser only ever sees this cookie over
+      # https (Caddy terminates TLS in front of everything), even though the
+      # Caddy-to-oauth2-proxy hop itself is plain HTTP over the LAN.
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+      # Only this one address may ever log in — see the file-note above.
+      # Deliberately NOT setting OAUTH2_PROXY_EMAIL_DOMAINS.
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: /etc/oauth2-proxy/authenticated-emails.txt
+      # Reverse-proxy mode: proxy directly to TimeTagger over the internal
+      # network (container DNS name, no published port needed for it at all).
+      OAUTH2_PROXY_UPSTREAMS: http://timetagger:8080/
+      # Caddy sits in front of oauth2-proxy and IS a real reverse proxy (not
+      # spoofable — nothing else can reach oauth2-proxy's published port
+      # except through Caddy, since the router only forwards 80/443 to the
+      # Pi). Trusting its X-Forwarded-For is the same "trust a private-range
+      # hop, since no real internet client can present one" reasoning as
+      # Vikunja's VIKUNJA_SERVICE_TRUSTEDPROXIES.
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_REAL_CLIENT_IP_HEADER: X-Forwarded-For
+      # Plural "_IPS" — confirmed from source (options.go: `cfg:
+      # "trusted_proxy_ips"`), NOT the singular the flag name ("--trusted-
+      # proxy-ip") would suggest. Got this wrong on the first deploy attempt
+      # — oauth2-proxy logged "WARNING: --reverse-proxy is enabled but no
+      # --trusted-proxy-ip CIDRs were configured... All connecting IPs are
+      # trusted", meaning the singular env var name was silently ignored
+      # rather than erroring, so this is worth getting right and verifying
+      # the warning is gone after redeploying, not just assuming the fix.
+      OAUTH2_PROXY_TRUSTED_PROXY_IPS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+    volumes:
+      - ./oauth2-proxy/authenticated-emails.txt:/etc/oauth2-proxy/authenticated-emails.txt:ro
+    ports:
+      # LAN-IP bind, same podman-machine requirement as every other Mac app
+      # here. The router never forwards 4180, so this is only ever reached
+      # by the Pi's Caddy.
+      - "10.0.1.14:4180:4180"
+    networks:
+      internal:
+        ipv4_address: 10.89.90.2
+    depends_on:
+      - timetagger
+    # No healthcheck: this digest is oauth2-proxy's default distroless build
+    # (gcr.io/distroless/static — confirmed from its own Makefile/Dockerfile,
+    # not the "-alpine" variant), meaning no shell and no wget to run a
+    # command-based check with. Same "no shell = smaller attack surface,
+    # worth it even without a healthcheck" trade-off already made for
+    # Vikunja's image (see ../vikunja/compose.yaml's healthcheck comment).
+
+  timetagger:
+    image: ghcr.io/almarklein/timetagger@sha256:0254a16b674d65842988fde25fe8447ba38cf6d02fa2ea8402b6a9ee78e1d724
+    container_name: timetagger
+    restart: unless-stopped
+    environment:
+      TIMETAGGER_BIND: 0.0.0.0:8080
+      TIMETAGGER_DATADIR: /root/_timetagger
+      TIMETAGGER_LOG_LEVEL: info
+      # No TIMETAGGER_CREDENTIALS — the local bcrypt-password login path is
+      # left with zero valid users on purpose, so oauth2-proxy's proxy-auth
+      # header is the ONLY way in, not an alternative alongside it.
+      TIMETAGGER_PROXY_AUTH_ENABLED: "true"
+      # The exact static IP oauth2-proxy holds on `internal` below — not a
+      # range. See the file-header note on why this is the crux of the
+      # whole setup's security.
+      TIMETAGGER_PROXY_AUTH_TRUSTED: 10.89.90.2
+      TIMETAGGER_PROXY_AUTH_HEADER: X-Forwarded-Email
+      TIMETAGGER_APP_REDIRECT: "true"
+    volumes:
+      - ./data:/root/_timetagger
+    # No `ports:` at all — see the file header. Only oauth2-proxy, on
+    # `internal`, can ever reach this. Pinned to a static IP too (not just
+    # oauth2-proxy) — without this, podman auto-assigns TimeTagger the
+    # network's first free address, which collided with oauth2-proxy's
+    # explicit .2 the first time this was deployed (confirmed live: "IPAM
+    # error: requested ip address 10.89.90.2 is already allocated").
+    networks:
+      internal:
+        ipv4_address: 10.89.90.3
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 10.89.90.0/28
