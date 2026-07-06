@@ -8,6 +8,15 @@
 # /app/config volume. `kopia repository connect b2` fails if no repository
 # exists yet at that bucket, so the first-ever run (this Pi, first boot)
 # falls through to `create` instead.
+#
+# This also means a `kopia repository change-password` run elsewhere (e.g.
+# the Mac) does NOT get picked up here just by restarting with a new
+# REPOSITORY_PASSWORD — confirmed directly, it crash-loops with "invalid
+# repository password" instead, since this container's own persisted
+# config/repository.config and cache/kopia.{repository,blobcfg} are still
+# keyed to the old password. See SETUP.md's Kopia section for the fix
+# (move those files aside so this bootstrap-if-missing check reconnects
+# fresh against the new password).
 set -eu
 
 CONFIG_DIR=/app/config

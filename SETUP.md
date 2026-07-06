@@ -1549,6 +1549,44 @@ one-item-per-app convention):
   `kopia-mac/backup.sh` fetches this item directly at mount time — see below
   for why, after an earlier Keychain-based approach turned out unreliable.
 
+**`pass-cli item create --from-template` echoes the created item — including
+every field value — back to stdout.** `pass-create-kopia-secrets.sh`'s final
+command was missing the redirect for this, found only because the same bug
+in a newly-written sibling script (`pass-create-timetagger-secrets.sh`)
+printed a freshly-generated secret straight into a Claude Code tool result.
+Fixed by appending `>/dev/null` to that command; both scripts now suppress it.
+An audit turned up no evidence any of the three Kopia secrets had actually
+leaked anywhere retrievable (shell history only ever records the command
+line, never output; nothing had run this script through a tool that logs
+stdout) — but all three were rotated anyway, cheaply, for certainty.
+
+**Rotating `REPOSITORY_PASSWORD`, `SERVER_CONTROL_PASSWORD`, and
+`WEBUI_PASSWORD`:** `kopia repository change-password` changes the
+repository-side password in place — no re-upload, no snapshot loss, because
+the password only unwraps a locally-cached master key rather than encrypting
+content directly. Run it from any already-connected client (the Mac, since
+`kopia-mac`'s connection is already live and interactive):
+```sh
+KOPIA_NEW_PASSWORD=<new-repository-password> kopia repository change-password
+```
+then write the three new values onto the existing "Kopia" Pass item with
+`pass-cli item update` (same `>/dev/null` discipline as creation — confirmed
+`item update` echoes fields back too).
+
+**This only refreshes the client that ran it.** Every other client/server
+sharing the repository keeps its own separately-persisted local connection
+state and does NOT pick up the new password just because the env var
+changed — confirmed directly: redeploying `kopia-server` on the Pi with the
+new `REPOSITORY_PASSWORD` alone left it crash-looping with `unable to create
+format manager: invalid repository password`, because its local
+`config/repository.config` and cached `cache/kopia.repository`/
+`cache/kopia.blobcfg` were still keyed to the old password. Fix: stop the
+container, move those four files aside (rename, don't delete — keep them as
+a backup until the fix is confirmed working), then redeploy. `entrypoint.sh`'s
+existing bootstrap-if-missing logic (see below) sees no config, runs `kopia
+repository connect b2` fresh against the already-rotated repository, and
+comes back up clean — a `connect`, not a `create`, so no data is touched.
+
 **NAS mount fetches the password from this Pass item directly — not the
 macOS Keychain, despite an earlier version of this doc (and this repo)
 recommending exactly that.** `mount_smbfs` only ever takes credentials via

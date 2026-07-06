@@ -45,7 +45,10 @@ template = {
 }
 json.dump(template, sys.stdout)
 ' "$REPOSITORY_PASSWORD" "$SERVER_CONTROL_PASSWORD" "$WEBUI_PASSWORD" \
-    | pass-cli item create custom --vault-name "Self-Hosted Secrets" --from-template -
+    | pass-cli item create custom --vault-name "Self-Hosted Secrets" --from-template - >/dev/null
+# Output suppressed: `item create` echoes the created item back, including
+# the secret values just generated above. Never let this command's stdout
+# reach a terminal/log unredirected.
 
 echo "Done. Verify with:"
 echo "  pass-cli item view --vault-name \"Self-Hosted Secrets\" --item-title \"Kopia\""
