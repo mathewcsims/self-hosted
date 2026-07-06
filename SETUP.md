@@ -1546,22 +1546,31 @@ one-item-per-app convention):
 - **"NAS Eddie"** — `NAS_HOST`, `NAS_SHARE`, `NAS_USER`, `NAS_PASSWORD` for
   the SMB share holding the NAS content to back up. Created via
   `scripts/pass-import-nas-credentials.sh`, same interactive-prompt pattern.
-  In practice, `kopia-mac/backup.sh` doesn't use this item at all — see the
-  NAS mount note below.
+  `kopia-mac/backup.sh` fetches this item directly at mount time — see below
+  for why, after an earlier Keychain-based approach turned out unreliable.
 
-**NAS mount uses the macOS Keychain, not this Pass item, for the actual
-mount step.** `mount_smbfs` takes credentials only via its URL argument —
-there's no way to pipe a password to it, so it would always be visible
-(briefly) in `ps` output if fetched from Pass at mount time. The safe fix:
-add the NAS credentials to Keychain once, manually, via Finder
-(Cmd+K → `smb://eddie.nas/AppleBackups` → tick "remember password") — after
-that, `mount_smbfs "//kopla-user@eddie.nas/AppleBackups" <mountpoint>` pulls
-the password from Keychain automatically, with no password anywhere in the
-script, the launchd job, or Pass. The "NAS Eddie" Pass item still exists as
-the durable record of what those credentials are, for whenever they need
-rotating.
+**NAS mount fetches the password from this Pass item directly — not the
+macOS Keychain, despite an earlier version of this doc (and this repo)
+recommending exactly that.** `mount_smbfs` only ever takes credentials via
+its URL argument — there's no piped-input alternative — so a Keychain
+lookup was tried first specifically to avoid the password ever appearing in
+`ps` output. That worked perfectly when tested by hand in a real Terminal
+session (no prompt, no password on any command line) — but the first two
+actual overnight `launchd` runs both failed with the exact same
+"Authentication error" a plain non-interactive shell gets. macOS's Keychain
+access control apparently treats a launchd-spawned process differently from
+a Terminal-attached one, and there's no reliable way found to grant a
+headless launchd job the same access consistently.
 
-**Two quirks found while actually testing this, both now handled in
+Given `mount_smbfs`'s interface leaves no fully-safe option either way,
+`backup.sh` now fetches `NAS_USER`/`NAS_PASSWORD` from Pass and builds the
+mount URL directly — accepted, not overlooked: the password is briefly
+visible in `ps` output once a day during this run, on a single-user Mac,
+which is a materially smaller concern than what a real compromise of this
+machine would already expose. The "NAS Eddie" Pass item is the one already
+storing this credential either way.
+
+**Other quirks found while actually testing this, now handled in
 `backup.sh`:**
 - The mount point is `~/nas-mounts/AppleBackups`, not `/Volumes/AppleBackups`
   — macOS only lets a privileged process (Finder's own mount helper,
@@ -1569,15 +1578,9 @@ rotating.
   `mkdir` there fails with "Permission denied", confirmed directly. A path
   under `$HOME` has no such restriction, so `backup.sh` creates it with a
   normal `mkdir -p` before mounting.
-- Keychain access for a non-interactive `mount_smbfs` call depends on the
-  calling process's session context, not just the stored item itself —
-  confirmed by testing the exact same command from two different contexts:
-  it failed with "Authentication error" run from one shell context, then
-  succeeded silently (no prompt at all) run from a real logged-in Terminal
-  session. launchd LaunchAgents run inside the user's actual login session,
-  matching the context that worked — so the real scheduled job should
-  behave like the successful case, not the failing one. Worth re-confirming
-  after the first real scheduled run actually happens, rather than assuming.
+- `backup.sh` auto-logs-in to `pass-cli` the same way the deploy scripts do
+  (`SECRET_ACCESS_TOKEN` from the repo-root `.env`) if no session is
+  already active, since a scheduled 2am job can't assume one.
 
 **To bring the Pi side up on a fresh machine:**
 1. Generate the three Kopia secrets and import the B2 + NAS credentials —
@@ -1616,23 +1619,21 @@ rotating.
    ```
    (`--override-hostname` gives this Mac's snapshots a clean, stable name in
    the shared repository, instead of whatever macOS calls the machine.)
-3. Add the NAS credentials to Keychain once, via Finder (see above) — do
-   this before the first scheduled run, or the launchd job will just log a
-   failed mount and continue with local sources only. Worth testing the
-   mount once from a real logged-in Terminal session first (not e.g. an
-   SSH session or a restricted subprocess context) — Keychain access for a
-   non-interactive `mount_smbfs` call turned out to depend on the calling
-   process's session context, not just the stored item (see the quirks
-   note above).
+3. Nothing to configure for the NAS mount itself — `backup.sh` fetches
+   `NAS_USER`/`NAS_PASSWORD` from the "NAS Eddie" Pass item directly at
+   mount time (see above for why this isn't Keychain-based, despite that
+   being the more obviously "safe-looking" option at first).
 4. Install the LaunchAgent:
    ```
    cp kopia-mac/uk.mathewcsims.kopia-mac-backup.plist ~/Library/LaunchAgents/
    launchctl load ~/Library/LaunchAgents/uk.mathewcsims.kopia-mac-backup.plist
    ```
    Runs daily at 02:00 — see `kopia-mac/backup.sh` for the exact source
-   list. No Pass access needed at run time: `kopia repository connect`
-   persists locally, so `kopia snapshot create` just works without
-   re-supplying the repository password each run.
+   list. The Kopia repository connection itself needs no Pass access at run
+   time (`kopia repository connect`, done once above, persists locally) —
+   but the NAS mount step does, auto-logging in via `SECRET_ACCESS_TOKEN`
+   from the repo-root `.env` the same way the deploy scripts do, if no
+   `pass-cli` session is already active.
 
 **Offline copy on an external HDD:** `scripts/mirror-backup-to-external-drive.sh`
 mirrors the entire B2 bucket (already encrypted by Kopia — no extra
