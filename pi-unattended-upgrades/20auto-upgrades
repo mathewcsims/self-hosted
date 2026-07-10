@@ -1,0 +1,5 @@
+// Enables the periodic apt timers already present and enabled
+// (apt-daily.timer / apt-daily-upgrade.timer) but currently inert without
+// this file and the unattended-upgrades package itself.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";

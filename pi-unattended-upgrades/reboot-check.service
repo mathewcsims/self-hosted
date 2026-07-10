@@ -1,0 +1,6 @@
+[Unit]
+Description=Check for a pending reboot (unattended-upgrades) and notify via Apprise
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/notify-reboot-required.sh
