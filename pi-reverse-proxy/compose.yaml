@@ -32,6 +32,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data            # issued certs + ACME account — persist this!
       - caddy_config:/config
+      - ./logs:/var/log/caddy       # access log, host-readable for fail2ban (see Caddyfile's global log block)
     networks:
       - pi-shared
 

@@ -9,6 +9,21 @@
 	# proxying) — an over-limit request is rejected as cheaply as possible,
 	# and never reaches copyparty/Memos/Vikunja/Nimbus at all.
 	order rate_limit first
+
+	# Persist the access log to a file on disk (bind-mounted out of the
+	# container — see compose.yaml), not just ephemeral `docker logs`
+	# output. Configuring the *default* logger here, once, applies to
+	# every site block automatically — this is the prerequisite for the
+	# fail2ban `caddy-abuse` jail (see ../pi-fail2ban/), which tails this
+	# file from the host.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 5
+			roll_keep_for 168h
+		}
+		format json
+	}
 }
 
 # Reusable hardening headers — HSTS (force HTTPS on repeat visits),
