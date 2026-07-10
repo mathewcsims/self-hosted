@@ -122,7 +122,10 @@ below says which.
 | `timetagger/oauth2-proxy/authenticated-emails.txt` | **Mac** | **gitignored** — the one-address login allowlist, written at deploy time by `pass-deploy-timetagger.sh` |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
 | `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, `pass-create-timetagger-secrets.sh`, `pass-deploy-timetagger.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
-| `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only |
+| `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
+| `pi-sshd/` | **Pi** | drop-in `sshd_config.d` file disabling password auth (deployed manually, not via a compose stack) |
+| `pi-unattended-upgrades/` | **Pi** | security-only auto-patching config + a daily reboot-required notifier (deployed manually) |
+| `pi-fail2ban/` | **Pi** | fail2ban jails (sshd, Caddy-abuse), filters, and ban actions (deployed manually) |
 
 ### Known values
 
@@ -2157,3 +2160,85 @@ policy, etc.):
   since blanket-limiting `/api/v1/auth/*` the way Nimbus's zone does isn't
   right when self-registration is meant to stay open. Full detail in the
   [Memos section](#memos-httpsprospect-ukri-tusmathewcsimsuk) above.
+
+---
+
+### Hardening pass 2 (Pi SSH, Mac SSH, fail2ban, unattended-upgrades)
+
+Triggered by both hosts now serving real internet-facing traffic. A live
+read-only audit of the Pi, this Caddyfile's own conventions, and the Mac
+turned up four concrete gaps, each closed using this repo's existing
+tracked-config-as-code + Apprise-notification patterns rather than
+one-off manual commands:
+
+- **Pi sshd allowed password auth.** Confirmed via `sshd -T`:
+  `passwordauthentication yes`, with `sshd` bound to `0.0.0.0:22`/`[::]:22`
+  — yet there's no `~/.ssh/authorized_keys` at all; every real login goes
+  through Tailscale SSH instead (implemented inside `tailscaled`, bypasses
+  system sshd entirely). New drop-in `pi-sshd/pi-sshd-hardening.conf` →
+  `/etc/ssh/sshd_config.d/`, sets `PasswordAuthentication no` (root login
+  stays `without-password`, sshd itself stays running as a fallback).
+  Verified live: `sshd -T` now reports `passwordauthentication no`,
+  `permitrootlogin` unchanged, `ssh.service` stayed active throughout
+  (`reload`, not `restart`). **Whether the DrayTek forwards WAN port 22 to
+  the Pi is unconfirmed from software** — only 80/443 are documented as
+  forwarded; check the router's own port-forwarding table directly if you
+  want certainty.
+- **Mac SSH Remote Login had no firewall rule at all.** macOS's
+  Application Firewall is off, and Remote Login listens on
+  `0.0.0.0:22`/`[::]:22` system-wide, reachable from the whole LAN and any
+  Tailscale tailnet peer — uncovered by the existing `pf-lockdown` anchor
+  (which only restricted copyparty/Vikunja). Restricted, not disabled
+  (Remote Login is actively used): extended
+  `pf-lockdown/com.mathewcsims.lan-lockdown` with a `<ssh_trusted>` table
+  (`10.0.1.19` + `100.64.0.0/10`), mirroring the same
+  `private_ranges` + explicit Tailscale-CGNAT pairing already used by
+  Caddy's own `@lan` gates. Redeployed the same way as the original
+  anchor (copy → `/etc/pf.anchors/`, `pfctl -f /etc/pf.conf`). Verified
+  live: `pfctl -a com.mathewcsims.lan-lockdown -s rules` now shows 6 rules
+  (the existing 4 for copyparty/Vikunja plus the new pass/block pair for
+  port 22); confirmed the Pi can still reach the Mac's SSH port (TCP
+  connects through to the host-key exchange stage).
+- **No OS-level patching at all on the Pi.** Confirmed neither
+  `unattended-upgrades` nor its config existed — `apt-daily*.timer` were
+  enabled but inert without them. New `pi-unattended-upgrades/` installs
+  the package with `Automatic-Reboot "false"` explicit and deliberately
+  does **not** add Docker's own apt repo (`download.docker.com`) to the
+  auto-patched origins — same manual-review philosophy already applied to
+  pinned app image digests elsewhere in this doc; Docker Engine is the
+  substrate every app here runs on. Instead of auto-rebooting, a new daily
+  `reboot-check.timer` checks `/var/run/reboot-required` and pushes a
+  notification through the existing Apprise/Discord pipe if one's needed.
+  Verified live: `unattended-upgrade --dry-run --debug` shows Docker's own
+  packages checked against the Origins-Pattern but never selected for
+  upgrade (only the Debian-security origin is eligible); manually
+  triggering the notifier script ran clean end-to-end.
+- **No independent host firewall/ban layer on the Pi at all.** Only
+  Docker's and Tailscale's own iptables chains gated traffic — no
+  `fail2ban`, no `ufw`. Added Caddy's own persisted JSON access log first
+  (`pi-reverse-proxy/Caddyfile`'s global `log {}` block + a bind-mounted
+  `./logs` volume in `compose.yaml` — nothing was persisted outside the
+  container before this, only ephemeral `docker logs` output) as the
+  prerequisite for a new `pi-fail2ban/` setup: the stock `sshd` jail
+  (`backend = systemd`, since this host has no rsyslog/`auth.log`, only
+  journald), and a new `caddy-abuse` jail matching unambiguous
+  scanner/vuln-probe paths (`/wp-login.php`, `/.env`, `/.git/`, etc.) in
+  the access log. Banning uses a custom `docker-user-multiport` action
+  hooked into `DOCKER-USER` — the standard `iptables-multiport` action's
+  `INPUT`-chain rule has zero effect against a container's published,
+  DNAT'd ports, since that traffic only ever transits the `FORWARD` chain.
+  Ban/unban events notify via the same Apprise pipe as everything else in
+  this repo. Verified live end-to-end: the filter regex correctly matches
+  a synthetic scanner-shaped log line; feeding two real scanner-path hits
+  from a test IP through the actual monitored log file triggered a real
+  ban (confirmed in both `fail2ban-client status caddy-abuse` and
+  `iptables -L f2b-caddy-abuse`), then cleanly unbanned.
+
+**Manual action items — out of scope for this repo, worth doing
+separately:**
+1. Check the DrayTek Vigor2866's port-forwarding table directly to confirm
+   WAN port 22 isn't forwarded to the Pi (only 80/443 are documented).
+2. Review the Tailscale ACL policy in the Tailscale admin console — it
+   governs which tailnet peers can reach either host's SSH port (and
+   everything else Tailscale-reachable), and isn't visible or editable
+   from either machine.
