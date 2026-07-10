@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily check for a pending reboot (see reboot-check.service)
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

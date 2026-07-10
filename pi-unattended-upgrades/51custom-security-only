@@ -1,0 +1,13 @@
+// Debian bookworm's packaged 50unattended-upgrades already ships an
+// Origins-Pattern for the standard Debian-security origin — confirm that
+// line is present after install (see SETUP.md verification step) rather
+// than duplicating it here.
+Unattended-Upgrade::Automatic-Reboot "false";
+
+// Deliberately NOT adding Docker's own apt repo (download.docker.com,
+// confirmed Origin: Docker) to the auto-patched origins. This repo already
+// treats anything container-adjacent as deliberately manual/reviewed
+// (pinned app image digests throughout) — Docker Engine is the substrate
+// every app here runs on, so it gets the same manual-review treatment, not
+// silent overnight auto-patching. OS-level security packages (kernel,
+// openssh, glibc, etc.) still auto-patch via the origin above.
