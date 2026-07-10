@@ -19,3 +19,20 @@
 # first match.
 pass in quick log proto tcp from 10.0.1.19 to 10.0.1.14 port { 3923, 3456 }
 block in quick log proto tcp from any to 10.0.1.14 port { 3923, 3456 }
+
+# ── SSH (port 22): macOS Remote Login, LAN + Tailscale only ──────────────
+# macOS's own Application Firewall is OFF (confirmed via
+# `socketfilterfw --getglobalstate`) and Remote Login listens on
+# 0.0.0.0:22/[::]:22 system-wide — reachable from the entire LAN and any
+# Tailscale tailnet peer permitted by ACLs, uncovered by the rule above.
+# Restricting, not disabling: Remote Login is actively used day-to-day.
+#
+# Allowed sources: the Pi's LAN IP AND Tailscale's whole CGNAT range —
+# mirroring the exact "private_ranges + explicit Tailscale CGNAT" pairing
+# already used in pi-reverse-proxy/Caddyfile's `@lan remote_ip
+# private_ranges 100.64.0.0/10` gate (Caddy's private_ranges shortcut
+# doesn't include Tailscale's range either — pf has no equivalent builtin
+# at all, hence the explicit table).
+table <ssh_trusted> persist { 10.0.1.19, 100.64.0.0/10 }
+pass in quick log proto tcp from <ssh_trusted> to 10.0.1.14 port 22
+block in quick log proto tcp from any to 10.0.1.14 port 22
