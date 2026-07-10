@@ -1,0 +1,41 @@
+[DEFAULT]
+# Never ban our own trusted infra: loopback, the LAN, the Tailscale CGNAT
+# range — same ranges already trusted by Caddy's own @lan gates.
+ignoreip = 127.0.0.1/8 ::1 10.0.1.0/24 100.64.0.0/10
+
+[sshd]
+# fail2ban's built-in sshd jail/filter. This host has no rsyslog/auth.log
+# — only systemd-journald ("ssh.service") — so this MUST use the systemd
+# backend, not the file-based default.
+enabled = true
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=ssh.service
+maxretry = 5
+findtime = 600
+bantime = 3600
+# Given PasswordAuthentication is now "no" (../pi-sshd/), this jail's value
+# is defense-in-depth against anything odd, not stopping password
+# brute-force (already impossible) — still worth having.
+action = %(action_)s
+         apprise-notify
+
+[caddy-abuse]
+# Unambiguous scanner/vuln-probe paths hitting Caddy's public hostnames —
+# no real app in this repo would ever legitimately serve any of these.
+enabled = true
+filter = caddy-abuse
+logpath = /home/mathew/pi-reverse-proxy/logs/access.log
+backend = auto
+port = http,https
+maxretry = 2
+findtime = 300
+bantime = 86400
+# Caddy runs in Docker with 80/443 published — traffic is DNAT'd via the
+# FORWARD chain, which the standard iptables-multiport action (INPUT-chain
+# only) never sees. docker-user-multiport hooks into DOCKER-USER instead —
+# the chain Docker itself guarantees runs first in FORWARD and never
+# flushes/overwrites (confirmed live: iptables -L DOCKER-USER already
+# exists and is Docker-managed) — the standard safe way to combine
+# fail2ban with a Docker host.
+action = docker-user-multiport[port="http,https"]
+         apprise-notify
