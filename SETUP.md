@@ -2199,6 +2199,25 @@ one-off manual commands:
   (the existing 4 for copyparty/Vikunja plus the new pass/block pair for
   port 22); confirmed the Pi can still reach the Mac's SSH port (TCP
   connects through to the host-key exchange stage).
+  - **Caught in PR review, fixed before merge: the rules above only ever
+    matched IPv4.** A dotted-quad address specification implicitly scopes
+    a pf rule to `inet`, never `inet6` — and this Mac's own LAN interface
+    already has a real IPv6 link-local address regardless of the ISP
+    having no IPv6 WAN support at all (link-local is self-assigned by the
+    OS via SLAAC purely for same-segment communication, no ISP/WAN routing
+    involved). Without an IPv6-scoped pair, any other device on the LAN
+    could reach Remote Login over IPv6, entirely bypassing the restriction
+    above. Added a second table (`<ssh_trusted6>`: the Pi's own link-local
+    address, confirmed stable/MAC-derived via `ip -6 addr show scope
+    link`; and Tailscale's IPv6 ULA range `fd7a:115c:a1e0::/48`, its
+    equivalent of the `100.64.0.0/10` CGNAT range already trusted above)
+    and a matching pass/block pair scoped to `on en1` (this Mac's LAN
+    interface — IPv6 has no single stable "this Mac's address" literal to
+    match against the way the IPv4 rules use `10.0.1.14`, since there's no
+    ISP-routed IPv6 address to use). Verified live: `pfctl -a
+    com.mathewcsims.lan-lockdown -s rules` now shows 8 rules; `pfctl -a
+    com.mathewcsims.lan-lockdown -t ssh_trusted6 -T show` confirms both
+    trusted addresses loaded correctly.
 - **No OS-level patching at all on the Pi.** Confirmed neither
   `unattended-upgrades` nor its config existed — `apt-daily*.timer` were
   enabled but inert without them. New `pi-unattended-upgrades/` installs

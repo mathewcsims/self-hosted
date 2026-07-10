@@ -36,3 +36,29 @@ block in quick log proto tcp from any to 10.0.1.14 port { 3923, 3456 }
 table <ssh_trusted> persist { 10.0.1.19, 100.64.0.0/10 }
 pass in quick log proto tcp from <ssh_trusted> to 10.0.1.14 port 22
 block in quick log proto tcp from any to 10.0.1.14 port 22
+
+# The two rules above only ever match IPv4 (a dotted-quad address
+# specification implicitly scopes a pf rule to `inet`, never `inet6`) —
+# found during PR review, confirmed live: this Mac's own LAN interface
+# (en1) already has a real IPv6 link-local address
+# (`fe80::a5:4d14:40d4:236%en1`) regardless of the ISP having no IPv6 WAN
+# support at all. Link-local addresses are self-assigned by the OS via
+# SLAAC purely for same-segment communication — they need no ISP/WAN IPv6
+# routing to exist. Without this section, any other device on the LAN
+# (not just the Pi) could reach Remote Login over IPv6, entirely
+# bypassing the restriction above — the exact "any other LAN device"
+# threat model this whole file exists to close.
+#
+# Trusted IPv6 sources: the Pi's own link-local address on its LAN
+# interface (`fe80::d0a0:fdcf:a6f2:91cc`, confirmed via `ip -6 addr show
+# scope link` on babel — stable, MAC-derived, not a rotating
+# privacy-extension address) and Tailscale's IPv6 ULA range
+# (`fd7a:115c:a1e0::/48`, confirmed via `tailscale status`/this Mac's own
+# utun2 address — Tailscale's IPv6 equivalent of the 100.64.0.0/10 CGNAT
+# range already trusted above). `on en1` scopes both rules to this Mac's
+# actual LAN interface specifically, since IPv6 destination-address
+# matching can't rely on a single stable "this Mac's IP" literal the way
+# the IPv4 rules do (no ISP-routed IPv6 means no such address exists).
+table <ssh_trusted6> persist { fe80::d0a0:fdcf:a6f2:91cc, fd7a:115c:a1e0::/48 }
+pass in quick log on en1 inet6 proto tcp from <ssh_trusted6> to any port 22
+block in quick log on en1 inet6 proto tcp to any port 22
