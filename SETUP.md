@@ -1326,6 +1326,30 @@ file. Re-run this script any time the webhook is rotated in Pass.
    `curl -X POST https://apprise.mathewcsims.uk/notify/self-hosted -d 'body=test'`
    — a message should land in Discord within a couple of seconds.
 
+**Notification formatting convention (color, icon, markdown).** The
+registered Discord URL carries `?format=markdown&image=yes`
+(`scripts/pass-seed-apprise.sh`) — confirmed directly from Apprise's own
+`discord.py` source, not assumed: `image=yes` shows a small type icon in
+the embed, `format=markdown` lets the `body` use `**bold**`/lists/`` `code`
+``, and the embed's sidebar color is set automatically from whatever
+`type` value (`info`/`success`/`warning`/`failure`) each `POST
+/notify/self-hosted` call includes — this is generic Apprise/Discord
+behavior, not something built here. Every notifier in this repo that feeds
+this shared endpoint (`pi-fail2ban/notify-apprise.sh`,
+`pi-unattended-upgrades/notify-reboot-required.sh`,
+`vikunja-webhook-relay/relay.py`) follows the same convention: pick a
+`type` matching real severity, prefix the title with a matching emoji
+(🚫/✅/⚠️/🔔) for at-a-glance scanning in a channel feed, and send
+`format=markdown` with the body. Verified live for all three: ban/unban,
+reboot-required, and a signed Vikunja `task.overdue` test event all
+rendered with the correct color/icon/markdown in Discord.
+
+**Uptime Kuma does NOT go through this endpoint at all** — it bundles its
+own Apprise CLI and shells out to it directly from its own Notification
+settings UI (see the Uptime Kuma section below), a structurally separate
+path. This formatting convention doesn't apply to Kuma's alerts; that
+would need reconfiguring inside Kuma's own UI if wanted.
+
 ---
 
 ## Uptime Kuma (https://status.mathewcsims.uk) — runs on the Pi

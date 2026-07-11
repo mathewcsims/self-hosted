@@ -66,7 +66,11 @@ m = re.match(r"https://discord(?:app)?\.com/api/webhooks/(\d+)/(.+)", webhook)
 if not m:
     sys.exit("DISCORD_WEBHOOK is not a recognizable Discord webhook URL")
 webhook_id, webhook_token = m.groups()
-print(f"discord://{webhook_id}/{webhook_token}/")
+# format=markdown: lets notifiers use **bold**/lists in the body instead of
+# flat text. image=yes: shows a small type icon (info/warning/error/
+# success) in the embed. Neither is a secret - safe to hardcode here rather
+# than store as a Pass field.
+print(f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes")
 ' \
     | ssh mathew@babel 'read -r APPRISE_URL && docker exec -i apprise python3 /scripts/seed.py <<<"$APPRISE_URL"'
 

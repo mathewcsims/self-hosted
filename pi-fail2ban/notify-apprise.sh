@@ -11,14 +11,23 @@ ACTION="$1"
 JAIL="$2"
 IP="$3"
 
-TITLE="fail2ban: ${JAIL}"
 if [ "$ACTION" = "ban" ]; then
-    BODY="Banned ${IP} (jail: ${JAIL}) on babel."
+    TITLE="🚫 fail2ban: banned an IP"
+    TYPE="failure"
+    BODY="**Jail:** \`${JAIL}\`
+**IP:** \`${IP}\`
+**Host:** babel"
 else
-    BODY="Unbanned ${IP} (jail: ${JAIL}) on babel."
+    TITLE="✅ fail2ban: unbanned an IP"
+    TYPE="success"
+    BODY="**Jail:** \`${JAIL}\`
+**IP:** \`${IP}\`
+**Host:** babel"
 fi
 
 curl -fsS --max-time 10 \
     --data-urlencode "title=${TITLE}" \
+    --data-urlencode "type=${TYPE}" \
+    --data-urlencode "format=markdown" \
     --data-urlencode "body=${BODY}" \
     https://apprise.mathewcsims.uk/notify/self-hosted >/dev/null 2>&1 || true

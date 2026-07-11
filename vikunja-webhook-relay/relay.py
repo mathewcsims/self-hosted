@@ -13,17 +13,23 @@ MAX_BODY_BYTES = 1_000_000  # generous for a Vikunja task payload; guards agains
 
 
 def describe_event(event_name, data):
+    """Returns (title, body, apprise_type) for a Vikunja webhook event."""
     task = data.get("task") or {}
     tasks = data.get("tasks") or []
 
-    if event_name in ("task.overdue", "task.reminder.fired") and task.get("title"):
-        verb = "overdue" if event_name == "task.overdue" else "reminder"
-        return f"Task {verb}: {task['title']}"
+    if event_name == "task.overdue" and task.get("title"):
+        return "⚠️ Task overdue", f"**{task['title']}**", "warning"
+    if event_name == "task.reminder.fired" and task.get("title"):
+        return "🔔 Task reminder", f"**{task['title']}**", "info"
     if event_name == "tasks.overdue" and tasks:
-        titles = ", ".join(t.get("title", "?") for t in tasks[:5])
-        more = f" (+{len(tasks) - 5} more)" if len(tasks) > 5 else ""
-        return f"{len(tasks)} task(s) overdue: {titles}{more}"
-    return f"Vikunja event: {event_name}"
+        lines = "\n".join(f"- {t.get('title', '?')}" for t in tasks[:5])
+        more = f"\n- (+{len(tasks) - 5} more)" if len(tasks) > 5 else ""
+        return (
+            f"⚠️ {len(tasks)} task(s) overdue",
+            f"{lines}{more}",
+            "warning",
+        )
+    return "Vikunja event", f"`{event_name}`", "info"
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -60,9 +66,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         event_name = payload.get("event_name", "unknown")
-        body = describe_event(event_name, payload.get("data") or {})
+        title, body, notify_type = describe_event(event_name, payload.get("data") or {})
 
-        notify_data = urllib.parse.urlencode({"title": "Vikunja", "body": body}).encode()
+        notify_data = urllib.parse.urlencode(
+            {"title": title, "body": body, "type": notify_type, "format": "markdown"}
+        ).encode()
         req = urllib.request.Request(APPRISE_NOTIFY_URL, data=notify_data, method="POST")
         try:
             urllib.request.urlopen(req, timeout=10)
