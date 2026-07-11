@@ -2386,23 +2386,11 @@ separately:**
    everything else Tailscale-reachable), and isn't visible or editable
    from either machine.
 
-### Hardening pass 3 (HSTS preload, CAA)
+### Hardening pass 3 (CAA)
 
-Two cheap, low-effort additions on top of the existing per-site HSTS header
+One cheap, low-effort addition on top of the existing per-site HSTS header
 (which already existed — see the first hardening pass above):
 
-- **HSTS preload.** `pi-reverse-proxy/Caddyfile`'s `(security_headers)`
-  snippet now sends `Strict-Transport-Security: max-age=31536000;
-  includeSubDomains; preload`. The bare apex `mathewcsims.uk` site block
-  already imports this same snippet (required for hstspreload.org
-  eligibility — the directive must be present on the exact apex, not just
-  subdomains). Verified live via `curl -sI` against the apex, `owl.`, and
-  `time.` subdomains after redeploying Caddy on the Pi — all three send the
-  updated header. Submitting the domain to hstspreload.org itself is a
-  separate, deliberately-not-yet-taken step: it's a third-party form
-  submission that's semi-permanent (removal takes many browser release
-  cycles once shipped), so it's being left for a specific, separate
-  go-ahead rather than folded into this pass.
 - **CAA DNS record**, restricting which Certificate Authorities may issue
   TLS certs for `mathewcsims.uk` (and, by DNS's normal CAA tree-walk, every
   subdomain that doesn't have its own CAA record — none do). Caddy's
@@ -2436,3 +2424,13 @@ Two cheap, low-effort additions on top of the existing per-site HSTS header
   valid cert isn't worth the disruption; the record's syntax is
   RFC-compliant and authorizes exactly the CAs Caddy actually uses, which
   is what matters.
+
+**Not applied: HSTS preload.** Briefly added a `preload` directive to the
+`Strict-Transport-Security` header and then deliberately reverted it —
+hstspreload.org's own submission form advises against preloading unless
+you're certain every current and future subdomain will only ever be served
+over HTTPS, since it's baked into browsers directly (no per-visit
+opt-in/opt-out the way plain HSTS has) and takes many browser release
+cycles to undo once shipped. Not worth that permanence for a personal
+setup where the marginal gain over the existing HSTS header (already
+forces HTTPS from the second visit onward) is small.
