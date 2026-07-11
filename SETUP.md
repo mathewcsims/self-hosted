@@ -1382,6 +1382,26 @@ extra hop for Kuma's own alerts. The standalone Apprise container stays
 useful for everything else that wants to fire a notification without
 embedding a webhook of its own.
 
+**Configured to use the native Discord provider, not Apprise — a deliberate
+choice, not the default.** Confirmed by reading both providers' source
+(`server/notification-providers/apprise.js` and `discord.js`): Kuma's own
+Apprise integration never passes a notification-type flag to the `apprise`
+CLI at all (only `-b`/body and `-t`/title), so every notification through
+that path renders with the same flat blue/info color regardless of whether
+a monitor went down or came back up — even with the shared Apprise
+container's `?format=markdown&image=yes` (see the Apprise API section
+above). The native Discord provider builds its own real embeds instead:
+red (`#FF0000`) with a "❌ ... went down" title and structured fields
+(service name, URL, went-offline timestamp, error) for DOWN; green
+(`#00FF00`) with "✅ ... is up" and fields including downtime duration and
+ping for UP. Uses the same raw Discord webhook URL as the standalone
+Apprise container's Pass-stored `DISCORD_WEBHOOK` field, entered directly
+into Kuma's own notification config (Message Format: "Normal (rich
+embeds)"). Verified live: forced a real DOWN→UP cycle by temporarily
+pointing the Landing Page monitor at a nonexistent path, confirmed both a
+correctly red-colored DOWN embed and a green UP embed (with downtime
+duration) arrived in Discord.
+
 **No env-var-based admin bootstrap exists for this app** (confirmed —
 unlike Nimbus's `INITIAL_ADMIN_EMAIL`/`PASSWORD`), so the very first visit
 to `https://status.mathewcsims.uk` runs Kuma's own setup wizard: choose an
