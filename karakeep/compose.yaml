@@ -124,8 +124,19 @@ services:
 
   # Headless Chrome for screenshot/full-page-archival capture. Internal
   # only — no published port, reached by `web` over the compose network.
+  #
+  # zenika-hub/alpine-chrome is unmaintained upstream (its own README says
+  # the maintainer no longer works for Zenika and can't support it) and
+  # stalled around Chrome 123/124 while real Chrome has moved well past
+  # that, including sandbox-escape CVEs fixed only in much newer releases.
+  # Bumped 123 -> 124 (the last tag this image ever got) for the marginal
+  # gain, but this can't be kept current going forward since upstream has
+  # stopped shipping new Chrome versions — worth revisiting with a
+  # different actively-maintained headless-Chrome image at some point,
+  # since this container renders arbitrary bookmarked (attacker-influenced)
+  # pages for screenshotting.
   chrome:
-    image: gcr.io/zenika-hub/alpine-chrome:123
+    image: gcr.io/zenika-hub/alpine-chrome:124@sha256:1a0046448e0bb6c275c88f86e01faf0de62b02ec8572901256ada0a8c08be23f
     container_name: karakeep-chrome
     restart: unless-stopped
     command:
@@ -137,8 +148,15 @@ services:
       - --hide-scrollbars
 
   # Full-text search backend. Internal only.
+  #
+  # Bumped v1.11.1 -> v1.49.0 (~1.5 years of releases): fixes
+  # CVE-2026-57824 (scoped API key privilege escalation) and
+  # CVE-2026-57823 (info disclosure via search tenant tokens). Neither was
+  # actually exploitable here — Karakeep only ever uses the full
+  # MEILI_MASTER_KEY, never a scoped tenant/index key — but no reason to
+  # stay 18 months behind regardless.
   meilisearch:
-    image: getmeili/meilisearch:v1.11.1
+    image: getmeili/meilisearch:v1.49.0@sha256:b607c2957462d9a3181871cb532e5770eda9ade76167ec38903801aa28195b85
     container_name: karakeep-meilisearch
     restart: unless-stopped
     environment:

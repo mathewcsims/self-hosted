@@ -8,7 +8,11 @@
 # Dockerfile you build yourself) — pinned here to an exact tagged release
 # fetched at build time, not a moving `main`-branch checkout, so a rebuild
 # later doesn't silently pick up unreviewed upstream changes.
-FROM nginx:alpine
+#
+# The nginx base itself was also floating (`nginx:alpine`, which tracks
+# nginx's mainline branch, not `stable`) — pinned to the current mainline
+# release (1.31.2) with a digest for the same reproducibility reason.
+FROM nginx:1.31.2-alpine@sha256:1ff5c7ff41c619b521f7a3bcfb52ff93354bb65a0141d7cdc0bf9702b12f8f82
 
 ARG LITTLELINK_VERSION=3.10.0
 

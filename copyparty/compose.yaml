@@ -7,7 +7,13 @@
 
 services:
   copyparty:
-    image: copyparty/ac:latest
+    # Pinned, not the floating `latest` tag it started on — same reasoning
+    # as every other app here: a future pull shouldn't silently change
+    # what's running with no changelog review. 1.20.18 (confirmed current
+    # upstream as of this pin) already includes fixes for dirkey/filekey
+    # confusion, an FTP/SFTP share bypass, SVG JS execution, and an
+    # arbitrary-JS XSS — all from earlier 1.20.x releases.
+    image: copyparty/ac:1.20.18@sha256:16e7e18eff002a8438d49e51b5e44bf6a0980ee1879c2e305dc3a195e4c4747d
     container_name: copyparty
     restart: unless-stopped
     # Do NOT set `user:` — on podman-machine (macOS) the container's root maps

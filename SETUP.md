@@ -2434,3 +2434,60 @@ opt-in/opt-out the way plain HSTS has) and takes many browser release
 cycles to undo once shipped. Not worth that permanence for a personal
 setup where the marginal gain over the existing HSTS header (already
 forces HTTPS from the second visit onward) is small.
+
+### Dependency audit (image pins, CVE remediation)
+
+A full sweep of every pinned image across both hosts, plus host-level OS/
+Docker packages, checking each against upstream latest and published CVEs.
+Most things were already current with no applicable CVE; the following
+were bumped and re-pinned:
+
+- **Meilisearch (Karakeep's search backend)**: `v1.11.1` → `v1.49.0`
+  (`karakeep/compose.yaml`), fixing CVE-2026-57824 (scoped-key privilege
+  escalation) and CVE-2026-57823 (tenant-token info disclosure) — neither
+  actually exploitable here since Karakeep only ever uses the full
+  `MEILI_MASTER_KEY`, never a scoped key, but 18 months stale regardless.
+  **This required a real data migration**, not just a version bump: the
+  new engine refused to start against the old on-disk format
+  ("Your database version is incompatible with your current engine
+  version"). Migrated properly — spun up the old `v1.11.1` image
+  read-only against the existing data, triggered a Meilisearch dump via
+  its own `/dumps` API, then started `v1.49.0` fresh with
+  `--import-dump`, verified the document count matched (22 bookmarks)
+  before promoting the migrated directory into the real
+  `./meilisearch-data` path Compose manages. The pre-migration data
+  directory is kept as `karakeep/meilisearch-data-old-1.11.1/` (gitignored)
+  as a safety net — remove it once you're confident search is behaving
+  normally.
+- **alpine-chrome (Karakeep's screenshot renderer)**: `:123` → `:124`.
+  This is as current as this image will ever get — `zenika-hub/alpine-chrome`
+  is unmaintained upstream (its own README says so) and stalled here,
+  while real Chrome has moved well past this with sandbox-escape CVEs
+  fixed only in much newer releases. Since this container renders
+  arbitrary bookmarked (attacker-influenced) pages for screenshotting,
+  it's worth revisiting with a different actively-maintained
+  headless-Chrome image at some point — flagged, not yet acted on.
+- **copyparty**: was on the floating `copyparty/ac:latest` tag (no pin at
+  all — a reproducibility gap, not a version-currency one, since it
+  already resolved to the current upstream release). Pinned to
+  `1.20.18@sha256:...` (`copyparty/compose.yaml`).
+- **Caddy** (`pi-reverse-proxy/Dockerfile`): both build stages were
+  floating (`2-builder-alpine`/`2-alpine`). Pinned to the current stable
+  `2.11.4` with digests on both stages. `mholt/caddy-ratelimit` has no
+  tagged releases at all (builds only off `master`) — pinned to its
+  current HEAD commit for the same reproducibility reason, since there's
+  no version number to pin to otherwise. Rebuilt via `docker compose
+  build --pull && docker compose up -d` on the Pi; verified the binary
+  reports `v2.11.4`, no errors in Caddy's logs, and every site behind it
+  still serves correctly afterwards.
+- **nginx** (`landing-page/Dockerfile`): floating `nginx:alpine` (which
+  tracks nginx's *mainline* branch, not `stable` — worth knowing, since
+  "alpine" alone doesn't mean "stable-alpine"). Pinned to the current
+  mainline release, `1.31.2-alpine`, with a digest.
+
+Not touched in this pass (flagged as lower-priority "when convenient"
+items, not security-urgent): `mysql:8.4.6` (Ghost's DB, a few patches
+behind), `ghost:6.50.0`/`ghost/traffic-analytics:1.0.265` (both a little
+stale, no CVEs found), and `turboot/nimbus-postgres:18` (floating major
+tag — worth a fresh pull next time Nimbus is touched, to pick up 18.4's
+pgcrypto fix, CVE-2026-2005).

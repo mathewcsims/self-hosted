@@ -26,6 +26,7 @@ blog/content/
 blog/traffic-analytics-data/
 karakeep/data/
 karakeep/meilisearch-data/
+karakeep/meilisearch-data-old-1.11.1/
 apprise/config/
 uptime-kuma/data/
 kopia-server/config/
