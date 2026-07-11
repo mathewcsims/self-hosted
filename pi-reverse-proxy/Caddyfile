@@ -124,6 +124,31 @@ prospect-ukri-tus.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:5230
 }
 
+# ── Owl (Memos, running on the Mac) ────────────────────────────────────────
+# Clean public URL https://owl.mathewcsims.uk. Same pattern as the Memos
+# block above — a separate, unrelated Memos instance (personal notes, not
+# Prospect), migrated from an unrelated ScaleTail Tailscale-sidecar
+# deployment. Registration is closed here (personal instance, matching the
+# Nimbus precedent), so only one rate-limit zone is needed — no signup zone,
+# unlike prospect-ukri-tus.mathewcsims.uk above.
+owl.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit owl
+
+	rate_limit {
+		zone rl_owl_auth {
+			match {
+				path /api/v1/auth/signin /api/v1/auth/refresh
+			}
+			key {remote_host}
+			events 20
+			window 1m
+		}
+	}
+
+	reverse_proxy http://{$MAC_IP}:5231
+}
+
 # ── Vikunja (running on the Mac) ───────────────────────────────────────────
 # Clean public URL https://vikunja.mathewcsims.uk. Same pattern as copyparty
 # above. Vikunja's own image is pinned to an exact patched version and

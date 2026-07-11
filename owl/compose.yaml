@@ -1,0 +1,72 @@
+# Memos (https://github.com/usememos/memos) — "Owl", the user's personal
+# notes instance. Storage backend = ./data on this Mac.
+#
+# Migrated from an unrelated ScaleTail Tailscale-sidecar deployment
+# (~/ScaleTail/services/owl/, tailnet-only via Tailscale Serve) into this
+# repo's standard managed-app pattern, same architecture as ../copyparty:
+# TLS and the public hostname (owl.mathewcsims.uk) are handled by the Caddy
+# reverse proxy on the Raspberry Pi (see ../pi-reverse-proxy/). This Mac only
+# serves plain HTTP on the LAN; the Pi terminates HTTPS and forwards to
+# MAC_IP:5231 here. Nothing on the Mac is forwarded by the router.
+#
+# Existing data (notes, attachments, thumbnails) was copied in from the old
+# deployment's anonymous Podman volume — NOT its visible ./owl-data bind
+# mount, which turned out to be a template bug (mounted the wrong container
+# path, /var/opt/owl instead of Memos' real /var/opt/memos, and was always
+# empty). See SETUP.md's Owl section for the exact migration steps, in case
+# this is ever relevant again for a similar ScaleTail-originated migration.
+# Memos' own OIDC/SSO config (an existing Infomaniak IdP entry) lives inside
+# this same SQLite DB, so it migrated automatically with the data — only the
+# redirect URI registered on Infomaniak's own IK-AUTH console needed
+# updating, not anything in this compose file.
+#
+# Project/container named "owl" (not "memos") to stay unambiguous alongside
+# the unrelated pre-existing app-memos/tailscale-memos pair on this Mac
+# (~/ScaleTail/services/memos, a completely separate Memos instance) and
+# ../memos-prospect-ukri-tus/ (also unrelated) — folder name, project name,
+# and container name all match, so this instance can never be confused with
+# either of the other two.
+name: owl
+
+services:
+  owl:
+    # Same already-audited digest as ../memos-prospect-ukri-tus/ — v0.29.1,
+    # confirmed via GitHub's security-advisories API to have nothing
+    # unpatched (including the newest relevant one, GHSA-99m2-qwx6-2w6f /
+    # CVE-2025-65797, IdP-tampering, fixed at 0.25.3 — directly relevant
+    # here since this instance actually uses the IdP/SSO feature). Reusing
+    # the same digest as the other instance rather than re-pinning a fresh
+    # one: one CVE review covers both, and an upstream push to :stable still
+    # can't silently change what's running here.
+    image: docker.io/neosmemo/memos@sha256:3e1253477066eb2aefa91145f7f9038bb931ed88c8a3ee05310a933594cdba7d
+    container_name: owl
+    restart: unless-stopped
+    volumes:
+      - ./data:/var/opt/memos
+    environment:
+      MEMOS_PORT: 5230
+      MEMOS_DRIVER: sqlite
+      # REQUIRED for correct behaviour behind a reverse proxy: Memos checks
+      # this against the request's Origin header for CORS (confirmed by
+      # reading server/cors.go) — get this wrong and the whole UI breaks,
+      # not just OAuth. Also feeds robots.txt/sitemap generation and email
+      # notification links.
+      MEMOS_INSTANCE_URL: https://owl.mathewcsims.uk
+      # Already the default when unset (confirmed in Memos's own source) —
+      # made explicit for reviewability. Demo mode would use a hardcoded
+      # "usememos" JWT secret instead of the real persisted random one.
+      MEMOS_DEMO: "false"
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. 5231, not
+      # 5230 — that's already memos-prospect-ukri-tus's port on this same
+      # Mac. The router does NOT forward 5231, so this is never directly
+      # internet-facing.
+      - "10.0.1.14:5231:5230"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5230/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

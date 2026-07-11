@@ -35,6 +35,7 @@ kopia-server/tmp/
 timetagger/data/
 timetagger/oauth2-proxy/authenticated-emails.txt
 pi-reverse-proxy/logs/
+owl/data/
 
 # ── Tool-local / editor state ───────────────────────────────────────────
 # Claude Code's own local session cache — unrelated to this project, and

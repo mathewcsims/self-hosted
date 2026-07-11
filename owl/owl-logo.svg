@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <rect width="200" height="200" rx="40" fill="#3B2E5A"/>
+  <!-- ear tufts -->
+  <path d="M56 62 L44 24 L82 46 Z" fill="#2A2140"/>
+  <path d="M144 62 L156 24 L118 46 Z" fill="#2A2140"/>
+  <!-- body -->
+  <ellipse cx="100" cy="118" rx="62" ry="58" fill="#F2A65A"/>
+  <!-- wings -->
+  <ellipse cx="52" cy="128" rx="20" ry="36" fill="#D97F3D"/>
+  <ellipse cx="148" cy="128" rx="20" ry="36" fill="#D97F3D"/>
+  <!-- face disc -->
+  <circle cx="100" cy="104" r="46" fill="#FBE7C6"/>
+  <!-- eyes -->
+  <circle cx="80" cy="100" r="19" fill="#FFFFFF"/>
+  <circle cx="120" cy="100" r="19" fill="#FFFFFF"/>
+  <circle cx="80" cy="100" r="10" fill="#2A2140"/>
+  <circle cx="120" cy="100" r="10" fill="#2A2140"/>
+  <circle cx="83" cy="97" r="3" fill="#FFFFFF"/>
+  <circle cx="123" cy="97" r="3" fill="#FFFFFF"/>
+  <!-- beak -->
+  <path d="M100 112 L90 126 L110 126 Z" fill="#E8933B"/>
+  <!-- feet -->
+  <path d="M82 168 L78 182 M82 168 L86 182 M82 168 L82 184" stroke="#E8933B" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M118 168 L114 182 M118 168 L118 184 M118 168 L122 182" stroke="#E8933B" stroke-width="4" stroke-linecap="round" fill="none"/>
+</svg>
