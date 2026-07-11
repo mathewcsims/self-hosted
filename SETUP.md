@@ -89,6 +89,9 @@ below says which.
 | `copyparty/inbox/` | **Mac** | password drop-box uploads land here |
 | `memos-prospect-ukri-tus/compose.yaml` | **Mac** | Memos, container `memos-prospect-ukri-tus` (plain HTTP on the LAN) |
 | `memos-prospect-ukri-tus/data/` | **Mac** | Memos' sqlite DB + attachments |
+| `owl/compose.yaml` | **Mac** | Memos, container `owl` — a separate personal instance, closed registration, migrated from a ScaleTail Tailscale-sidecar deployment |
+| `owl/data/` | **Mac** | **your notes live here** (sqlite DB + attachments) |
+| `owl/owl-logo.svg` | **Mac** | source asset for the instance logo (tracked; the deployed logo itself is a data URI in Memos' own DB) |
 | `vikunja/compose.yaml` | **Mac** | Vikunja, pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
 | `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
 | `vikunja/files/` | **Mac** | task attachments |
@@ -635,6 +638,83 @@ disables it.
     rapid registration POSTs → 5 real responses then 429s, independently of
     the signin zone; GETs to `/api/v1/users/*` unaffected by the
     registration zone's method scoping.
+
+---
+
+## Owl (https://owl.mathewcsims.uk)
+
+A second, unrelated Memos instance (personal notes, not Prospect), same
+image/architecture as the section above — but with two real differences:
+registration is **closed** here (personal instance, matching the Nimbus
+precedent, not the "open for Prospect members" reasoning above), and this
+instance's data and OIDC config were **migrated** from a pre-existing
+deployment rather than starting fresh.
+
+**Where it came from.** Previously ran as `app-owl` + `tailscale-owl`, a
+Tailscale-sidecar pair from an unrelated template repo
+(`~/ScaleTail/services/owl/`), reachable only over the tailnet via Tailscale
+Serve — never through this repo's Caddy at all. Brought into this repo's
+standard managed-app pattern (same shape as the Karakeep migration, which
+started the same way) rather than bridging Caddy across the tailnet to a
+remote peer — investigation found "owl" wasn't actually a separate machine
+in the first place, just a container already running on this same Mac.
+
+**Migration gotcha, worth knowing if this ever comes up again:** the old
+deployment's compose file bind-mounted `./owl-data:/var/opt/owl` — a
+template bug (Memos' real data path is `/var/opt/memos`, not `/var/opt/owl`).
+That bind mount was always empty. The real data (SQLite DB + attachments +
+thumbnail cache) was sitting in an anonymous Podman volume Memos itself
+auto-created (via its image's own `VOLUME` declaration), found via `podman
+inspect <container> --format '{{json .Mounts}}'`. Copied out via a
+throwaway container rather than reaching into the podman-machine VM's raw
+filesystem directly:
+```sh
+podman run --rm \
+  -v <old-volume-id>:/from \
+  -v "$PWD/owl/data":/to \
+  alpine sh -c "cp -a /from/. /to/"
+```
+
+**OIDC/SSO migrated automatically — only the IdP's registered redirect URI
+needed updating.** Memos' OAuth config lives entirely in its own SQLite DB
+(confirmed by reading `server/router/api/v1/idp_service.go` — there is no
+compose-env-var equivalent, unlike Nimbus's `OIDC_ISSUER_URL`/etc.), so the
+existing Infomaniak IdP entry (client ID, secret, authorize/token/userinfo
+endpoints) came along with the data copy, untouched. The only thing that
+needed changing was the redirect URI registered on **Infomaniak's own
+IK-AUTH console** — Memos always computes this client-side as
+`https://<domain>/auth/callback` (not configurable, confirmed from
+`web/src/pages/AuthCallback.tsx`), so it had to be updated there to
+`https://owl.mathewcsims.uk/auth/callback` to match the new domain.
+
+**`MEMOS_INSTANCE_URL` matters beyond just OAuth** — confirmed from
+`server/cors.go`: Memos rejects API requests whose `Origin` doesn't exactly
+match this value. Get it wrong after a domain change and the whole UI
+breaks (CORS-rejected), not just SSO login. Also feeds `robots.txt`/sitemap
+generation and email notification links.
+
+**Self-registration closed** — verified in the admin UI
+(`generalSetting.disallowUserRegistration`) after deployment, since it
+migrated from an instance that could have had it in either state.
+**Gotcha found the hard way:** `PATCH /api/v1/instance/settings/GENERAL`
+does *not* do a true partial merge respecting `updateMask` the way a
+well-behaved field-mask API should — setting only
+`customProfile.title`/`customProfile.logoUrl` in one call left
+`disallowUserRegistration` reset to its `false` zero-value. Always re-check
+the *other* settings after any PATCH to this endpoint, not just the fields
+you intended to change.
+
+**Branding:** same data-URI `logoUrl` recipe as the Prospect Memos instance
+above (see that section for the full mechanism and the PATCH command
+shape) — source SVG lives at `owl/owl-logo.svg`, a simple flat-style owl
+icon generated for this instance specifically, encoded directly as an
+`image/svg+xml` data URI (no PNG rasterization needed, unlike the Prospect
+logo).
+
+**Hardening:** same image digest as `memos-prospect-ukri-tus` (one CVE
+review covers both instances). Only one Caddy rate-limit zone
+(`rl_owl_auth`, signin+refresh, 20/min/IP) — no signup zone, since
+registration is closed here.
 
 ---
 

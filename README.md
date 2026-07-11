@@ -24,6 +24,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | Vikunja webhook relay (this repo) | `vikunja-relay.mathewcsims.uk` | Pi (LAN-only — bridges Vikunja's webhook events to Apprise) |
 | [Kopia](https://kopia.io) | `backup.mathewcsims.uk` | Pi (LAN-only — encrypted, deduplicated backups to Backblaze B2) |
 | [TimeTagger](https://github.com/almarklein/timetagger) | `time.mathewcsims.uk` | Mac (fronted by oauth2-proxy for Infomaniak SSO — TimeTagger itself has no OAuth) |
+| Owl ([Memos](https://github.com/usememos/memos)) | `owl.mathewcsims.uk` | Mac (personal notes instance, migrated from a Tailscale-only ScaleTail deployment — closed registration, unrelated to the Prospect Memos instance above) |
 
 ## Architecture, in short
 
@@ -41,7 +42,8 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ status.mathewcsims.uk            → itself (Pi)
                                   ├─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
                                   ├─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
-                                  └─ time.mathewcsims.uk              → Mac (via oauth2-proxy)
+                                  ├─ time.mathewcsims.uk              → Mac (via oauth2-proxy)
+                                  └─ owl.mathewcsims.uk               → Mac
 ```
 
 Each app is its own `podman-compose`/`docker-compose` project in its own
@@ -108,6 +110,7 @@ vikunja-webhook-relay/ compose.yaml + Dockerfile + relay.py (Pi — deployed via
 kopia-server/          compose.yaml + Dockerfile + entrypoint.sh (Pi — deployed via scp + docker compose, LAN-only)
 kopia-mac/             backup.sh + LaunchAgent plist (Mac — scheduled snapshots, no compose project)
 timetagger/            compose.yaml (Mac — TimeTagger + oauth2-proxy for Infomaniak SSO)
+owl/                   compose.yaml, logo SVG, and data (Mac — personal Memos instance)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass
