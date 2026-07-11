@@ -2385,3 +2385,54 @@ separately:**
    governs which tailnet peers can reach either host's SSH port (and
    everything else Tailscale-reachable), and isn't visible or editable
    from either machine.
+
+### Hardening pass 3 (HSTS preload, CAA)
+
+Two cheap, low-effort additions on top of the existing per-site HSTS header
+(which already existed — see the first hardening pass above):
+
+- **HSTS preload.** `pi-reverse-proxy/Caddyfile`'s `(security_headers)`
+  snippet now sends `Strict-Transport-Security: max-age=31536000;
+  includeSubDomains; preload`. The bare apex `mathewcsims.uk` site block
+  already imports this same snippet (required for hstspreload.org
+  eligibility — the directive must be present on the exact apex, not just
+  subdomains). Verified live via `curl -sI` against the apex, `owl.`, and
+  `time.` subdomains after redeploying Caddy on the Pi — all three send the
+  updated header. Submitting the domain to hstspreload.org itself is a
+  separate, deliberately-not-yet-taken step: it's a third-party form
+  submission that's semi-permanent (removal takes many browser release
+  cycles once shipped), so it's being left for a specific, separate
+  go-ahead rather than folded into this pass.
+- **CAA DNS record**, restricting which Certificate Authorities may issue
+  TLS certs for `mathewcsims.uk` (and, by DNS's normal CAA tree-walk, every
+  subdomain that doesn't have its own CAA record — none do). Caddy's
+  automatic HTTPS here has no explicit `acme_ca`/`issuer` directive in the
+  Caddyfile's global options block, so it runs on Caddy's own default
+  behavior: Let's Encrypt first, automatically falling back to ZeroSSL if
+  Let's Encrypt is ever unavailable (confirmed from live ACME logs during
+  the Owl migration's own cert issuance). A CAA record therefore has to
+  authorize **both** CAs, or it silently breaks that fallback resilience.
+  Let's Encrypt's own docs give its identifier unambiguously as
+  `letsencrypt.org`. ZeroSSL's identifier is less clear-cut — some sources
+  say `zerossl.com`, others `sectigo.com` (likely reflecting ZeroSSL's
+  2023 move to operate its own root CA after previously chaining through
+  Sectigo) — rather than gamble on one, all three `issue` values are
+  authorized:
+  ```
+  @ CAA 0 issue "letsencrypt.org"
+  @ CAA 0 issue "sectigo.com"
+  @ CAA 0 issue "zerossl.com"
+  ```
+  CAA `issue` records are purely additive allow-listing (RFC 8659), so
+  authorizing an extra identifier doesn't weaken anything — it still
+  narrows the CA field from "any of hundreds of public CAs" down to three
+  named ones. Added via a small extension to `scripts/dns-digitalocean.sh`
+  (new `add-caa`/`list-caa`/`remove-caa` actions, following the script's
+  existing Pass-sourced-token pattern — see "Automating this" under Part 3
+  above), rather than an ad-hoc API call. Verified propagated via `dig CAA
+  mathewcsims.uk @1.1.1.1`, and confirmed Caddy still restarts and serves
+  existing certs cleanly afterwards (no CAA-related errors in its logs) —
+  not a full re-issuance test, since forcing one on a live site with a
+  valid cert isn't worth the disruption; the record's syntax is
+  RFC-compliant and authorizes exactly the CAs Caddy actually uses, which
+  is what matters.

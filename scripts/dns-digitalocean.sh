@@ -12,9 +12,12 @@
 #   ./scripts/dns-digitalocean.sh list
 #   ./scripts/dns-digitalocean.sh add <subdomain> <ip>
 #   ./scripts/dns-digitalocean.sh remove <subdomain>
+#   ./scripts/dns-digitalocean.sh add-caa <name> <tag> <value>   # tag: issue|issuewild|iodef
+#   ./scripts/dns-digitalocean.sh list-caa
+#   ./scripts/dns-digitalocean.sh remove-caa <name> <tag> <value>
 set -eu
 
-ACTION="${1:?Usage: $0 list|add|remove ...}"
+ACTION="${1:?Usage: $0 list|add|remove|add-caa|list-caa|remove-caa ...}"
 DOMAIN="mathewcsims.uk"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -38,7 +41,7 @@ fi
 
 PROTON_PASS_AGENT_REASON="DigitalOcean DNS management: $ACTION $*" \
     pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Digital Ocean DNS" --output json \
-    | ACTION="$ACTION" NAME_ARG="${2:-}" IP_ARG="${3:-}" DOMAIN="$DOMAIN" python3 -c '
+    | ACTION="$ACTION" NAME_ARG="${2:-}" IP_ARG="${3:-}" TAG_ARG="${3:-}" VALUE_ARG="${4:-}" DOMAIN="$DOMAIN" python3 -c '
 import json, os, sys, urllib.request, urllib.error, urllib.parse
 
 d = json.load(sys.stdin)
@@ -90,6 +93,34 @@ elif action == "remove":
         rid = r["id"]
         call("DELETE", f"/domains/{domain}/records/{rid}")
         print(f"Removed A record: {name}.{domain} (id={rid})")
+elif action == "list-caa":
+    records = call("GET", f"/domains/{domain}/records?per_page=200")["domain_records"]
+    for r in records:
+        if r["type"] == "CAA":
+            rname, rflags, rtag, rdata, rid, rttl = r["name"], r["flags"], r["tag"], r["data"], r["id"], r["ttl"]
+            print(f"{rname} CAA {rflags} {rtag} \"{rdata}\" (id={rid}, ttl={rttl})")
+elif action == "add-caa":
+    tag = os.environ.get("TAG_ARG", "")
+    value = os.environ.get("VALUE_ARG", "")
+    if not name or tag not in ("issue", "issuewild", "iodef") or not value:
+        sys.exit("Usage: add-caa <name> <issue|issuewild|iodef> <value>")
+    call("POST", f"/domains/{domain}/records", {
+        "type": "CAA", "name": name, "flags": 0, "tag": tag, "data": value, "ttl": 1800,
+    })
+    print(f"Added CAA record: {name}.{domain} {tag} \"{value}\"")
+elif action == "remove-caa":
+    tag = os.environ.get("TAG_ARG", "")
+    value = os.environ.get("VALUE_ARG", "")
+    if not name or not tag or not value:
+        sys.exit("Usage: remove-caa <name> <tag> <value>")
+    records = call("GET", f"/domains/{domain}/records?per_page=200")["domain_records"]
+    matches = [r for r in records if r["type"] == "CAA" and r["name"] == name and r["tag"] == tag and r["data"] == value]
+    if not matches:
+        sys.exit(f"No matching CAA record found for {name}.{domain} {tag} \"{value}\"")
+    for r in matches:
+        rid = r["id"]
+        call("DELETE", f"/domains/{domain}/records/{rid}")
+        print(f"Removed CAA record: {name}.{domain} {tag} \"{value}\" (id={rid})")
 else:
     sys.exit(f"Unknown action: {action}")
 '
