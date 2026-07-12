@@ -1,0 +1,37 @@
+/* Prospect instance accent — union green + gold, echoing the Prospect
+   logo. Applies to all three built-in themes; :root is the light-theme
+   fallback since Memos doesn't tag the default theme itself. */
+:root,
+html[data-theme="default"] {
+  --primary: oklch(0.51 0.11 161.8);
+  --primary-foreground: oklch(1.00 0.00 0.0);
+  --ring: oklch(0.51 0.11 161.8);
+  --accent: oklch(0.95 0.08 95.9);
+  --accent-foreground: oklch(0.36 0.07 164.0);
+  --sidebar: oklch(0.92 0.04 163.1);
+  --sidebar-foreground: oklch(0.32 0.06 164.6);
+  --sidebar-accent: oklch(0.91 0.14 95.1);
+  --sidebar-accent-foreground: oklch(0.28 0.00 264.5);
+}
+html[data-theme="default-dark"] {
+  --primary: oklch(0.73 0.15 161.3);
+  --primary-foreground: oklch(0.22 0.03 166.5);
+  --ring: oklch(0.73 0.15 161.3);
+  --accent: oklch(0.73 0.14 89.7);
+  --accent-foreground: oklch(0.24 0.04 94.2);
+  --sidebar: oklch(0.25 0.02 163.2);
+  --sidebar-foreground: oklch(0.89 0.06 166.1);
+  --sidebar-accent: oklch(0.47 0.08 88.9);
+  --sidebar-accent-foreground: oklch(0.94 0.09 93.3);
+}
+html[data-theme="paper"] {
+  --primary: oklch(0.51 0.11 161.8);
+  --primary-foreground: oklch(0.98 0.01 89.7);
+  --ring: oklch(0.51 0.11 161.8);
+  --accent: oklch(0.92 0.09 93.4);
+  --accent-foreground: oklch(0.28 0.00 264.5);
+  --sidebar: oklch(0.92 0.04 152.8);
+  --sidebar-foreground: oklch(0.32 0.06 164.6);
+  --sidebar-accent: oklch(0.91 0.14 95.1);
+  --sidebar-accent-foreground: oklch(0.28 0.00 264.5);
+}

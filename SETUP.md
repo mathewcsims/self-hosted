@@ -716,6 +716,57 @@ review covers both instances). Only one Caddy rate-limit zone
 (`rl_owl_auth`, signin+refresh, 20/min/IP) — no signup zone, since
 registration is closed here.
 
+### Per-instance theming (both Owl and Prospect)
+
+Memos only ships three built-in themes (light/dark/paper) — not enough to
+tell two instances apart at a glance. Rather than a Caddy-injected
+stylesheet (fragile — depends on Memos' internal CSS class names staying
+stable across releases), Memos has a **native** admin-only hook for this:
+`generalSetting.additionalStyle` (Settings ▸ System ▸ "Additional style" in
+the admin UI, or via API/`memos-api` skill) — raw CSS, injected as a
+`<style>` tag appended to `<body>` on every page load, DB-backed like the
+logo/title. There's a matching `additionalScript` field for raw JS too
+(unused here).
+
+The three built-in themes are just CSS custom properties on `:root`
+(`--primary`, `--sidebar`, `--accent`, etc., all `oklch(...)` values —
+exact set and current values confirmed by reading
+`web/src/themes/{default,default-dark,paper}.css` at the pinned tag), and
+Memos tags `<html>` with `data-theme="<theme>"` when a non-default theme is
+selected. So each instance's stylesheet scopes its overrides per theme
+(`html[data-theme="default-dark"] { ... }`, etc., with a bare `:root` block
+as the light-theme fallback since Memos doesn't tag the default theme
+itself) — the accent colors stay correct and legible whichever of the
+three built-in themes the *user* has personally selected.
+
+Colors were picked to complement each instance's existing logo (sampled
+the actual logo files for exact hex values), overriding only
+`--primary`/`--primary-foreground`/`--ring`/`--accent`/`--accent-foreground`/
+`--sidebar`/`--sidebar-foreground`/`--sidebar-accent`/`--sidebar-accent-foreground`
+— never `--background`/`--foreground`, to avoid touching each built-in
+theme's own core legibility handling. Every foreground/background pairing
+was checked against WCAG 2.1 contrast ratios before shipping (target ≥4.5:1
+for normal text; a couple of `--primary`/`--primary-foreground` pairs
+needed darkening from the initial pick to clear that bar). Source
+stylesheets, kept for reference: `owl/owl-theme.css` (deep purple +
+warm amber, from the owl logo) and
+`memos-prospect-ukri-tus/prospect-theme.css` (union green + gold, from the
+Prospect logo).
+
+**Gotcha, hit live while doing this:** `instance setting-update`'s `--set`
+flag does **not** auto-merge for this endpoint the way it does for
+memo/user/shortcut updates — sending only `--set
+generalSetting.additionalStyle=...` blanked `disallowUserRegistration`,
+`disallowPasswordAuth`, and `customProfile` (title+logo) back to their zero
+values on the first attempt against Owl (caught and fixed immediately by
+re-sending the full object; same root cause as the earlier
+non-partial-merge gotcha documented above, now confirmed to affect the CLI
+wrapper too, not just a hand-rolled PATCH). Fixed properly for Prospect by
+fetching the full current `GENERAL` setting first, changing only
+`additionalStyle` in the parsed JSON, and PATCHing the complete object back
+(`raw PATCH ... --body-file`) — the safe pattern this doc already
+recommends elsewhere for this endpoint.
+
 ---
 
 ## Nimbus (https://dashboard.mathewcsims.uk) — runs on the Pi, not the Mac

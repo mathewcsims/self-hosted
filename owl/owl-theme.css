@@ -1,0 +1,37 @@
+/* Owl instance accent — deep purple + warm amber, echoing the owl logo.
+   Applies to all three built-in themes (light/dark/paper); :root is the
+   light-theme fallback since Memos doesn't tag the default theme itself. */
+:root,
+html[data-theme="default"] {
+  --primary: oklch(0.34 0.08 295.7);
+  --primary-foreground: oklch(0.94 0.05 80.3);
+  --ring: oklch(0.34 0.08 295.7);
+  --accent: oklch(0.90 0.07 76.6);
+  --accent-foreground: oklch(0.34 0.08 295.7);
+  --sidebar: oklch(0.90 0.03 307.1);
+  --sidebar-foreground: oklch(0.34 0.06 299.7);
+  --sidebar-accent: oklch(0.86 0.09 77.8);
+  --sidebar-accent-foreground: oklch(0.34 0.08 295.7);
+}
+html[data-theme="default-dark"] {
+  --primary: oklch(0.56 0.12 295.7);
+  --primary-foreground: oklch(0.98 0.01 84.6);
+  --ring: oklch(0.56 0.12 295.7);
+  --accent: oklch(0.67 0.09 66.4);
+  --accent-foreground: oklch(0.25 0.05 297.9);
+  --sidebar: oklch(0.25 0.05 297.9);
+  --sidebar-foreground: oklch(0.90 0.03 80.7);
+  --sidebar-accent: oklch(0.47 0.07 60.1);
+  --sidebar-accent-foreground: oklch(0.93 0.04 83.8);
+}
+html[data-theme="paper"] {
+  --primary: oklch(0.34 0.08 295.7);
+  --primary-foreground: oklch(0.97 0.02 78.2);
+  --ring: oklch(0.34 0.08 295.7);
+  --accent: oklch(0.89 0.05 78.0);
+  --accent-foreground: oklch(0.34 0.08 295.7);
+  --sidebar: oklch(0.88 0.04 313.6);
+  --sidebar-foreground: oklch(0.34 0.06 299.7);
+  --sidebar-accent: oklch(0.86 0.09 77.8);
+  --sidebar-accent-foreground: oklch(0.34 0.08 295.7);
+}
