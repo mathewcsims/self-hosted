@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <rect width="200" height="200" rx="40" fill="#1B2A4A"/>
+  <!-- pendant loop, like a seal's ribbon attachment -->
+  <path d="M92 30 L100 18 L108 30 Z" fill="#C9A227"/>
+  <!-- outer brass ring -->
+  <circle cx="100" cy="106" r="72" fill="#C9A227"/>
+  <!-- pressed wax face -->
+  <circle cx="100" cy="106" r="63" fill="#7A2436"/>
+  <!-- stamped M monogram -->
+  <path d="M76 134 L76 82 L100 112 L124 82 L124 134"
+        fill="none" stroke="#C9A227" stroke-width="11"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

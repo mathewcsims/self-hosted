@@ -94,26 +94,38 @@ prospect-ukri-tus.mathewcsims.uk {
 	# members to self-signup), so unlike Nimbus this can't just be "strict
 	# zone on all of /api/v1/auth/*" — a genuine new member still needs to
 	# be able to sign up without hassle. Two separate, purpose-matched zones:
+	#
+	# Both zones match TWO path forms per action, not one — the web app
+	# actually talks to the server over Connect-RPC
+	# (/memos.api.v1.<Service>/<Method>), not the /api/v1/... REST-gateway
+	# surface these zones originally matched only. Confirmed live: 25 rapid
+	# POSTs to /memos.api.v1.AuthService/SignIn all reached the backend
+	# with zero 429s while this gap existed — the REST path was never what
+	# real traffic (or a real attacker) uses, so the "20/min" limit below
+	# was not actually being enforced until this fix. Both surfaces are
+	# live and reachable regardless of which one the current frontend
+	# prefers, so both are matched for defense in depth.
 	rate_limit {
 		# Credential-stuffing against existing accounts: sign-in and token
 		# refresh. 20/min/IP is well above any real user's need but caps
 		# automated password-guessing.
 		zone rl_memos_auth {
 			match {
-				path /api/v1/auth/signin /api/v1/auth/refresh
+				path /api/v1/auth/signin /api/v1/auth/refresh /memos.api.v1.AuthService/SignIn /memos.api.v1.AuthService/RefreshToken
 			}
 			key {remote_host}
 			events 20
 			window 1m
 		}
-		# Registration spam/bot floods: POST /api/v1/users is the signup
+		# Registration spam/bot floods: POST /api/v1/users (REST) or
+		# /memos.api.v1.UserService/CreateUser (Connect-RPC) is the signup
 		# endpoint (also used for admin user-management, but only unauthed
 		# POST is what an anonymous signup bot can hit). 5/min/IP is
 		# generous for a real one-off signup, tight against scripted abuse.
 		zone rl_memos_register {
 			match {
 				method POST
-				path /api/v1/users
+				path /api/v1/users /memos.api.v1.UserService/CreateUser
 			}
 			key {remote_host}
 			events 5
@@ -136,9 +148,13 @@ owl.mathewcsims.uk {
 	import general_ratelimit owl
 
 	rate_limit {
+		# Matches both the REST-gateway and Connect-RPC forms of the same
+		# two endpoints — see the comment on the equivalent Memos zone
+		# above for why both are needed (the web app actually uses the
+		# Connect-RPC path, not the REST one this used to match alone).
 		zone rl_owl_auth {
 			match {
-				path /api/v1/auth/signin /api/v1/auth/refresh
+				path /api/v1/auth/signin /api/v1/auth/refresh /memos.api.v1.AuthService/SignIn /memos.api.v1.AuthService/RefreshToken
 			}
 			key {remote_host}
 			events 20
@@ -147,6 +163,32 @@ owl.mathewcsims.uk {
 	}
 
 	reverse_proxy http://{$MAC_IP}:5231
+}
+
+# ── Marque (running on the Mac) ────────────────────────────────────────────
+# Same pattern as Owl above: a third, unrelated Memos instance (private,
+# work-focused notes), registration closed, Infomaniak SSO only — so only
+# a signin/refresh rate-limit zone, no signup zone.
+marque.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit marque
+
+	rate_limit {
+		# Matches both the REST-gateway and Connect-RPC forms of the same
+		# two endpoints — see the comment on the equivalent Memos zone
+		# above for why both are needed (the web app actually uses the
+		# Connect-RPC path, not the REST one this used to match alone).
+		zone rl_marque_auth {
+			match {
+				path /api/v1/auth/signin /api/v1/auth/refresh /memos.api.v1.AuthService/SignIn /memos.api.v1.AuthService/RefreshToken
+			}
+			key {remote_host}
+			events 20
+			window 1m
+		}
+	}
+
+	reverse_proxy http://{$MAC_IP}:5232
 }
 
 # ── Vikunja (running on the Mac) ───────────────────────────────────────────

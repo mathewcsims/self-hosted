@@ -92,6 +92,10 @@ below says which.
 | `owl/compose.yaml` | **Mac** | Memos, container `owl` — a separate personal instance, closed registration, migrated from a ScaleTail Tailscale-sidecar deployment |
 | `owl/data/` | **Mac** | **your notes live here** (sqlite DB + attachments) |
 | `owl/owl-logo.svg` | **Mac** | source asset for the instance logo (tracked; the deployed logo itself is a data URI in Memos' own DB) |
+| `marque/compose.yaml` | **Mac** | Memos, container `marque` — a third, unrelated instance (private work notes), closed registration, Infomaniak SSO only, fresh install (no migration) |
+| `marque/data/` | **Mac** | this instance's notes (sqlite DB + attachments) |
+| `marque/marque-logo.svg` | **Mac** | source asset for the instance logo (tracked; deployed as a data URI in Memos' own DB) |
+| `marque/marque-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
 | `vikunja/compose.yaml` | **Mac** | Vikunja, pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
 | `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
 | `vikunja/files/` | **Mac** | task attachments |
@@ -792,6 +796,119 @@ fetching the full current `GENERAL` setting first, changing only
 `additionalStyle` in the parsed JSON, and PATCHing the complete object back
 (`raw PATCH ... --body-file`) — the safe pattern this doc already
 recommends elsewhere for this endpoint.
+
+---
+
+## Marque (https://marque.mathewcsims.uk)
+
+A third, unrelated Memos instance — a private, work-focused notes space.
+Unlike Owl, this was a **fresh instance**, not a migration: name chosen from
+a separate naming-brainstorm discussion ("letters of marque" — an
+officially-authorized private mark), same closed-registration/
+Infomaniak-SSO-only pattern as Owl, same pinned image digest as the other
+two (one CVE review covers all three).
+
+**Logo/branding:** a wax-seal-and-monogram mark (navy background, brass
+ring, oxblood seal face, brass "M" stamped monogram) — designed to evoke
+the "official private authorization" concept behind the name, and to sit
+clearly apart from Owl's purple/amber owl and Prospect's green/gold leaf
+at a glance. Source at `marque/marque-logo.svg`, set via the same
+data-URI `logoUrl` recipe as the other two instances.
+
+**Theme:** same per-instance-accent treatment as Owl/Prospect (see that
+section above for the full mechanism) — navy/brass/oxblood palette
+sampled from the logo, WCAG-contrast-checked, plus the radius/shadow/
+selection polish. Marque's `--radius` is `0.15rem` (near-square, a
+stamped/official-document feel) — a third distinct value alongside Owl's
+0.75rem (rounder) and Prospect's 0.3rem (crisper). Source at
+`marque/marque-theme.css`.
+
+### OIDC setup — how Memos actually links an SSO login to a local account
+
+This mattered enough to get wrong on the first instinct that it's worth
+documenting precisely, since Owl inherited its OIDC config via data
+migration and never exercised this path fresh. Confirmed by reading
+`server/router/api/v1/auth_service.go` and `user_service.go` at the pinned
+tag:
+
+- **Memos does NOT match SSO logins to local accounts by email.** It uses
+  a separate `user_identity` table keyed on `(provider, extern_uid)`
+  (`extern_uid` = whatever the IdP's `fieldMapping.identifier` maps to,
+  `email` here). Looking this up is the *only* way an SSO login resolves
+  to a user — the local `users.email` column is never consulted for
+  matching, only populated as a display field when a user is first
+  created.
+- **A bare "Sign in with Infomaniak" click, with no prior linkage,
+  creates a brand-new account** — and does so with `Role: RoleUser`, not
+  admin, even though the very first-ever local account is auto-admin.
+  If registration is closed by the time this happens, it fails outright
+  ("user registration is not allowed") rather than falling back to
+  linking anything.
+- **The correct way to attach SSO to an already-existing account** is a
+  *different* RPC, `CreateLinkedIdentity` (`UserService`), which requires
+  being authenticated *as* that account already and calls
+  `bindSSOIdentityToUser` rather than the miss-path account-creation
+  logic. In the web UI this is Settings → My Account → the linked
+  identity providers section (`LinkedIdentitySection.tsx` — confirmed via
+  GitHub code search, since it isn't reachable from the plain sign-in
+  page's OAuth button, which always takes the "signin" flow, never
+  "link").
+
+So the actual bring-up order that avoids ending up with a stray
+non-admin duplicate account:
+1. Complete Memos' first-run password signup as normal — this is the
+   real admin account.
+2. Create the Infomaniak IdP entry (`idp create`, endpoints below).
+3. **While still logged in with that password account**, go to
+   Settings → My Account and link the Infomaniak identity from there —
+   not by signing out and using "Sign in with Infomaniak" on the login
+   screen.
+4. Verify the linkage server-side (`user linked-identity-list
+   users/<username>` — should show the IdP with the expected
+   `externUid`) before locking anything down.
+5. Only then set `disallowUserRegistration: true` and
+   `disallowPasswordAuth: true`.
+
+**Infomaniak endpoints** (from
+`https://login.infomaniak.com/.well-known/openid-configuration` — don't
+guess these, confirmed live):
+```
+authUrl:     https://login.infomaniak.com/authorize
+tokenUrl:    https://login.infomaniak.com/token
+userInfoUrl: https://login.infomaniak.com/oauth2/userinfo
+scopes:      openid, email
+```
+Redirect URI registered on Infomaniak's IK-AUTH side must be exactly
+`https://marque.mathewcsims.uk/auth/callback`.
+
+**Credential handling:** the Infomaniak client secret was never typed
+into a Bash command directly (caught by the session's own credential-
+leakage safeguard on the first attempt) — it's fetched from the "Marque"
+Pass item's `MARQUE_OIDC_CLIENT_ID`/`MARQUE_OIDC_CLIENT_SECRET` fields
+into a shell variable, and the `idp create` config JSON is built in a
+short Python snippet that reads from `os.environ` rather than ever
+having the value appear as a literal argv string.
+
+### Rate-limit bug found and fixed here — affects Owl and Prospect too
+
+While live-verifying Marque's Caddy rate-limit zone (`rl_marque_auth`),
+25 rapid `POST` requests all reached the backend with zero `429`s. The
+zone's `match path /api/v1/auth/signin /api/v1/auth/refresh` was
+matching the grpc-gateway REST surface — but the actual web app talks to
+Memos over **Connect-RPC**, at `/memos.api.v1.AuthService/SignIn` and
+`/memos.api.v1.AuthService/RefreshToken` instead (confirmed both via a
+live network-request capture during setup and by reading
+`proto/api/v1/auth_service.proto` for the exact service/method names).
+The REST path was never what real traffic — or a real attacker — uses,
+so this rate limit had silently never been enforced.
+
+**This same zone shape was copied onto Owl and `prospect-ukri-tus`
+verbatim**, so both had the identical gap. Fixed all three site blocks in
+`pi-reverse-proxy/Caddyfile` to match both path forms (REST and
+Connect-RPC) for the signin/refresh zones, and Prospect's registration
+zone too (`/api/v1/users` → also `/memos.api.v1.UserService/CreateUser`).
+Verified live on all three after redeploying: exactly 20 (or 5, for
+Prospect's registration zone) requests succeed before `429`s start.
 
 ---
 

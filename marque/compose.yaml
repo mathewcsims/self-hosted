@@ -1,0 +1,58 @@
+# Memos (https://github.com/usememos/memos) — "Marque", a private,
+# work-focused notes instance. Storage backend = ./data on this Mac.
+#
+# A fresh instance (no migration), same architecture as ../owl/ and
+# ../copyparty/: TLS and the public hostname (marque.mathewcsims.uk) are
+# handled by the Caddy reverse proxy on the Raspberry Pi (see
+# ../pi-reverse-proxy/). This Mac only serves plain HTTP on the LAN; the Pi
+# terminates HTTPS and forwards to MAC_IP:5232 here. Nothing on the Mac is
+# forwarded by the router.
+#
+# Project/container named "marque" (not "memos") to stay unambiguous
+# alongside ../memos-prospect-ukri-tus/ and ../owl/ — folder name, project
+# name, and container name all match, so this instance can never be
+# confused with either of the other two.
+name: marque
+
+services:
+  marque:
+    # Same already-audited digest as ../owl/ and ../memos-prospect-ukri-tus/
+    # — v0.29.1, confirmed via GitHub's security-advisories API to have
+    # nothing unpatched (including the IdP-tampering CVE, GHSA-99m2-qwx6-2w6f
+    # / CVE-2025-65797, fixed at 0.25.3 — directly relevant here since this
+    # instance uses the IdP/SSO feature too). Reusing the same digest rather
+    # than re-pinning a fresh one: one CVE review covers all three
+    # instances, and an upstream push to :stable still can't silently
+    # change what's running here.
+    image: docker.io/neosmemo/memos@sha256:3e1253477066eb2aefa91145f7f9038bb931ed88c8a3ee05310a933594cdba7d
+    container_name: marque
+    restart: unless-stopped
+    volumes:
+      - ./data:/var/opt/memos
+    environment:
+      MEMOS_PORT: 5230
+      MEMOS_DRIVER: sqlite
+      # REQUIRED for correct behaviour behind a reverse proxy: Memos checks
+      # this against the request's Origin header for CORS (confirmed by
+      # reading server/cors.go) — get this wrong and the whole UI breaks,
+      # not just OAuth. Also feeds robots.txt/sitemap generation and email
+      # notification links.
+      MEMOS_INSTANCE_URL: https://marque.mathewcsims.uk
+      # Already the default when unset (confirmed in Memos's own source) —
+      # made explicit for reviewability. Demo mode would use a hardcoded
+      # "usememos" JWT secret instead of the real persisted random one.
+      MEMOS_DEMO: "false"
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. 5232, not
+      # 5230/5231 — those are already memos-prospect-ukri-tus's and owl's
+      # ports on this same Mac. The router does NOT forward 5232, so this
+      # is never directly internet-facing.
+      - "10.0.1.14:5232:5230"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5230/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -25,6 +25,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Kopia](https://kopia.io) | `backup.mathewcsims.uk` | Pi (LAN-only — encrypted, deduplicated backups to Backblaze B2) |
 | [TimeTagger](https://github.com/almarklein/timetagger) | `time.mathewcsims.uk` | Mac (fronted by oauth2-proxy for Infomaniak SSO — TimeTagger itself has no OAuth) |
 | Owl ([Memos](https://github.com/usememos/memos)) | `owl.mathewcsims.uk` | Mac (personal notes instance, migrated from a Tailscale-only ScaleTail deployment — closed registration, unrelated to the Prospect Memos instance above) |
+| Marque ([Memos](https://github.com/usememos/memos)) | `marque.mathewcsims.uk` | Mac (private, work-focused notes instance — closed registration, Infomaniak SSO only, unrelated to the other two Memos instances) |
 
 ## Architecture, in short
 
@@ -43,7 +44,8 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
                                   ├─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
                                   ├─ time.mathewcsims.uk              → Mac (via oauth2-proxy)
-                                  └─ owl.mathewcsims.uk               → Mac
+                                  ├─ owl.mathewcsims.uk               → Mac
+                                  └─ marque.mathewcsims.uk            → Mac
 ```
 
 Each app is its own `podman-compose`/`docker-compose` project in its own
@@ -111,6 +113,7 @@ kopia-server/          compose.yaml + Dockerfile + entrypoint.sh (Pi — deploye
 kopia-mac/             backup.sh + LaunchAgent plist (Mac — scheduled snapshots, no compose project)
 timetagger/            compose.yaml (Mac — TimeTagger + oauth2-proxy for Infomaniak SSO)
 owl/                   compose.yaml, logo SVG, and data (Mac — personal Memos instance)
+marque/                compose.yaml, logo SVG, theme CSS, and data (Mac — private work notes instance)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass
