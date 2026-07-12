@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import hmac
 import http.server
@@ -8,6 +9,18 @@ import urllib.parse
 import urllib.request
 
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"].encode()
+
+
+def log(msg):
+    # Plain stdout print — no per-request access logging exists otherwise
+    # (log_message is silenced below), so this is the only visibility into
+    # whether Vikunja is actually sending webhooks at all. Added after a
+    # "reminders not appearing" investigation had zero log evidence to work
+    # from beyond forensic DB inspection after the fact.
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    print(f"[{ts}] {msg}", flush=True)
+
+
 APPRISE_NOTIFY_URL = "http://apprise:8000/notify/self-hosted"
 MAX_BODY_BYTES = 1_000_000  # generous for a Vikunja task payload; guards against a bogus/huge Content-Length
 
@@ -54,6 +67,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         signature = self.headers.get("X-Vikunja-Signature", "")
         expected = hmac.new(WEBHOOK_SECRET, raw_body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
+            log(f"REJECTED bad signature, {len(raw_body)} bytes from {self.client_address[0]}")
             self.send_response(401)
             self.end_headers()
             return
@@ -61,21 +75,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             payload = json.loads(raw_body)
         except json.JSONDecodeError:
+            log(f"REJECTED invalid JSON, {len(raw_body)} bytes")
             self.send_response(400)
             self.end_headers()
             return
 
         event_name = payload.get("event_name", "unknown")
         title, body, notify_type = describe_event(event_name, payload.get("data") or {})
+        log(f"received event_name={event_name!r} -> title={title!r}")
 
         notify_data = urllib.parse.urlencode(
             {"title": title, "body": body, "type": notify_type, "format": "markdown"}
         ).encode()
         req = urllib.request.Request(APPRISE_NOTIFY_URL, data=notify_data, method="POST")
         try:
-            urllib.request.urlopen(req, timeout=10)
-        except urllib.error.URLError:
-            pass  # best-effort forward — Vikunja's webhook delivery isn't retried on our 5xx
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                log(f"forwarded to Apprise, status={resp.status}")
+        except urllib.error.URLError as e:
+            log(f"APPRISE FORWARD FAILED: {e}")  # best-effort forward — Vikunja's webhook delivery isn't retried on our 5xx
 
         self.send_response(200)
         self.end_headers()

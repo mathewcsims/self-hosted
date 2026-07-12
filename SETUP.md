@@ -1786,6 +1786,86 @@ for consistency with every other machine-to-machine app in this repo.
    A `200` here, followed by "Sent Discord notification" in
    `docker logs apprise` on the Pi, confirms the full chain end-to-end.
 
+### Reminders not reliably reaching Discord (investigated, root cause found)
+
+Symptom: Discord notifications for `task.reminder.fired` were unreliable,
+worse for recurring tasks. **Not a relay or Apprise problem** — the relay's
+own logic and the delivery chain were confirmed correct; the reminders
+themselves were being silently deleted from Vikunja before the reminder
+cron ever had anything to fire.
+
+**Confirmed via direct inspection of `vikunja/db/vikunja.db`:** of 5 active
+recurring tasks, 2 had zero rows in `task_reminders` despite having a real
+due date days away — the reminder cron (`pkg/models/task_reminder.go`,
+`getTasksWithRemindersDueAndTheirUsers`) only ever looks at that table, so
+there was nothing to find, dispatch, or deliver for those two tasks. The
+other 3 recurring tasks still had theirs (why some survive and some don't
+is exactly the "unreliable" part).
+
+**Root cause: a documented, maintainer-acknowledged Vikunja API design
+limitation**, not a bug we can patch (pinned image, not built from
+source) — [go-vikunja/vikunja#1459](https://github.com/go-vikunja/vikunja/issues/1459),
+closed `not planned`. Go's JSON decoder can't distinguish "field omitted
+from the request" from "field explicitly set to its zero value," so
+Vikunja's task-update endpoint does a **full replace**, not a partial
+merge — sending `{"done": true}` to check a task off silently clears
+`reminders` (and description, priority, assignees, and others) back to
+empty unless the client re-sends the complete task object every time.
+Confirmed the server's own recurrence-handling logic
+(`setTaskDatesDefault`/`setTaskDatesMonthRepeat`/
+`setTaskDatesFromCurrentDateRepeat` in `pkg/models/tasks.go`) *does*
+correctly shift reminders forward when a repeating task completes via the
+normal "mark done" flow — so the loss happens on whichever client
+interaction sends a thinner payload than that.
+
+**Investigated but not conclusively pinned down which client action
+triggers it.** Ruled out: CalDAV/Shortcuts (not in use — web UI and the
+official mobile app only, confirmed with the user). Traced the mobile
+app's own source (`go-vikunja/app`, a separate Flutter codebase from the
+web frontend, not just a wrapped PWA): its "swipe/tap to complete" path
+(`task_page_controller.dart`'s `markAsDone`) mutates the already-loaded
+`Task` object and round-trips it through `TaskDto.toJSON()`, which *does*
+correctly serialize `reminders` — so the common completion gesture looks
+clean on inspection. **Separate, smaller bug found along the way**: that
+same `toJSON()` never includes `repeat_mode` at all, so any update from
+the mobile app would silently reset a task using month- or
+from-current-date-repeat back to default repeat mode — not currently
+biting us (all active tasks already use default mode) but worth knowing
+if that ever changes.
+
+**Fix applied now**, while the exact trigger stays an open question:
+re-set all 6 active tasks (the 5 recurring ones explicitly with
+`relative_to: due_date, relative_period: 0` — the same self-correcting
+form already working for the 3 that hadn't lost theirs, so it survives
+future recurrences rather than needing to be redone) via a **full-object
+GET-then-PUT** through the raw API (token from the `vikunja` MCP server's
+own config, `claude_desktop_config.json` — read into a variable, never
+retyped literally), verified against the DB afterward to confirm no other
+field (`due_date`, `repeat_after`, `priority`, `project_id`) was
+disturbed by the round-trip.
+
+**Added real observability for next time**: `vikunja-webhook-relay/relay.py`
+had zero logging at all before this (the handler explicitly silences
+`BaseHTTPRequestHandler`'s default access log, and nothing else printed
+anything) — genuinely no way to tell whether Vikunja had even attempted a
+webhook delivery versus the relay dropping it versus Apprise rejecting it.
+Now logs, one line each: signature-rejected/bad-JSON requests, every
+accepted event's `event_name`, and the Apprise forward's outcome
+(status code or the exception). Redeployed via the same
+Pass-secret-sourced `docker compose up -d --build` pattern as any other
+change to this app (never a bare `up -d` — see the standing rule
+elsewhere in this doc); verified end-to-end with the signed test request
+above, confirmed lines actually appear in `docker logs
+vikunja-webhook-relay`.
+
+**If this recurs**: check `docker logs vikunja-webhook-relay` first (now
+meaningful) to see whether Vikunja even sent the event; if it did, the
+relay/Apprise chain is proven fine and the question is purely "why did
+this task's reminder row disappear" — check `task_reminders` directly via
+`podman run --rm -v vikunja/db:/db:ro alpine sh -c "apk add --no-cache
+sqlite && sqlite3 /db/vikunja.db 'SELECT * FROM task_reminders'"` and
+compare against which client/action most recently touched that task.
+
 ---
 
 ## Kopia backups (https://backup.mathewcsims.uk) — server on the Pi, LAN-only
