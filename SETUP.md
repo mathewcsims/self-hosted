@@ -753,6 +753,32 @@ warm amber, from the owl logo) and
 `memos-prospect-ukri-tus/prospect-theme.css` (union green + gold, from the
 Prospect logo).
 
+Beyond just the accent palette, three more small touches per instance,
+added afterwards for more visual distinctiveness without making either
+instance look busy or straying from Memos' own visual language (no
+background textures/gradients, no external web fonts — those would mean
+pulling from a third-party CDN, cutting against this repo's no-external-
+dependency posture):
+- **`--radius`** — Owl rounder (0.75rem, a cozier feel), Prospect crisper
+  (0.3rem, a more structured/organizational feel) than Memos' 0.5rem
+  default. A brand-identity choice, not a per-theme contrast concern, so
+  it's declared once (unscoped) rather than duplicated across the three
+  `data-theme` blocks — the normal CSS cascade means an unscoped `:root`
+  declaration still applies even when a `data-theme`-scoped block is
+  active, as long as that block doesn't redeclare the same property.
+- **`--shadow-*`** — re-tinted from Memos' neutral black (or paper
+  theme's warm brown) to a faint purple-black (Owl) / green-black
+  (Prospect), same offset/blur/opacity structure as upstream's own tiers,
+  just a hue shift. Also unscoped, and — since this stylesheet is
+  injected into `<body>`, always after Memos' own theme `<style>` tag in
+  `<head>` in document order — it wins regardless of which of the three
+  themes is currently selected.
+- **Selection highlight and scrollbar thumb color** — `::selection` and
+  `scrollbar-color`/`::-webkit-scrollbar-thumb` reference `var(--primary)`/
+  `var(--sidebar-accent)` directly rather than hardcoded colors, so they
+  automatically track whichever theme (light/dark/paper) is currently
+  active with zero per-theme duplication.
+
 **Gotcha, hit live while doing this:** `instance setting-update`'s `--set`
 flag does **not** auto-merge for this endpoint the way it does for
 memo/user/shortcut updates — sending only `--set
