@@ -1,63 +1,64 @@
-/* Marque instance accent — deep navy + brass + oxblood, echoing the
-   wax-seal logo ("letters of marque" = an official private mark).
-   Applies to all three built-in themes (light/dark/paper); :root is the
-   light-theme fallback since Memos doesn't tag the default theme itself. */
+/* Marque instance accent — bold coral + golden badge, echoing the
+   friendly rosette/mark logo ("letters of marque" = an official private
+   mark). Applies to all three built-in themes (light/dark/paper); :root
+   is the light-theme fallback since Memos doesn't tag the default theme
+   itself. */
 :root,
 html[data-theme="default"] {
-  --primary: oklch(0.29 0.06 263.9);
-  --primary-foreground: oklch(0.93 0.04 91.7);
-  --ring: oklch(0.29 0.06 263.9);
-  --accent: oklch(0.90 0.08 95.6);
-  --accent-foreground: oklch(0.29 0.06 263.9);
-  --sidebar: oklch(0.91 0.02 266.3);
-  --sidebar-foreground: oklch(0.29 0.06 263.9);
-  --sidebar-accent: oklch(0.90 0.08 95.6);
-  --sidebar-accent-foreground: oklch(0.29 0.06 263.9);
+  --primary: oklch(0.56 0.18 31.1);
+  --primary-foreground: oklch(0.97 0.03 88.4);
+  --ring: oklch(0.56 0.18 31.1);
+  --accent: oklch(0.94 0.09 91.6);
+  --accent-foreground: oklch(0.39 0.12 32.3);
+  --sidebar: oklch(0.95 0.03 65.9);
+  --sidebar-foreground: oklch(0.39 0.12 32.3);
+  --sidebar-accent: oklch(0.94 0.09 91.6);
+  --sidebar-accent-foreground: oklch(0.39 0.12 32.3);
 }
 html[data-theme="default-dark"] {
-  --primary: oklch(0.51 0.09 263.7);
-  --primary-foreground: oklch(0.97 0.01 264.5);
-  --ring: oklch(0.51 0.09 263.7);
-  --accent: oklch(0.68 0.10 83.5);
-  --accent-foreground: oklch(0.20 0.03 87.0);
-  --sidebar: oklch(0.25 0.05 264.2);
-  --sidebar-foreground: oklch(0.90 0.04 87.6);
-  --sidebar-accent: oklch(0.37 0.10 13.4);
-  --sidebar-accent-foreground: oklch(0.93 0.04 83.8);
+  --primary: oklch(0.73 0.17 34.1);
+  --primary-foreground: oklch(0.21 0.05 33.4);
+  --ring: oklch(0.73 0.17 34.1);
+  --accent: oklch(0.77 0.15 84.4);
+  --accent-foreground: oklch(0.24 0.04 79.3);
+  --sidebar: oklch(0.25 0.06 33.5);
+  --sidebar-foreground: oklch(0.95 0.03 65.9);
+  --sidebar-accent: oklch(0.52 0.10 76.2);
+  --sidebar-accent-foreground: oklch(0.95 0.03 65.9);
 }
 html[data-theme="paper"] {
-  --primary: oklch(0.29 0.06 263.9);
-  --primary-foreground: oklch(0.95 0.02 80.1);
-  --ring: oklch(0.29 0.06 263.9);
-  --accent: oklch(0.88 0.07 94.0);
-  --accent-foreground: oklch(0.29 0.06 263.9);
-  --sidebar: oklch(0.89 0.01 255.5);
-  --sidebar-foreground: oklch(0.29 0.06 263.9);
-  --sidebar-accent: oklch(0.88 0.07 94.0);
-  --sidebar-accent-foreground: oklch(0.29 0.06 263.9);
+  --primary: oklch(0.56 0.18 31.1);
+  --primary-foreground: oklch(0.97 0.02 78.2);
+  --ring: oklch(0.56 0.18 31.1);
+  --accent: oklch(0.94 0.09 91.6);
+  --accent-foreground: oklch(0.39 0.12 32.3);
+  --sidebar: oklch(0.92 0.04 68.6);
+  --sidebar-foreground: oklch(0.39 0.12 32.3);
+  --sidebar-accent: oklch(0.94 0.09 91.6);
+  --sidebar-accent-foreground: oklch(0.39 0.12 32.3);
 }
 
-/* Sharper, near-square corners than the Memos default (0.5rem) — a
-   stamped, official-document feel, distinct from both Owl (rounder,
-   0.75rem) and Prospect (crisper, 0.3rem). Same value across all three
-   built-in themes since this is a brand-identity choice, not a
-   light/dark contrast concern; a single un-scoped declaration correctly
-   applies everywhere via the normal CSS cascade (nothing below
-   re-declares --radius). */
+/* Bigger, rounder corners than the Memos default (0.5rem) — friendly and
+   confident, matching the bold badge logo. Distinct from both Owl
+   (0.75rem) and Prospect (0.3rem). Same value across all three built-in
+   themes since this is a brand-identity choice, not a light/dark
+   contrast concern; a single un-scoped declaration correctly applies
+   everywhere via the normal CSS cascade (nothing below re-declares
+   --radius). */
 :root {
-  --radius: 0.15rem;
+  --radius: 0.65rem;
   /* Shadows re-tinted from the built-in themes' neutral black/warm-brown
-     to a faint navy-black, same offset/blur/opacity structure as
+     to a warm coral-maroon, same offset/blur/opacity structure as
      upstream's own tiers — just a hue shift. Also un-scoped: appears
      after paper.css's own shadow block in document order, so it wins
      regardless of which of the three themes is active. */
-  --shadow-xs: 0 1px 3px 0px hsl(220 35% 15% / 0.06);
-  --shadow-sm: 0 1px 3px 0px hsl(220 35% 15% / 0.12), 0 1px 2px -1px hsl(220 35% 15% / 0.12);
-  --shadow: 0 1px 3px 0px hsl(220 35% 15% / 0.12), 0 1px 2px -1px hsl(220 35% 15% / 0.12);
-  --shadow-md: 0 1px 3px 0px hsl(220 35% 15% / 0.12), 0 2px 4px -1px hsl(220 35% 15% / 0.12);
-  --shadow-lg: 0 1px 3px 0px hsl(220 35% 15% / 0.12), 0 4px 6px -1px hsl(220 35% 15% / 0.12);
-  --shadow-xl: 0 1px 3px 0px hsl(220 35% 15% / 0.12), 0 8px 10px -1px hsl(220 35% 15% / 0.12);
-  --shadow-2xl: 0 1px 3px 0px hsl(220 35% 15% / 0.28);
+  --shadow-xs: 0 1px 3px 0px hsl(10 45% 20% / 0.06);
+  --shadow-sm: 0 1px 3px 0px hsl(10 45% 20% / 0.12), 0 1px 2px -1px hsl(10 45% 20% / 0.12);
+  --shadow: 0 1px 3px 0px hsl(10 45% 20% / 0.12), 0 1px 2px -1px hsl(10 45% 20% / 0.12);
+  --shadow-md: 0 1px 3px 0px hsl(10 45% 20% / 0.12), 0 2px 4px -1px hsl(10 45% 20% / 0.12);
+  --shadow-lg: 0 1px 3px 0px hsl(10 45% 20% / 0.12), 0 4px 6px -1px hsl(10 45% 20% / 0.12);
+  --shadow-xl: 0 1px 3px 0px hsl(10 45% 20% / 0.12), 0 8px 10px -1px hsl(10 45% 20% / 0.12);
+  --shadow-2xl: 0 1px 3px 0px hsl(10 45% 20% / 0.28);
 }
 
 /* Text selection and scrollbars pick up whichever theme is currently
