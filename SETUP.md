@@ -2447,6 +2447,60 @@ connection.
 **Backup:** `forgejo/data/` (SQLite DB, repo objects, SSH host keys — all
 of it) is in `kopia-mac/backup.sh`'s `SOURCES` list.
 
+### Claude Code agent access — a separate, scoped bot account
+
+Agents need to reach Forgejo without ever using Mathew's own admin
+credentials — a leaked or misbehaving agent token should only ever be able
+to touch what was explicitly granted, not the whole instance. Solved with
+a second, non-admin Forgejo account (`claude-agent`) and a repo/issue-
+scoped API token, stored in a **separate** Pass item ("Forgejo Claude
+Agent") from Mathew's own ("Forgejo") — independently revocable, and an
+obviously distinct audit trail from his own activity in the web UI.
+
+**Scope actually needed, found empirically, not just from docs:**
+`write:repository,write:issue,write:user`. Forgejo's own token-scope docs
+suggest `write:repository` alone covers `POST /user/repos` (creating a
+repo for the authenticated user) — live-tested and that's wrong, or at
+least incomplete: the request failed with a generic `token is required`
+error until `write:user` was added too, at which point both repo creation
+and `GET /user` started working. No `admin`/`organization`/`package`
+scope at all — confirmed a request to `/api/v1/admin/users` with this
+token returns 401 regardless.
+
+**Zero access by default**: a fresh Forgejo account can't see or touch any
+private repo until explicitly added as a collaborator — so `claude-agent`
+starts with nothing. To let agents work on a specific existing repo, add
+`claude-agent` as a Collaborator on it (Settings → Collaborators, per
+repo) — there's no instance-wide grant to flip. Repos the bot creates
+under its own account are usable immediately without any extra step.
+
+**Setup:**
+```sh
+./scripts/pass-create-forgejo-agent-secrets.sh   # creates the Pass item, generates BOT_PASSWORD
+
+# Create the non-admin account (no --admin flag)
+podman exec -u git -e BOT_PW="$BOT_PASSWORD" -e HOME=/data/git forgejo sh -c \
+    'forgejo admin user create --username claude-agent --password "$BOT_PW" \
+     --email claude-agent@mathewcsims.uk --must-change-password=false'
+
+# Generate the scoped token directly via CLI — never via a web-form login
+TOKEN=$(podman exec -u git -e HOME=/data/git forgejo sh -c \
+    'forgejo admin user generate-access-token --username claude-agent \
+     --token-name claude-code --scopes write:repository,write:issue,write:user --raw')
+pass-cli item update --vault-name "Self-Hosted Secrets" --item-title "Forgejo Claude Agent" \
+    --field BOT_TOKEN="$TOKEN" >/dev/null
+```
+
+Verified end-to-end (not just "the token exists"): authenticated as
+`claude-agent`, created a private test repo via the API, confirmed
+`GET /api/v1/admin/users` was rejected (401) with the same token, then
+deleted the test repo.
+
+The Claude Code skill at `.claude/skills/forgejo-api/SKILL.md` documents
+both the REST API and git-over-HTTPS usage (the token doubles as the git
+password — no separate SSH key needed for agent use, keeping Mathew's own
+SSH key exclusively his).
+
 ---
 
 ## Adding another app (the general recipe)

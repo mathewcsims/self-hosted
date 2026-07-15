@@ -123,6 +123,7 @@ marque/                compose.yaml, logo SVG, theme CSS, and data (Mac — priv
 bookstack/             compose.yaml, MariaDB, and config (Mac — project wiki, LAN-only)
 .claude/skills/bookstack-api/  Claude Code skill for using BookStack's REST API
 forgejo/               compose.yaml and data (Mac — self-hosted git remote, LAN-only)
+.claude/skills/forgejo-api/    Claude Code skill for the scoped claude-agent bot account
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass
