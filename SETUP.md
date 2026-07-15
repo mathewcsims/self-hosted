@@ -2241,6 +2241,118 @@ SQLite-backed time entries) is in `kopia-mac/backup.sh`'s `SOURCES` list.
 
 ---
 
+## BookStack (https://author.mathewcsims.uk) — LAN-only, runs on the Mac
+
+[BookStack](https://www.bookstackapp.com) — project wiki for writing
+projects (its Shelf → Book → Chapter → Page taxonomy maps directly onto
+"project → draft" without needing custom structure). Two containers on the
+Mac, MariaDB sidecar like Ghost's MySQL one — BookStack has no sqlite
+option, unlike Vikunja/Memos.
+
+**Deliberately LAN-only, not internet-facing-with-a-login** — same pattern
+as Speedtest Tracker: a real public `A` record and Caddy-issued Let's
+Encrypt cert exist (BookStack's `APP_URL` always redirects to
+`author.mathewcsims.uk` regardless of what Host header a request arrives
+with, so the cert has to be for that exact name — a direct request to the
+Mac's LAN IP just redirects into a dead end until DNS/Caddy are live), but
+`pi-reverse-proxy/Caddyfile`'s `author.mathewcsims.uk` block gates on
+`remote_ip private_ranges 100.64.0.0/10` (the Tailscale CGNAT range,
+included for the same reason as Speedtest/mc37) and `abort`s any non-LAN
+source before it ever reaches the app — confirmed by inspecting Caddy's
+live JSON config (`docker exec caddy wget -qO- http://127.0.0.1:2019/config/`),
+not just assumed from the Caddyfile text.
+
+**No SSO** — single-user, LAN-only, so the extra Infomaniak app
+registration wasn't worth it; a local admin password is enough here.
+BookStack does support OIDC (`AUTH_METHOD=oidc`) if that ever changes, with
+one gotcha worth remembering: it won't auto-link an OIDC login to an
+existing local account just because the email matches — you'd need to log
+in once as the local admin and set that account's "External Authentication
+ID" first, same class of pitfall as Memos' SSO linking (see Marque above).
+
+**The default-admin problem, and how it differs from Vikunja/Speedtest:**
+BookStack ships a fixed, publicly-documented default admin
+(`admin@admin.com` / `password`) with **no supported env-var override** to
+set custom initial credentials (confirmed against BookStack's own docs —
+unlike Vikunja's CLI-created admin or Speedtest's `ADMIN_EMAIL`/
+`ADMIN_PASSWORD` env vars). The only way to change it is through the app's
+own Edit Profile screen — entering credentials into that form is something
+only you should do, not something to script or automate. Practical
+sequence actually used here: deployed the containers first with the Caddy/
+DNS layer already live (LAN-gate already enforcing, so the exposure window
+was only to devices on the home network/tailnet, briefly, not the whole
+internet — direct-IP access before DNS existed doesn't actually work
+anyway, since `APP_URL` forces every response to redirect to the real
+hostname), then you logged in once via `https://author.mathewcsims.uk` and
+changed the email/password immediately.
+
+**Image**: `lscr.io/linuxserver/bookstack`, pinned to `26.05.2` by digest.
+Checked GitHub Security Advisories for `BookStackApp/BookStack` directly:
+one real recent one, CVE-2026-5484 (auth bypass in the chapter Markdown
+export handler — bypasses page-level view permissions when exporting a
+chapter), fixed at 26.03.1; 26.05.2 is well past it. MariaDB is the official
+`mariadb:11.4.12` image (LTS, maintained until 2029), also pinned by digest.
+
+**Hardening, all in `bookstack/compose.yaml` and the Caddyfile block:**
+- `APP_KEY` and both DB passwords generated via
+  `scripts/pass-create-bookstack-secrets.sh` (Laravel key in the standard
+  `base64:` + 32-random-bytes format; DB passwords alphanumeric-only,
+  avoiding compose's `${VAR}` escaping problems entirely rather than
+  working around them).
+- `PUID`/`PGID` set to `1000:1000` — linuxserver's baseimage runs the app
+  as this fixed UID/GID rather than root, so (unlike copyparty, which
+  benefits from podman-machine's automatic root→host-user remap) `./config`
+  needs pre-chowning before first boot, same fix as Vikunja's
+  `./files`/`./db` needed:
+  ```sh
+  podman run --rm -v "$PWD/config:/config" docker.io/library/alpine:latest \
+    chown -R 1000:1000 /config
+  ```
+- Self-registration confirmed closed (`/register` redirects to `/login`) —
+  BookStack's own default, verified rather than assumed.
+- Security headers apply (`import security_headers`), plus two rate-limit
+  zones: a general 300/min budget, and a tighter 10/min zone on `POST
+  /login` specifically — no other app in this repo has a plain
+  username+password login form with no built-in rate limiting of its own
+  (everything else either has its own, like Karakeep/Memos, or uses SSO),
+  so this is the first Caddy-layer login-specific zone written from
+  scratch rather than adapted from an existing one.
+
+**API access, for Claude Code use:** BookStack has a mature REST API
+(`/api/books`, `/chapters`, `/pages`, `/shelves`, `/search`, token auth via
+`Authorization: Token <id>:<secret>`). Rather than run one of the several
+community MCP servers for it (extra unaudited process, extra thing to
+patch, for no benefit when the consumer is Claude Code itself), the token
+lives in the "BookStack" Proton Pass item (`TOKEN_ID`/`TOKEN_SECRET`,
+generated once via Edit Profile → API Tokens → Create Token) and a Claude
+Code skill at `.claude/skills/bookstack-api/SKILL.md` documents the
+endpoints directly — same "call the API with curl" pattern as every other
+admin script in this repo, no new service to trust.
+
+**To bring it up:**
+1. `./scripts/pass-create-bookstack-secrets.sh` — creates the "BookStack"
+   Proton Pass item (`APP_KEY`, `DB_ROOT_PASSWORD`, `DB_PASSWORD`).
+2. **Mac:** pre-chown `bookstack/config` (see above), then
+   `./scripts/pass-deploy.sh bookstack BookStack` (explicit item-title
+   argument needed — the default title-from-dirname logic produces
+   "Bookstack", not "BookStack").
+3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and reload
+   Caddy (`docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`).
+4. **DNS:** `./scripts/dns-digitalocean.sh add author <WAN IP>` (there is no
+   blanket wildcard — every hostname needs its own record), then
+   `./scripts/dns-nextdns.sh add author.mathewcsims.uk 10.0.1.19` for clean
+   LAN access.
+5. From your own network, visit `https://author.mathewcsims.uk`, log in
+   with the default admin credentials, and change the email/password via
+   Edit Profile immediately — see above for why this can't be scripted.
+6. Generate an API token (Edit Profile → API Tokens) and add
+   `TOKEN_ID`/`TOKEN_SECRET` to the "BookStack" Pass item.
+
+**Backup:** `bookstack/config/` and `bookstack/db/` are in
+`kopia-mac/backup.sh`'s `SOURCES` list.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:

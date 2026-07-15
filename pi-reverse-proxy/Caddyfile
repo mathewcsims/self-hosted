@@ -544,6 +544,49 @@ mc37.mathewcsims.uk {
 	}
 }
 
+# ── BookStack (running on the Mac, LAN-ONLY) ─────────────────────────────
+# Clean public URL https://author.mathewcsims.uk, but only for LAN/tailnet
+# clients — same reasoning and same @lan/abort shape as Speedtest Tracker
+# and mc37 above: a real public A-record lets Caddy obtain a Let's Encrypt
+# cert (BookStack's own APP_URL always redirects to this hostname
+# regardless of what Host header a request arrives with, so the cert has
+# to be for this exact name), but only private-range or Tailscale-CGNAT
+# source IPs ever get proxied through.
+#
+# No local-password rate-limit zone existed anywhere in this repo yet
+# specifically for a plain username+password login form (every other app
+# either has its own built-in rate limiting or uses SSO) — BookStack has
+# neither, so this one targets its actual login POST directly, same
+# defense-in-depth reasoning as Karakeep's NextAuth zone.
+author.mathewcsims.uk {
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		rate_limit {
+			zone rl_bookstack {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+			zone rl_bookstack_login {
+				match {
+					method POST
+					path /login
+				}
+				key {remote_host}
+				events 10
+				window 1m
+			}
+		}
+		reverse_proxy http://{$MAC_IP}:6875
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
 # Only the hostnames explicitly configured above are served. Any other
 # SNI/Host — including a bare-IP scan of the public address — gets a closed

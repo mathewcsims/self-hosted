@@ -100,6 +100,8 @@ $REPO_ROOT/copyparty/cfg/accounts.conf
 $REPO_ROOT/timetagger/data
 $REPO_ROOT/owl/data
 $REPO_ROOT/marque/data
+$REPO_ROOT/bookstack/config
+$REPO_ROOT/bookstack/db
 "
 if [ -d "$NAS_MOUNT" ] && mount | grep -q "$NAS_MOUNT"; then
     SOURCES="$SOURCES

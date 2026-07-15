@@ -1,0 +1,94 @@
+# BookStack (https://www.bookstackapp.com) — self-hosted project wiki for
+# writing projects. LAN-only: reachable at https://author.mathewcsims.uk,
+# but gated to private/tailnet source IPs at the Caddy layer (see
+# ../pi-reverse-proxy/Caddyfile) — same pattern as Speedtest Tracker.
+#
+# Same architecture as every other Mac app here: TLS and the public
+# hostname are handled by Caddy on the Pi; this Mac only serves plain HTTP
+# on the LAN. Two containers, MariaDB sidecar like Ghost's MySQL one — read
+# straight from BookStack's own docs, which require a real MariaDB/MySQL
+# instance (no sqlite option, unlike Vikunja/Memos).
+#
+# Pinned image (26.05.2, linuxserver's build) is past CVE-2026-5484 (auth
+# bypass in the chapter-export handler, fixed at 26.03.1 — checked GitHub
+# Security Advisories directly, nothing else unpatched at this version).
+#
+# No SSO here deliberately (single-user, LAN-only — not worth the extra
+# Infomaniak app registration). BookStack ships a fixed, well-known default
+# admin (admin@admin.com/password) with no supported env-var override to
+# set custom initial credentials — see SETUP.md for the one manual step
+# this needs (changing it via Edit Profile) before this is ever exposed
+# beyond this Mac's own LAN interface.
+#
+# All secrets live in ./.env (gitignored — see .env.example for the
+# template, values pulled live from Proton Pass via ../scripts/pass-deploy.sh).
+name: bookstack
+
+services:
+  db:
+    # MariaDB 11.4, an LTS release (maintained until 2029) — pinned to an
+    # exact patch version + digest, not a floating tag.
+    image: docker.io/library/mariadb@sha256:1cd9922a5b8c757115954ed8966f00d0c950c742852ab8d56d3d823c2f97034c
+    container_name: bookstack-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: bookstackapp
+      MYSQL_USER: bookstack
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./db:/var/lib/mysql
+    # No `ports:` — reached only by the bookstack service, by container
+    # name, over this project's own default network. Never exposed to the LAN.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  bookstack:
+    # linuxserver's build — checked GitHub Security Advisories for
+    # BookStackApp/BookStack directly: CVE-2026-5484 (auth bypass, chapter
+    # export handler) is the only one with any recent relevance, fixed at
+    # 26.03.1; 26.05.2 is well past it. Pinned to an exact version + digest,
+    # not :latest.
+    image: lscr.io/linuxserver/bookstack@sha256:0879a5e11d880bedd2ae995e62a066d5f4f4a5d44a33668472312b3d439173f4
+    container_name: bookstack
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # PUID/PGID: linuxserver's baseimage runs the app as this fixed
+      # UID/GID (not root, unlike copyparty) — ./config must be pre-owned
+      # by 1000:1000 before first boot, same fix as Vikunja's ./files/./db
+      # needed (podman-machine's rootless remap doesn't apply here since
+      # the process never runs as root inside the container in the first
+      # place).
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+      APP_URL: https://author.mathewcsims.uk
+      APP_KEY: ${APP_KEY}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USERNAME: bookstack
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE: bookstackapp
+    volumes:
+      - ./config:/config
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. 6875
+      # matches linuxserver's own documented default host port. The router
+      # does NOT forward 6875, so this is never directly internet-facing
+      # even before the Caddy LAN-gate is considered.
+      - "10.0.1.14:6875:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
