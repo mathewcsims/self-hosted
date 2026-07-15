@@ -31,11 +31,26 @@ print it to a terminal/log:
 ```sh
 BOT_TOKEN=$(PROTON_PASS_AGENT_REASON="Forgejo agent API/git call" pass-cli item view \
     --vault-name "Self-Hosted Secrets" --item-title "Forgejo Claude Agent" --output json \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin)
-for s in d["item"]["content"]["content"]["Custom"]["sections"]:
-    for f in s["section_fields"]:
-        if f["name"]=="BOT_TOKEN": print(list(f["content"].values())[0])')
+    | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+content = d["item"]["content"]["content"]
+fields = [f for s in content["Custom"]["sections"] for f in s["section_fields"]]
+fields += d["item"]["content"].get("extra_fields", [])
+for f in fields:
+    if f["name"] == "BOT_TOKEN":
+        print(list(f["content"].values())[0])')
 ```
+
+**Check both `Custom.sections` and `extra_fields`, always** — which one a
+given field lands in depends on *how* it was added, not anything about the
+field itself: `pass-cli item create --from-template` puts everything under
+`content.content.Custom.sections[].section_fields`, but `pass-cli item
+update --field X=Y` (used here, since `BOT_TOKEN` was generated and stored
+*after* the account already existed) appends to a separate top-level
+`content.extra_fields` array instead. A script that only checks
+`Custom.sections` will silently find nothing for a field added the second
+way — confirmed the hard way when this exact script missed `BOT_TOKEN`
+until the extraction was widened to check both.
 
 **The token's scope is deliberately narrow**: `write:repository`,
 `write:issue`, `write:user` only — confirmed empirically (not just from
