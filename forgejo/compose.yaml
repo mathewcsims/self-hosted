@@ -1,0 +1,90 @@
+# Forgejo (https://forgejo.org) — self-hosted git remote + web UI, for
+# projects Mathew wants under version control but doesn't want on a
+# third-party host like GitHub. LAN-only: reachable at
+# https://fj.mathewcsims.uk, gated to private/tailnet source IPs at the
+# Caddy layer (see ../pi-reverse-proxy/Caddyfile) — same pattern as
+# BookStack and Speedtest Tracker.
+#
+# SQLite, not a DB sidecar: Forgejo/Gitea's own docs treat sqlite3 as a
+# fully supported production backend for low-concurrency, single-user
+# instances like this one (this repo already does the same for Vikunja/
+# Memos) — no MariaDB/Postgres container needed here.
+#
+# Registration closed from first boot (FORGEJO__service__DISABLE_REGISTRATION),
+# and the only admin account is created via the `forgejo admin user create`
+# CLI (see SETUP.md) rather than any web-form/default-credential step — no
+# built-in default account exists to worry about here, unlike BookStack.
+#
+# CVE-2026-20896 (critical reverse-proxy-auth-bypass, v15 LTS, no backport
+# planned — see SETUP.md) only applies if ENABLE_REVERSE_PROXY_AUTHENTICATION
+# is turned on, which it deliberately isn't here (plain local password auth
+# instead) — REVERSE_PROXY_TRUSTED_PROXIES is still pinned to a real value
+# below anyway, defense-in-depth, rather than leaving the vulnerable
+# wildcard default in place unexamined.
+#
+# All non-default config lives in ./.env (gitignored — see .env.example).
+name: forgejo
+
+services:
+  forgejo:
+    # v15.0.5 — the current LTS line (supported until 2027-07-15), past
+    # both CVE-2026-59102 (stored XSS, fixed 15.0.3) and CVE-2026-27771
+    # (not an actual vuln — a package-visibility misunderstanding, per
+    # Forgejo's own advisory). Pinned by digest, not a floating tag.
+    image: codeberg.org/forgejo/forgejo@sha256:6f0b9736fe91d70d6494fb2b08da1c1c3a775c9f775b98d8030f01b73993d97d
+    container_name: forgejo
+    restart: unless-stopped
+    environment:
+      # Forgejo's own docker convention (not PUID/PGID like linuxserver
+      # images) — matches the Mac user's uid/gid, same reasoning as every
+      # other non-root-in-container app here.
+      USER_UID: 1000
+      USER_GID: 1000
+      TZ: Europe/London
+
+      FORGEJO__database__DB_TYPE: sqlite3
+
+      FORGEJO__server__DOMAIN: fj.mathewcsims.uk
+      FORGEJO__server__ROOT_URL: https://fj.mathewcsims.uk/
+      FORGEJO__server__HTTP_PORT: 3000
+      # Advertised in clone URLs shown by the web UI — actual external
+      # port is 2222 (see `ports:` below); this is the value Forgejo tells
+      # clients to use, not what it binds internally.
+      FORGEJO__server__SSH_DOMAIN: fj.mathewcsims.uk
+      FORGEJO__server__SSH_PORT: 2222
+
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      # Without this, Forgejo serves an unauthenticated web install wizard
+      # on first visit — anyone who reaches it before this is set could
+      # configure the instance and create their own admin account. Caught
+      # live: the container's own startup log said "Prepare to run install
+      # page" despite every other setting already being applied via env
+      # vars, until this was added.
+      FORGEJO__security__INSTALL_LOCK: "true"
+
+      # Defense-in-depth for CVE-2026-20896 (see SETUP.md): explicitly
+      # scoped to the Pi's LAN IP (the only thing that ever proxies to
+      # this container) rather than leaving the image's wildcard `*`
+      # default in place. ENABLE_REVERSE_PROXY_AUTHENTICATION is left
+      # unset/false — the actual precondition for that CVE — so this line
+      # is a belt-and-braces backstop, not a load-bearing fix on its own.
+      FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES: "10.0.1.19/32"
+    volumes:
+      - ./data:/data
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. Neither
+      # port is forwarded by the router, so neither is ever directly
+      # internet-facing even before the Caddy LAN-gate is considered.
+      - "10.0.1.14:3300:3000"  # web UI — Caddy proxies here
+      - "10.0.1.14:2222:22"    # git-over-SSH — reached directly, not via Caddy
+                               # (Caddy is HTTP(S)-only; SSH push/clone from
+                               # a LAN/tailnet client goes straight to this
+                               # port instead)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

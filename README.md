@@ -27,6 +27,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | Owl ([Memos](https://github.com/usememos/memos)) | `owl.mathewcsims.uk` | Mac (personal notes instance, migrated from a Tailscale-only ScaleTail deployment — closed registration, unrelated to the Prospect Memos instance above) |
 | Marque ([Memos](https://github.com/usememos/memos)) | `marque.mathewcsims.uk` | Mac (private, work-focused notes instance — closed registration, Infomaniak SSO only, unrelated to the other two Memos instances) |
 | [BookStack](https://www.bookstackapp.com) | `author.mathewcsims.uk` | Mac (project wiki for writing projects — LAN-only, no SSO, local admin login) |
+| [Forgejo](https://forgejo.org) | `fj.mathewcsims.uk` | Mac (self-hosted git remote + web UI for sensitive personal projects — LAN-only, SQLite, git-over-SSH on port 2222) |
 
 ## Architecture, in short
 
@@ -47,7 +48,10 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ time.mathewcsims.uk              → Mac (via oauth2-proxy)
                                   ├─ owl.mathewcsims.uk               → Mac
                                   ├─ marque.mathewcsims.uk            → Mac
-                                  └─ author.mathewcsims.uk            → Mac (LAN clients only)
+                                  ├─ author.mathewcsims.uk            → Mac (LAN clients only)
+                                  └─ fj.mathewcsims.uk                → Mac (LAN clients only;
+                                                                          git-over-SSH bypasses
+                                                                          Caddy entirely, port 2222)
 ```
 
 Each app is its own `podman-compose`/`docker-compose` project in its own
@@ -118,6 +122,7 @@ owl/                   compose.yaml, logo SVG, and data (Mac — personal Memos 
 marque/                compose.yaml, logo SVG, theme CSS, and data (Mac — private work notes instance)
 bookstack/             compose.yaml, MariaDB, and config (Mac — project wiki, LAN-only)
 .claude/skills/bookstack-api/  Claude Code skill for using BookStack's REST API
+forgejo/               compose.yaml and data (Mac — self-hosted git remote, LAN-only)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass

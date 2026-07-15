@@ -587,6 +587,46 @@ author.mathewcsims.uk {
 	}
 }
 
+# ── Forgejo (running on the Mac, LAN-ONLY) ───────────────────────────────
+# Clean public URL https://fj.mathewcsims.uk, but only for LAN/tailnet
+# clients — same @lan/abort shape as BookStack and Speedtest Tracker above.
+# Note this only covers the web UI; git-over-SSH (port 2222 on the Mac's
+# LAN IP) is reached directly by clients, not proxied through Caddy at all
+# — Caddy only ever speaks HTTP(S).
+#
+# No built-in login rate limiting confirmed either way for Forgejo's own
+# `/user/login` form, so — same reasoning as BookStack's — this adds a
+# dedicated tighter zone for it rather than assuming the app already
+# covers it.
+fj.mathewcsims.uk {
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		rate_limit {
+			zone rl_forgejo {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+			zone rl_forgejo_login {
+				match {
+					method POST
+					path /user/login
+				}
+				key {remote_host}
+				events 10
+				window 1m
+			}
+		}
+		reverse_proxy http://{$MAC_IP}:3300
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
 # Only the hostnames explicitly configured above are served. Any other
 # SNI/Host — including a bare-IP scan of the public address — gets a closed

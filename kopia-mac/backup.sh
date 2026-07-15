@@ -102,6 +102,7 @@ $REPO_ROOT/owl/data
 $REPO_ROOT/marque/data
 $REPO_ROOT/bookstack/config
 $REPO_ROOT/bookstack/db
+$REPO_ROOT/forgejo/data
 "
 if [ -d "$NAS_MOUNT" ] && mount | grep -q "$NAS_MOUNT"; then
     SOURCES="$SOURCES

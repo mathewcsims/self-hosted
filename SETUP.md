@@ -2353,6 +2353,102 @@ admin script in this repo, no new service to trust.
 
 ---
 
+## Forgejo (https://fj.mathewcsims.uk) — LAN-only, runs on the Mac
+
+[Forgejo](https://forgejo.org) — self-hosted git remote + web UI, for
+projects worth keeping under real version control but not worth pushing to
+a third-party host like GitHub. Grew out of a "what if I want git history
+without third-party visibility" conversation — plain version control and
+end-to-end encryption of the remote are basically incompatible if you still
+want the remote to do anything useful (browsable history, a web UI), so the
+answer here is "keep it entirely under your own infrastructure" instead:
+same LAN-only Caddy pattern as BookStack/Speedtest, backed by the same
+Kopia pipeline as everything else.
+
+**SQLite, not a DB sidecar** — Forgejo/Gitea's own docs treat sqlite3 as a
+fully supported backend for low-concurrency, single-user instances (same
+reasoning as Vikunja/Memos in this repo); no MariaDB/Postgres container
+needed, keeping this lighter than BookStack.
+
+**No SSO, no default-credential window at all** — unlike BookStack,
+Forgejo has a real CLI for provisioning the first account
+(`forgejo admin user create`), so the single admin user is created directly
+via `docker`/`podman exec` with a Pass-generated password, never through a
+web form and never landing on any known-default credential even briefly.
+Registration is disabled from first boot
+(`FORGEJO__service__DISABLE_REGISTRATION`).
+
+**A real gotcha caught live during setup, not from docs:** even with every
+setting supplied via `FORGEJO__*` environment variables, the container's
+own startup log said `Prepare to run install page` — meaning it was still
+going to serve an *unauthenticated* first-run web install wizard, letting
+anyone who reached it before you did configure the instance and create
+their own admin account. Environment-variable config alone doesn't imply
+the install is "locked" — `FORGEJO__security__INSTALL_LOCK: "true"` is
+required explicitly, confirmed by re-checking the log after adding it
+(`serveInstalled`/`InitWebInstalled` instead of the install-page message).
+
+**CVE-2026-20896 (critical, 9.8, reverse-proxy-auth bypass, v15 LTS —
+no backport planned, fixed properly only in v16.0.0):** exploitable only
+if `ENABLE_REVERSE_PROXY_AUTHENTICATION` is turned on (letting a reverse
+proxy assert user identity via an `X-WEBAUTH-USER`-style header) *and* the
+web port is directly reachable from an untrusted network. Neither applies
+here — plain local password auth is used instead of header-based auth, and
+the web port is never directly internet-facing regardless (same LAN-gate
+as everything else, plus not router-forwarded in the first place) — but
+`FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES` is still pinned to the
+Pi's actual LAN IP rather than left at the image's vulnerable wildcard
+default, as a deliberate backstop rather than an unexamined gap.
+
+**Two ports, two protocols:** the web UI (`3300` on the Mac's LAN IP) goes
+through Caddy same as every other app; git-over-SSH (`2222` on the Mac's
+LAN IP) is reached **directly** by clients — Caddy only ever speaks
+HTTP(S), so SSH push/clone bypasses it entirely rather than being proxied.
+`FORGEJO__server__SSH_PORT` just controls what port Forgejo *advertises* in
+clone URLs shown by the web UI; the actual external mapping is set in
+`ports:` in `compose.yaml`.
+
+**Image**: `codeberg.org/forgejo/forgejo`, pinned to `v15.0.5` by digest —
+the current LTS line (supported until 2027-07-15), past CVE-2026-59102
+(stored XSS via Actions run full-name rendering, fixed 15.0.3).
+
+**Verified end-to-end, not just "the container is up":** registered a
+throwaway SSH keypair against the admin account via the API, created a
+test repo, cloned it over `ssh://git@10.0.1.14:2222/...`, pushed a commit,
+confirmed it landed, then deleted both the test repo and the throwaway key
+via the API afterward — proves the SSH daemon, key auth, and git
+push/pull path all actually work, not just that port 2222 accepts a TCP
+connection.
+
+**To bring it up:**
+1. `./scripts/pass-create-forgejo-secrets.sh` — creates the "Forgejo"
+   Proton Pass item with a generated `ADMIN_PASSWORD` (`ADMIN_USERNAME` is
+   just `mathew`, stored alongside for convenience).
+2. **Mac:** `cd forgejo && podman compose up -d` (no Pass-backed `${VAR}`s
+   in this compose file at all — SQLite, no DB sidecar secrets, so a plain
+   `compose up -d` is fine here, same documented exception as copyparty).
+3. Create the admin account via CLI, **not** the web UI:
+   ```sh
+   ADMIN_PASSWORD=$(pass-cli item view --vault-name "Self-Hosted Secrets" \
+       --item-title "Forgejo" --output json | python3 -c '...reads ADMIN_PASSWORD...')
+   podman exec -u git -e ADMIN_PW="$ADMIN_PASSWORD" -e HOME=/data/git forgejo sh -c \
+       'forgejo admin user create --username mathew --password "$ADMIN_PW" \
+        --email mat@mathewcsims.uk --admin --must-change-password=false'
+   ```
+4. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and reload
+   Caddy.
+5. **DNS:** `./scripts/dns-digitalocean.sh add fj <WAN IP>`, then
+   `./scripts/dns-nextdns.sh add fj.mathewcsims.uk 10.0.1.19`.
+6. From your own network, log into `https://fj.mathewcsims.uk` with the
+   Pass-stored credentials, then add your own SSH public key under
+   Settings → SSH/GPG Keys to actually use `git clone`/`push` against
+   `ssh://git@10.0.1.14:2222/mathew/<repo>.git`.
+
+**Backup:** `forgejo/data/` (SQLite DB, repo objects, SSH host keys — all
+of it) is in `kopia-mac/backup.sh`'s `SOURCES` list.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
