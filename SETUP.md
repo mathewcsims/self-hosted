@@ -2420,13 +2420,38 @@ via the API afterward — proves the SSH daemon, key auth, and git
 push/pull path all actually work, not just that port 2222 accepts a TCP
 connection.
 
+**Email — password resets and issue/PR notifications:** a dedicated
+mailbox/credentials created specifically for this instance, deliberately
+not reused from Ghost's own SMTP setup (see the Ghost section above) —
+kept separate rather than sharing one mail identity across apps. Add
+`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM` to
+the existing "Forgejo" Pass item (not a new item — see `.env.example`).
+STARTTLS assumed (`FORGEJO__mailer__PROTOCOL: smtp+starttls`, matching
+Ghost's own port-587 STARTTLS setup) — change that in
+`forgejo/compose.yaml` if the new mailbox uses implicit TLS (`smtps`)
+instead. This is the reason `forgejo/compose.yaml` now has real
+`${VAR}` secrets in it (it didn't originally) — deploy via
+`pass-deploy.sh`, not a bare `compose up -d`, from this point on.
+
+Verified via `forgejo admin sendmail` (run as the `git` user, same
+`-u git -e HOME=/data/git` pattern as the admin-account CLI command
+below). First attempt against a freshly-created Proton mailbox logged a
+transient failure (`454 4.7.0 Temporary authentication failure:
+Connection lost to authentication server`) — but the email still arrived,
+confirming the config itself was correct and this was a one-off hiccup
+(Proton SMTP app-passwords sometimes take a moment after creation), not a
+real problem. Forgejo's mailer queue retried silently — no explicit
+success line in the logs, only the initial failure — so don't take a
+logged mail error alone as proof delivery didn't happen; check the actual
+inbox.
+
 **To bring it up:**
 1. `./scripts/pass-create-forgejo-secrets.sh` — creates the "Forgejo"
    Proton Pass item with a generated `ADMIN_PASSWORD` (`ADMIN_USERNAME` is
-   just `mathew`, stored alongside for convenience).
-2. **Mac:** `cd forgejo && podman compose up -d` (no Pass-backed `${VAR}`s
-   in this compose file at all — SQLite, no DB sidecar secrets, so a plain
-   `compose up -d` is fine here, same documented exception as copyparty).
+   just `mathew`, stored alongside for convenience). Add the SMTP fields
+   above to this same item before deploying.
+2. **Mac:** `./scripts/pass-deploy.sh forgejo Forgejo` (explicit item-title
+   argument needed, same reason as BookStack's).
 3. Create the admin account via CLI, **not** the web UI:
    ```sh
    ADMIN_PASSWORD=$(pass-cli item view --vault-name "Self-Hosted Secrets" \
