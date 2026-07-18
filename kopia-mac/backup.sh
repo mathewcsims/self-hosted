@@ -103,6 +103,7 @@ $REPO_ROOT/marque/data
 $REPO_ROOT/bookstack/config
 $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data
+/Users/mathewcsims/contact-sync
 "
 if [ -d "$NAS_MOUNT" ] && mount | grep -q "$NAS_MOUNT"; then
     SOURCES="$SOURCES

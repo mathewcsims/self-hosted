@@ -1,0 +1,12 @@
+diff --git a/internal/service/contacts/contacts.go b/internal/service/contacts/contacts.go
+index de528c8..ef90da2 100644
+--- a/internal/service/contacts/contacts.go
++++ b/internal/service/contacts/contacts.go
+@@ -81,6 +81,7 @@ func (s *Service) List(ctx context.Context, u *keys.Unlocked) ([]Contact, error)
+ 				continue
+ 			}
+ 			ct := contactFromCards(c.ID, cards)
++			ct.Cards = cards
+ 			ct.Signature = pgp.Aggregate(verdicts...)
+ 			out = append(out, ct)
+ 		}

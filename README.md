@@ -28,6 +28,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | Marque ([Memos](https://github.com/usememos/memos)) | `marque.mathewcsims.uk` | Mac (private, work-focused notes instance — closed registration, Infomaniak SSO only, unrelated to the other two Memos instances) |
 | [BookStack](https://www.bookstackapp.com) | `author.mathewcsims.uk` | Mac (project wiki for writing projects — LAN-only, no SSO, local admin login) |
 | [Forgejo](https://forgejo.org) | `fj.mathewcsims.uk` | Mac (self-hosted git remote + web UI for sensitive personal projects — LAN-only, SQLite, git-over-SSH on port 2222) |
+| Contact sync (this repo) | — (no URL; launchd job) | Mac (cross-provider address-book sync: Proton + Google + 2× Microsoft → one canonical store, git-versioned on Forgejo) |
 
 ## Architecture, in short
 
@@ -124,6 +125,8 @@ bookstack/             compose.yaml, MariaDB, and config (Mac — project wiki, 
 .claude/skills/bookstack-api/  Claude Code skill for using BookStack's REST API
 forgejo/               compose.yaml and data (Mac — self-hosted git remote, LAN-only)
 .claude/skills/forgejo-api/    Claude Code skill for the scoped claude-agent bot account
+contact-sync/          cross-provider contact sync engine + launchd job (Mac —
+                       data lives at ~/contact-sync, store pushed to Forgejo)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass

@@ -2528,6 +2528,85 @@ SSH key exclusively his).
 
 ---
 
+## Contact sync (no public URL — a scheduled job on the Mac, not a service)
+
+Cross-provider address-book sync: 1 Proton (personal), 1 Google
+(personal), 2 Microsoft (1 personal, 1 work). Goal: one identical
+address book everywhere, with the work account participating
+**asymmetrically** (see below). Nothing off-the-shelf covers this
+combination — Proton has no CardDAV/official API (E2E encryption is
+structurally incompatible with DAV), and the work MS tenant allows no
+OAuth app registrations.
+
+**Architecture: hub-and-spoke.** A canonical vCard store on the Mac
+(`~/contact-sync/store/`, one RFC 6350 `.vcf` per contact + `state.json`
+mapping canonical UID → per-provider IDs) is the hub; each provider
+syncs against it independently:
+
+| Spoke | Mechanism | Notes |
+|-------|-----------|-------|
+| Google | People API, OAuth desktop-app client | refresh token in Pass ("Contact Sync Google") |
+| MS personal | Graph API, device-code public client | Graph rotates refresh tokens — every run stores the new one back to Pass ("Contact Sync Microsoft") |
+| MS work | macOS Contacts.app via JXA (work Exchange account in Internet Accounts) | **asymmetric**: its 21 contacts sync outward + receive updates to those same contacts, but personal contacts are NEVER pushed into the employer's mailbox |
+| Proton | unofficial [proton-cli](https://github.com/roman-16/proton-cli), audited + built from source | see audit notes below |
+
+The engine lives at `contact-sync/` in this repo (stdlib-only Python,
+same discipline as `vikunja-webhook-relay/`); the *data* lives at
+`~/contact-sync/` (outside the repo, like every app's data dir). The
+store is a git repo pushed to a **private Forgejo repo**
+(`claude-agent/contact-sync-store` on fj.mathewcsims.uk) — full history
+of every sync run's changes, entirely on own infrastructure — and
+`~/contact-sync` is in `kopia-mac/backup.sh` SOURCES.
+
+**proton-cli audit (the gate for using an unofficial client at all):**
+pinned v1.9.4 (`5f4fd10`), full source read: only network destinations
+are `mail.proton.me/api` + `verify.proton.me` (CAPTCHA), crypto via
+Proton's own official Go libraries (go-srp/gopenpgp), no telemetry or
+update-checker, session file is 0600 with the key password encrypted
+against a server-side key (revoking the session from Proton's web UI
+makes the on-disk blob undecryptable), password only ever via env var.
+Built from source (go.sum hash-verified); runtime traffic capture via a
+local logging CONNECT proxy during the real first login confirmed
+exactly one destination: `mail.proton.me:443`. One local patch
+(`contact-sync/patches/proton-cli-list-full-cards.patch`, +1 line)
+makes the bulk list endpoint include full decrypted vCards — 15s for
+all 809 contacts instead of ~45min of per-contact gets. 2FA was needed
+once, interactively, at first login; routine runs reuse the session.
+
+**Initial convergence (2026-07-18):** 1,426 records in → 1,025 canonical
+contacts (merge report kept at `~/contact-sync/initial-merge-report.md`;
+matching by normalized email → phone → exact ≥2-word name, ambiguous
+cases surfaced for review; the four Microsoft Mobile Services
+phone-backup folders were mined once for missing emails/phones — 3
+recovered — and are otherwise excluded). Google, MS personal, and
+Proton each hold all 1,025; the work account keeps only its own 21.
+Pre-first-write snapshots of every provider are at
+`~/contact-sync/snapshots/pre-first-write/`.
+
+**Graph quirks found live:** max 3 emailAddresses / 2 businessPhones /
+2 homePhones per contact (the spoke caps and compares cap-aware, so
+over-cap contacts don't look perpetually out-of-sync); refresh tokens
+rotate on every use (captured via fd 3 → stored back to Pass); one
+create was silently dropped server-side (accepted-then-vanished) and
+re-created on verification — counts are always re-verified against the
+provider after an apply, not trusted from API success responses.
+
+**Ongoing sync:** `contact-sync/run-sync.sh` via launchd
+(`uk.mathewcsims.contact-sync`, daily 07:30 — deliberately clear of the
+02:00 Kopia run so it never writes mid-snapshot). Conflicts: newest
+edit wins whole-contact; the losing version survives in the store's git
+history. Safety rails: any provider showing >20% inbound changes aborts
+the whole run before any write; any outbound plan >20% is skipped; each
+run posts a per-provider in/out summary to Discord via Apprise
+(warnings and aborts likewise).
+
+**Recovery:** restore a provider from `~/contact-sync/snapshots/` (or
+any Kopia snapshot of `~/contact-sync`) by replaying it through the
+relevant spoke's plan/apply; the store's git history on Forgejo shows
+exactly what changed in every run.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:
