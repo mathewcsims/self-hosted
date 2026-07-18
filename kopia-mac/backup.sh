@@ -105,12 +105,23 @@ $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data
 /Users/mathewcsims/contact-sync
 "
+# Extra, deliberately-untracked sources (one absolute path per line) — for
+# folders whose existence shouldn't be documented in the public repo. The
+# file itself is gitignored; missing file = no extra sources.
+LOCAL_SOURCES="$REPO_ROOT/kopia-mac/local-sources.txt"
+if [ -f "$LOCAL_SOURCES" ]; then
+    SOURCES="$SOURCES
+$(cat "$LOCAL_SOURCES")"
+fi
 if [ -d "$NAS_MOUNT" ] && mount | grep -q "$NAS_MOUNT"; then
     SOURCES="$SOURCES
 $NAS_MOUNT"
 fi
 
-for source in $SOURCES; do
+# Iterate per-LINE, not per-word: paths from local-sources.txt can contain
+# spaces, and `for x in $SOURCES` would split them into bogus fragments.
+printf '%s\n' "$SOURCES" | while IFS= read -r source; do
+    [ -n "$source" ] || continue
     log "snapshotting $source"
     kopia snapshot create "$source" >> "$LOG" 2>&1 || log "FAILED: $source"
 done

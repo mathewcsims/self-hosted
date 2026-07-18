@@ -4,6 +4,11 @@
 .env
 **/.env
 copyparty/cfg/accounts.conf
+# local-only volume definitions and compose overrides — extra copyparty
+# areas that deliberately stay out of the public repo entirely
+copyparty/cfg/local-*.conf
+copyparty/compose.override.yaml
+kopia-mac/local-sources.txt
 
 # ── Runtime data & databases ────────────────────────────────────────────
 # This repo is infrastructure-as-code only — never the actual files,
