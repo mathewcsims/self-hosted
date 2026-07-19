@@ -2408,9 +2408,14 @@ HTTP(S), so SSH push/clone bypasses it entirely rather than being proxied.
 clone URLs shown by the web UI; the actual external mapping is set in
 `ports:` in `compose.yaml`.
 
-**Image**: `codeberg.org/forgejo/forgejo`, pinned to `v15.0.5` by digest —
-the current LTS line (supported until 2027-07-15), past CVE-2026-59102
-(stored XSS via Actions run full-name rendering, fixed 15.0.3).
+**Image**: `codeberg.org/forgejo/forgejo`, pinned to `v16.0.0` by digest
+(upgraded 2026-07-19 from the 15.0.x LTS line; SQLite migrations ran
+cleanly on first boot). v16's breaking changes were checked and none
+apply here: no repo mirrors (the `http.followRedirects=false` SSRF
+hardening), reverse-proxy auth off, and `REVERSE_PROXY_TRUSTED_PROXIES`
+already explicitly pinned since install — v16 merely turned that
+defense-in-depth choice into the required default. Pre-upgrade Kopia
+snapshot of `forgejo/data` taken (`kbd1e5ee6a4d…`) for instant rollback.
 
 **Verified end-to-end, not just "the container is up":** registered a
 throwaway SSH keypair against the admin account via the API, created a
