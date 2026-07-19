@@ -11,8 +11,8 @@
 #
 # The nginx base itself was also floating (`nginx:alpine`, which tracks
 # nginx's mainline branch, not `stable`) — pinned to the current mainline
-# release (1.31.2) with a digest for the same reproducibility reason.
-FROM nginx:1.31.2-alpine@sha256:1ff5c7ff41c619b521f7a3bcfb52ff93354bb65a0141d7cdc0bf9702b12f8f82
+# release (1.31.3) with a digest for the same reproducibility reason.
+FROM nginx:1.31.3-alpine@sha256:1dd3048a04f4b76ebd706c1bbb9df7d9d53b4f8253b32ce14467088c9b5ada0f
 
 ARG LITTLELINK_VERSION=3.10.0
 
