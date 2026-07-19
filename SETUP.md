@@ -2790,9 +2790,26 @@ docker compose pull nimbus && docker compose up -d
   Disable the in-VM service with:
   `podman machine ssh systemctl disable podman-restart.service`.
 
----
+### Podman VM sizing (OOM wedge, diagnosed 2026-07-19)
 
-## Backups
+The podman machine now runs with **8 GiB** memory (`podman machine set
+--memory 8192`). It originally had ~4.6 GiB, which was enough when the
+stack was small but silently became too little as services were added:
+with all ~26 containers up, the guest kernel ran out of memory (serial
+console showed `Out of memory: Killed process ... (chromium)` ~4½ min
+after boot) and then thrashed zram swap, pegging all 5 vCPUs — the
+`krunkit` process sat at >500 % CPU while the API socket, `podman ps`,
+and `podman machine ssh` all hung. From the outside this looks like "the
+podman machine crashed"; `podman machine stop` can't recover it (the
+graceful stop times out and even after a hard stop the state can report
+"already running"). It wedged this way twice before diagnosis.
+
+Recovery, if it ever recurs: `pgrep krunkit`, `kill -9` it, then
+`podman machine start` — every container comes back automatically via
+`podman-restart.service`. Watch for the wedge returning within minutes
+(that's the tell that it's memory, not a one-off). Check headroom with
+`podman machine ssh free -m`; if "available" is regularly under ~1 GiB,
+raise the allocation again before adding the next service.
 
 - Back up **`copyparty/data/`**, **`memos-prospect-ukri-tus/data/`**, and
   **`vikunja/db/` + `vikunja/files/`** on the Mac (Time Machine covers all of
