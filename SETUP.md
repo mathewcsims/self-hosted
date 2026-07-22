@@ -3166,5 +3166,11 @@ tag — worth a fresh pull next time Nimbus is touched, to pick up 18.4's
 pgcrypto fix, CVE-2026-2005). **Update (2026-07-19):** a later security
 pass bumped `mysql` to `8.4.10`, `ghost` to `6.53.0`, and the
 landing-page `nginx` base to `1.31.3-alpine` (fixing CVE-2026-42533,
-CVE-2026-60005, CVE-2026-56434). `turboot/nimbus-postgres:18` is still
-untouched — still worth a fresh pull next time Nimbus is touched.
+CVE-2026-60005, CVE-2026-56434). **Update (2026-07-22):** `nimbus-db`
+recreated with a fresh pull of `turboot/nimbus-postgres:18` — was
+already on PostgreSQL 18.4 (the version with the pgcrypto fix,
+CVE-2026-2005), but the floating tag had a newer image digest available
+than what was actually deployed, so it's now current. Since this is a
+floating major tag with no digest pin (unlike every other image here),
+it needs a manual re-pull to catch future patch releases — there's no
+automatic drift detection for it.
