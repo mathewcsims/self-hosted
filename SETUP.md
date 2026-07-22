@@ -1712,6 +1712,43 @@ admin username and password there directly, nothing to configure in
      bundled Apprise CLI) under Settings → Notifications, and attach it to
      each monitor.
 
+### Monitoring layout (full audit, 2026-07-23)
+
+22 monitors, all wired to the Discord notification, all tagged (Homelab +
+host tag), all with TLS cert-expiry alerts on, retries=3, 60s retry
+cadence while failing, and re-notification every 10 consecutive failed
+checks (so a long outage keeps pinging rather than alerting once).
+
+- **App-truth checks, not just "HTTP 200"** wherever the app exposes a
+  real health endpoint: Karakeep `/api/health` (keyword `"status":"ok"`),
+  Vikunja `/api/v1/info` (keyword `"version"`), all three Memos instances
+  `/healthz` (keyword `Service ready`), Apprise `/status` (keyword `OK`),
+  Ghost `/ghost/api/admin/site/`, Speedtest Tracker `/api/healthcheck`,
+  Forgejo `/api/healthz`, TimeTagger via oauth2-proxy's own `/ping`.
+- **Expected-status monitors** for auth-gated surfaces: Kopia accepts
+  `401` (its normal unauthenticated answer), the Vikunja relay accepts
+  `501` (it's POST-only; 501 on GET proves the Caddy→relay chain).
+- **Non-HTTP**: TCP check on Forgejo's git-over-SSH port (10.0.1.14:2222),
+  ICMP ping for the Mac itself (catches host-down vs app-down), and ICMP
+  pings for the four tailnet-only ScaleTail apps (CyberChef, Memos,
+  StirlingPDF, Transmute) via their Tailscale 100.x addresses — the Pi is
+  on the tailnet. golink is the one unmonitored service (not visible from
+  the Pi's tailnet).
+- **Intervals**: 60s for the key public services, 180s for LAN-only and
+  tailnet ones.
+- **Status page** (`/status/all`): all 22 monitors in three groups
+  (Services / Monitoring & infrastructure / Tailnet apps).
+
+**API caveat (learned doing this):** Kuma's API keys only authenticate the
+read-only endpoints (`/metrics`, badges). ALL write operations (monitors,
+notifications, status pages) go through its Socket.IO interface, which
+needs the real admin login — username + password + a TOTP code (2FA is
+enabled) via the `login` event, after which the returned JWT can be
+reused via `loginByToken` for the rest of the session. The "Uptime Kuma"
+Pass item holds `UPTIMEKUMA_APIKEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`.
+One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
+`"conditions": []` explicitly or the insert fails a NOT NULL constraint.
+
 ---
 
 ## Vikunja webhook relay (https://vikunja-relay.mathewcsims.uk) — LAN-only, runs on the Pi
