@@ -35,9 +35,11 @@ recipe — see "Adding another app" near the end.
        │   container name over `pi-shared` — no host       │
        │   port published):                                │
        │     Mac:    mathewcsims.uk, cp, prospect-ukri-    │
-       │             tus, vikunja, blog, karakeep, time    │
+       │             tus, vikunja, blog, karakeep, time,   │
+       │             owl, marque, author*, fj*             │
        │             (time → oauth2-proxy, not the app     │
-       │             directly)                             │
+       │             directly; author/fj are BookStack/    │
+       │             Forgejo, LAN/tailnet-gated)            │
        │     Pi:     dashboard (Nimbus), status (Kuma),    │
        │             speedtest*, apprise*, vikunja-relay*, │
        │             backup* (Kopia)                       │
@@ -107,6 +109,13 @@ below says which.
 | `karakeep/compose.yaml` | **Mac** | Karakeep + Meilisearch; reads secrets from Proton Pass |
 | `karakeep/data/` | **Mac** | **your bookmarks/assets/archives live here** |
 | `karakeep/meilisearch-data/` | **Mac** | search index |
+| `bookstack/compose.yaml` | **Mac** | BookStack + MariaDB sidecar; LAN-only (`author.mathewcsims.uk`); reads secrets from Proton Pass |
+| `bookstack/config/` | **Mac** | **your wiki pages/books/shelves live here** |
+| `bookstack/db/` | **Mac** | **BookStack's MariaDB datadir** |
+| `forgejo/compose.yaml` | **Mac** | Forgejo (git + issues), SQLite; LAN-only (`fj.mathewcsims.uk`) plus direct git-over-SSH on port 2222; reads secrets from Proton Pass |
+| `forgejo/data/` | **Mac** | **your repos, SQLite DB, SSH host keys live here** |
+| `contact-sync/` | **Mac** | hub-and-spoke contact sync engine (Proton/Google/2× Microsoft) — `sync.py` + per-provider spoke modules; canonical vCard store lives outside the repo at `~/contact-sync/store/` (its own private Forgejo repo); daily launchd job |
+| `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
 | `pi-reverse-proxy/.env` | **Pi** | domain, email, Mac IP — gitignored; see `.env.example` |
@@ -1262,7 +1271,7 @@ sqlite works in dev but isn't QA'd for production, so this needed a real DB
 sidecar (same pattern as Nimbus's `nimbus-db`), not the sqlite-in-one-container
 approach used elsewhere.
 
-**Image**: `ghost:6.50.0`, pinned to an exact version, not `:latest`.
+**Image**: `ghost:6.53.0`, pinned to an exact version, not `:latest`.
 Independently checked GitHub's advisory database (`api.github.com/advisories?
 ecosystem=npm&affects=ghost`, not just trusted a summary): several real past
 CVEs — critical SQL injection in the Content API, a critical cache-poisoning
@@ -3145,11 +3154,17 @@ were bumped and re-pinned:
 - **nginx** (`landing-page/Dockerfile`): floating `nginx:alpine` (which
   tracks nginx's *mainline* branch, not `stable` — worth knowing, since
   "alpine" alone doesn't mean "stable-alpine"). Pinned to the current
-  mainline release, `1.31.2-alpine`, with a digest.
+  mainline release at the time, `1.31.2-alpine`, with a digest — since
+  bumped to `1.31.3-alpine` (3 CVEs) in the 2026-07-19 security pass, see
+  below.
 
 Not touched in this pass (flagged as lower-priority "when convenient"
 items, not security-urgent): `mysql:8.4.6` (Ghost's DB, a few patches
 behind), `ghost:6.50.0`/`ghost/traffic-analytics:1.0.265` (both a little
 stale, no CVEs found), and `turboot/nimbus-postgres:18` (floating major
 tag — worth a fresh pull next time Nimbus is touched, to pick up 18.4's
-pgcrypto fix, CVE-2026-2005).
+pgcrypto fix, CVE-2026-2005). **Update (2026-07-19):** a later security
+pass bumped `mysql` to `8.4.10`, `ghost` to `6.53.0`, and the
+landing-page `nginx` base to `1.31.3-alpine` (fixing CVE-2026-42533,
+CVE-2026-60005, CVE-2026-56434). `turboot/nimbus-postgres:18` is still
+untouched — still worth a fresh pull next time Nimbus is touched.
