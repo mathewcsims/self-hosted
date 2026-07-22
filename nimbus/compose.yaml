@@ -27,7 +27,10 @@ name: nimbus
 
 services:
   db:
-    image: turboot/nimbus-postgres:18
+    # v18 (PostgreSQL 18.4, past CVE-2026-2005's pgcrypto fix). Pinned by
+    # digest, not the floating `:18` tag, so a future `compose pull`
+    # doesn't silently pick up an unreviewed rebuild.
+    image: turboot/nimbus-postgres@sha256:d35076bc6d7d0ecdd5496ae481846ae045f38d285d6eea906b068462669e66fd
     container_name: nimbus-db
     restart: unless-stopped
     environment:

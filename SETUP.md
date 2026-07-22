@@ -3170,7 +3170,12 @@ CVE-2026-60005, CVE-2026-56434). **Update (2026-07-22):** `nimbus-db`
 recreated with a fresh pull of `turboot/nimbus-postgres:18` — was
 already on PostgreSQL 18.4 (the version with the pgcrypto fix,
 CVE-2026-2005), but the floating tag had a newer image digest available
-than what was actually deployed, so it's now current. Since this is a
-floating major tag with no digest pin (unlike every other image here),
-it needs a manual re-pull to catch future patch releases — there's no
-automatic drift detection for it.
+than what was actually deployed. Then re-pinned `nimbus/compose.yaml`
+to that exact digest (was the last image in this repo still on a
+floating tag) — now every app here is digest-pinned, so a future
+`compose pull` anywhere in the repo can't silently pick up an
+unreviewed rebuild. Upstream doesn't publish version-numbered tags for
+this image (only `latest`/`18`), so bumping to a newer PostgreSQL point
+release means checking Docker Hub for a new digest by hand, same as
+before — the difference is just that a stale pin now stays stale
+until someone deliberately updates it, rather than drifting silently.
