@@ -98,7 +98,7 @@ below says which.
 | `marque/data/` | **Mac** | this instance's notes (sqlite DB + attachments) |
 | `marque/marque-logo.svg` | **Mac** | source asset for the instance logo (tracked; deployed as a data URI in Memos' own DB) |
 | `marque/marque-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
-| `vikunja/compose.yaml` | **Mac** | Vikunja, pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
+| `vikunja/compose.yaml` | **Mac** | Vikunja, pinned by digest to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
 | `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
 | `vikunja/files/` | **Mac** | task attachments |
 | `blog/compose.yaml` | **Mac** | Ghost + MySQL + traffic-analytics; reads secrets from Proton Pass |
@@ -1073,8 +1073,8 @@ built with more deliberate hardening than the other apps here, on request.
 Single container, sqlite (no separate DB service/password to manage), on the
 Mac like copyparty/Memos.
 
-**Image is pinned to `ghcr.io/go-vikunja/vikunja:2.3.0`, NOT the "official"
-`docker.io/vikunja/vikunja` the upstream docs point at.** That Docker Hub
+**Image is pinned by digest to `ghcr.io/go-vikunja/vikunja:2.3.0`, NOT the
+"official" `docker.io/vikunja/vikunja` the upstream docs point at.** That Docker Hub
 image is stale — last pushed at `1.1.0` (Feb 2026) — and does **not** include
 fixes for several real CVEs disclosed since, most seriously a **CVSS 9.1
 critical** (`GHSA-2pv8-4c52-mf8j`): an unauthenticated instance-wide data
@@ -1271,7 +1271,8 @@ sqlite works in dev but isn't QA'd for production, so this needed a real DB
 sidecar (same pattern as Nimbus's `nimbus-db`), not the sqlite-in-one-container
 approach used elsewhere.
 
-**Image**: `ghost:6.53.0`, pinned to an exact version, not `:latest`.
+**Image**: `ghost:6.53.0`, pinned by digest, not just an exact version tag
+(a tag can still be repushed to a different digest; the digest can't).
 Independently checked GitHub's advisory database (`api.github.com/advisories?
 ecosystem=npm&affects=ghost`, not just trusted a summary): several real past
 CVEs — critical SQL injection in the Content API, a critical cache-poisoning
