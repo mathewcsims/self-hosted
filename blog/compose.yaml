@@ -16,8 +16,9 @@ name: blog
 
 services:
   db:
-    # MySQL 8 — pinned to an exact patch version, not a floating `:8` tag.
-    image: mysql:8.4.10
+    # MySQL 8 — pinned by digest, not just the exact patch-version tag,
+    # since even a specific-version tag can be repushed to a new digest.
+    image: mysql@sha256:28474aba911e2a51b664e5c77d6ffe5657ae4b27550ff588e8c54db426023c44
     container_name: blog-db
     restart: unless-stopped
     environment:
@@ -47,7 +48,9 @@ services:
     # themes — deliberately staying on the bundled default (Casper) theme
     # here, not installing anything else, to keep that whole class of risk
     # off the table entirely rather than just "patched for now."
-    image: ghost:6.53.0
+    # Pinned by digest, not just the version tag — see the mysql comment
+    # above for why a version tag alone isn't sufficient here.
+    image: ghost@sha256:7a825704defbb7fa1913e8f9fe6e1f0e88cb6c1fd276448b634139c8e47f4295
     container_name: ghost
     restart: unless-stopped
     depends_on:
@@ -164,7 +167,7 @@ services:
     # datasource/pipe schema bundled inside the Ghost image itself into a
     # shared volume, so tinybird-deploy can apply it. No auth needed for
     # this step, it's a plain file copy.
-    image: ghost:6.53.0
+    image: ghost@sha256:7a825704defbb7fa1913e8f9fe6e1f0e88cb6c1fd276448b634139c8e47f4295
     container_name: blog-tinybird-sync
     command: >
       sh -c "

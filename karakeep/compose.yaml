@@ -29,7 +29,9 @@ name: karakeep
 
 services:
   web:
-    image: ghcr.io/karakeep-app/karakeep:0.32.0
+    # v0.32.0. Pinned by digest, not the tag alone — tags on this registry
+    # aren't immutable, so a bare version tag can still silently move.
+    image: ghcr.io/karakeep-app/karakeep@sha256:215d9c8ef733ec823368a95495ac434bd87fdfe4257f9fdb0309c8914ffeae51
     container_name: karakeep
     restart: unless-stopped
     environment:

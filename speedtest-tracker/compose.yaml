@@ -39,7 +39,9 @@ services:
     # are oddly titled "CVE release"/"CVE PATCH" but their actual diffs are
     # unrelated minor fixes — not a real disclosed vulnerability, verified by
     # reading the release diffs directly.)
-    image: lscr.io/linuxserver/speedtest-tracker:1.14.5
+    # v1.14.5. Pinned by digest, not the tag alone — tags on this registry
+    # aren't immutable, so a bare version tag can still silently move.
+    image: lscr.io/linuxserver/speedtest-tracker@sha256:c33d119bb60fb58a5848564d85926caeadb61c813c8c536850215cdf9f3b48a7
     container_name: speedtest-tracker
     restart: unless-stopped
     environment:
