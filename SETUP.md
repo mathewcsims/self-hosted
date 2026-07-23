@@ -2024,10 +2024,46 @@ disk — worktree removal is a destructive-classifier-blocked action, left
 for manual cleanup: `git worktree remove .claude/worktrees/<name>`.)
 
 **What the first clean baseline scan immediately found**: CVE-2026-39087
-in ntfy (see the ntfy section above — patched same day) and 64 CRITICAL
-CVEs in the Uptime Kuma image, 43 of them in its bundled Chromium that
-this instance's monitors don't use (see the Uptime Kuma section above —
-a `-slim-rootless` tag switch would fix this, not yet applied).
+in ntfy and 64 CRITICAL CVEs in the standard Uptime Kuma image, 43 of them
+in its unused bundled Chromium — both acted on same day (see the ntfy and
+Uptime Kuma sections above).
+
+**Why raw CVE counts across container images are mostly noise, and what
+that means for how findings get presented** (Mathew asked directly
+whether 1433 findings in one baseline run was actually useful — worth
+recording the answer, not just the fix): a pinned image bundles dozens of
+OS packages that accumulate CVEs since it was last rebuilt; "CRITICAL"
+severity assumes the vulnerable code path is reachable, which it often
+isn't (the Kuma Chromium CVEs are the clearest example — real CVEs, ~zero
+actual risk here since no monitor uses that code path). So findings are
+now grouped by what they actually call for, not just severity:
+
+- **Fixable** (any severity, a newer image version exists) — summarized
+  **per image**, not per CVE. A single pin bump clears everything on that
+  image at once, so that's the real unit of action; enumerating each CVE
+  individually produced 420 lines in one run for no benefit and blew
+  through Discord's size limit. The single worst CVE per image is still
+  named as a concrete anchor.
+- **Unfixed CRITICAL** (no patch exists upstream yet) — listed
+  **individually**, in its own dedicated notification sent separately
+  from the fixable summary. Deliberately not filtered out or downgraded:
+  no available patch doesn't mean nothing can be done — a short-term
+  mitigation (disable a feature, restrict network access, etc.) may still
+  be the right call, and that decision needs the specific CVE, not a
+  count. Found a real ordering bug building this: with everything in one
+  message, the (often much larger) fixable summary ate the whole
+  character budget first and silently truncated away 28 of 38 critical
+  entries — exactly backwards for what's supposed to be the
+  highest-priority bucket. Splitting it into its own message, sent first,
+  with shortened lines (CVE ID + package, title dropped — still in the
+  full report) fixed it: verified live, all 38 fit with room to spare.
+- **Unfixed HIGH** (no patch, lower urgency) — compressed to a per-image
+  count in the notification; nothing actionable right now, but still kept
+  in full in `latest-report.md` for reference.
+
+Nothing is ever hidden entirely — every CVE from every scan is in
+`latest-report.md` regardless of bucket. The buckets only change what the
+notification emphasizes.
 
 ---
 
