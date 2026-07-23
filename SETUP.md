@@ -1636,6 +1636,58 @@ would need reconfiguring inside Kuma's own UI if wanted.
 
 ---
 
+## ntfy (https://ntfy.mathewcsims.uk) — runs on the Pi, ON TRIAL
+
+[ntfy](https://github.com/binwiederhier/ntfy) — self-hosted push
+notification server, trialled (2026-07) as a richer delivery target than
+the Discord webhook: real priority levels (distinct sounds/vibrations per
+severity), markdown, attachments, and **action buttons** (a notification
+can carry up to three buttons — open a URL, or fire an arbitrary HTTP
+request, e.g. a "Retry" on a backup-failure alert). Discord keeps working
+unchanged alongside; Apprise fans every `/notify` out to **both** (see
+`scripts/pass-seed-apprise.sh` — the ntfy target is registered from the
+"Ntfy" Pass item's `PUBLISHER_TOKEN`, into topic `alerts`).
+
+**Image**: `binwiederhier/ntfy:v2.14.0`, pinned by digest.
+
+**Public, not LAN-gated** — phones must receive pushes away from home,
+same reachability class as the Discord webhook it's trialling against.
+Compensating controls: `NTFY_AUTH_DEFAULT_ACCESS: deny-all` (verified
+live: anonymous publish → 403), so nothing is readable or writable
+without an account, plus Caddy's per-IP rate limit.
+
+**Accounts** (all in the "Ntfy" Pass item; created via
+`docker exec ntfy ntfy user add`, passwords never on a command line —
+passed via the `NTFY_PASSWORD` env var):
+- `mathew` (admin) — web UI + phone app login.
+- `publisher` (write-only, all topics) — what Apprise and scripts embed;
+  its `PUBLISHER_TOKEN` can spam but never read anything.
+
+**iOS caveat (deliberate)**: `NTFY_UPSTREAM_BASE_URL: https://ntfy.sh` —
+Apple allows only APNs for background push, so the official ntfy.sh
+relays a content-free "poll now" ping (message ID only, no title/body);
+the app then fetches the real message from this server. Android (F-Droid
+build) connects straight here with no third party involved.
+
+**Apprise integration notes**: Apprise's ntfy plugin passes through
+priority, tags/emoji, markdown, attachments, and even action buttons
+(`actions=` as a per-target URL parameter — static per target). Truly
+per-message buttons need a direct publish to this server instead
+(`X-Actions` header, JSON array format — the simple comma format can't
+carry JSON bodies for `http` actions; hit exactly this during setup).
+
+**Trial status**: evaluating app-side experience (per-priority sounds
+are per-priority only, NOT per-topic — a known limitation accepted going
+in) before deciding whether anything moves off Discord. Rollback = remove
+the ntfy line from `pass-seed-apprise.sh`, re-run it, `docker compose
+down` the ntfy folder, drop the DNS record and Caddy block.
+
+**To bring it up on a fresh machine**: copy `ntfy/` to the Pi,
+`docker compose up -d`, add the Caddy block + `ntfy` A record, recreate
+the two users, store them in Pass, re-run `pass-seed-apprise.sh`.
+
+---
+
 ## Uptime Kuma (https://status.mathewcsims.uk) — runs on the Pi
 
 [Uptime Kuma](https://github.com/louislam/uptime-kuma) — self-hosted uptime

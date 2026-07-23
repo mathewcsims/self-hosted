@@ -465,6 +465,20 @@ status.mathewcsims.uk {
 	reverse_proxy uptime-kuma:3001
 }
 
+# ── ntfy (running HERE on the Pi) ─────────────────────────────────────────
+# Self-hosted push notification server, on trial alongside the Discord
+# webhook (see ../ntfy/compose.yaml). Public, not LAN-gated: phones must
+# receive pushes away from home — same reachability class as the Discord
+# path it's trialling against. ntfy's own auth runs in default-deny mode
+# (no anonymous read OR write), so this exposes a login wall, not an open
+# relay; the general per-IP rate limit covers brute-force. Caddy upgrades
+# WebSocket automatically (subscriber connections) — nothing extra needed.
+ntfy.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit ntfy
+	reverse_proxy ntfy:80
+}
+
 # ── Vikunja webhook relay (running HERE on the Pi, LAN-ONLY) ─────────────
 # Clean public URL https://vikunja-relay.mathewcsims.uk, but only for LAN
 # clients — same pattern as Apprise/Speedtest Tracker above. Bridges

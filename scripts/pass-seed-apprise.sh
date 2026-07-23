@@ -42,21 +42,37 @@ if ! pass-cli info >/dev/null 2>&1; then
     fi
 fi
 
-echo "Fetching Discord webhook from Proton Pass and registering it with Apprise on the Pi..."
+echo "Fetching Discord webhook + ntfy publisher token from Proton Pass and registering with Apprise on the Pi..."
 
-PROTON_PASS_AGENT_REASON="Seeding Apprise's Discord notification target" \
-    pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Apprise" --output json \
-    | python3 -c '
+{
+    PROTON_PASS_AGENT_REASON="Seeding Apprise's Discord notification target" \
+        pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Apprise" --output json
+    # Ntfy runs alongside Discord during the ntfy trial (2026-07) — both
+    # registered untagged, so every /notify fans out to both. If the item is
+    # missing (e.g. rebuilding before the trial existed), Discord-only.
+    PROTON_PASS_AGENT_REASON="Seeding Apprise's ntfy notification target" \
+        pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Ntfy" --output json 2>/dev/null || echo '{}'
+} | python3 -c '
 import json, sys, re
 
-d = json.load(sys.stdin)
-sections = d["item"]["content"]["content"]["Custom"]["sections"]
-webhook = None
-for section in sections:
-    for f in section["section_fields"]:
-        if f["name"] == "DISCORD_WEBHOOK":
-            webhook = list(f["content"].values())[0]
+def fields_of(d):
+    c = d["item"]["content"]
+    fs = [f for s in c["content"]["Custom"]["sections"] for f in s["section_fields"]]
+    fs += c.get("extra_fields", [])
+    return {f["name"]: list(f["content"].values())[0] for f in fs}
 
+decoder = json.JSONDecoder()
+raw = sys.stdin.read().strip()
+docs, idx = [], 0
+while idx < len(raw):
+    d, end = decoder.raw_decode(raw, idx)
+    docs.append(d)
+    idx = end
+    while idx < len(raw) and raw[idx] in " \n\r\t":
+        idx += 1
+
+apprise_item = fields_of(docs[0])
+webhook = apprise_item.get("DISCORD_WEBHOOK")
 if webhook is None:
     sys.exit("No DISCORD_WEBHOOK field found on the Apprise Pass item")
 
@@ -70,7 +86,17 @@ webhook_id, webhook_token = m.groups()
 # flat text. image=yes: shows a small type icon (info/warning/error/
 # success) in the embed. Neither is a secret - safe to hardcode here rather
 # than store as a Pass field.
-print(f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes")
+urls = [f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes"]
+
+ntfy_token = None
+if len(docs) > 1 and docs[1].get("item"):
+    ntfy_token = fields_of(docs[1]).get("PUBLISHER_TOKEN")
+if ntfy_token:
+    # auth=token: the publisher access token (write-only, all topics).
+    # Topic "alerts" is the general firehose mirroring Discord.
+    urls.append(f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&format=markdown")
+
+print(",".join(urls))
 ' \
     | ssh mathew@babel 'read -r APPRISE_URL && docker exec -i apprise python3 /scripts/seed.py <<<"$APPRISE_URL"'
 

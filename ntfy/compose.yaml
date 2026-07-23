@@ -1,0 +1,63 @@
+# ntfy (https://github.com/binwiederhier/ntfy) — self-hosted push
+# notification server, ON TRIAL as a richer delivery target than the
+# Discord webhook: real priority levels (distinct sounds/vibrations per
+# severity), markdown, attachments, and action buttons (e.g. a "Retry"
+# button on a backup-failure alert that POSTs back into the stack).
+# Reached through Apprise (its ntfy plugin supports priority=/tags=/
+# actions= per target URL), so senders stay delivery-agnostic — Discord
+# keeps working unchanged alongside during the trial.
+#
+# Runs HERE on the Pi (not the Mac), same resilience reasoning as Apprise/
+# Nimbus: the thing delivering "the Mac is down" alerts can't live on the
+# Mac. Public hostname (ntfy.mathewcsims.uk) rather than LAN-gated —
+# phones need to receive pushes away from home, same reachability class as
+# the Discord path it's trialling against. Compensating controls: ntfy's
+# own auth in default-deny mode (below), plus Caddy's per-IP rate limit.
+#
+# Auth: `auth-default-access: deny-all` — nothing is readable or writable
+# anonymously; every publish/subscribe needs a user or token from ntfy's
+# user DB (created via `docker exec ntfy ntfy user add ...`, stored in the
+# "Ntfy" Proton Pass item; nothing secret in this file or its env).
+#
+# iOS caveat (documented, deliberate): `upstream-base-url` points at the
+# official ntfy.sh so iOS devices get instant pushes — Apple only allows
+# APNs as the push channel, and ntfy.sh relays a content-free "poll now"
+# ping (message ID only, no title/body); the app then fetches the actual
+# message from THIS server. Without it, iOS notifications only arrive when
+# the app polls. Android (F-Droid build) connects straight here, no
+# third party at all.
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.14.0@sha256:5a051798d14138c3ecb12c038652558ab6a077e1aceeb867c151cbf5fa8451ef
+    container_name: ntfy
+    restart: unless-stopped
+    command: serve
+    environment:
+      NTFY_BASE_URL: https://ntfy.mathewcsims.uk
+      NTFY_LISTEN_HTTP: ":80"
+      NTFY_BEHIND_PROXY: "true"
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+      NTFY_CACHE_DURATION: 24h
+      NTFY_ATTACHMENT_CACHE_DIR: /var/lib/ntfy/attachments
+      NTFY_ATTACHMENT_TOTAL_SIZE_LIMIT: 500M
+      NTFY_UPSTREAM_BASE_URL: https://ntfy.sh
+      NTFY_ENABLE_LOGIN: "true"
+    volumes:
+      # user.db (auth), cache.db (message history), attachments — all in one
+      # dir so there's a single thing to back up/wipe.
+      - ./data:/var/lib/ntfy
+    # No `ports:` — reached only by Caddy (ntfy.mathewcsims.uk) over
+    # `pi-shared`, by container name. Same pattern as Apprise/Nimbus.
+    networks:
+      - pi-shared
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 -O - http://localhost:80/v1/health | grep -q '\"healthy\":true'"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+networks:
+  pi-shared:
+    external: true

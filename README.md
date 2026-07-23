@@ -29,6 +29,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [BookStack](https://www.bookstackapp.com) | `author.mathewcsims.uk` | Mac (project wiki for writing projects — LAN-only, no SSO, local admin login) |
 | [Forgejo](https://forgejo.org) | `fj.mathewcsims.uk` | Mac (self-hosted git remote + web UI for sensitive personal projects — LAN-only, SQLite, git-over-SSH on port 2222) |
 | Contact sync (this repo) | — (no URL; launchd job) | Mac (cross-provider address-book sync: Proton + Google + 2× Microsoft → one canonical store, git-versioned on Forgejo) |
+| [ntfy](https://github.com/binwiederhier/ntfy) | `ntfy.mathewcsims.uk` | Pi (self-hosted push notifications — on trial alongside Discord; auth default-deny, fed by Apprise) |
 
 ## Architecture, in short
 
