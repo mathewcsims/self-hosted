@@ -4,13 +4,18 @@
 # the Mac is down for maintenance, the thing telling you an app is down needs
 # to still be up itself.
 #
-# Pinned to 2.4.0 (checked against Uptime Kuma's own published CVE history —
-# the 4 historical advisories found were all patched well before this
-# release). Its own login is Socket.IO-based, not a REST path, so the usual
-# path-matched Caddy rate-limit zone used for every other app's auth endpoint
-# doesn't apply — only the general per-IP zone covers it (see
-# ../pi-reverse-proxy/Caddyfile). Enable 2FA in Settings after first login as
-# the compensating control.
+# Pinned to 2.4.0-slim-rootless (switched 2026-07-23 from the standard
+# 2.4.0 image — Trivy found 64 CRITICAL CVEs in the standard image, 43 of
+# them in its bundled Chromium for "real browser" monitors; confirmed live
+# via the metrics endpoint that none of this instance's monitors use that
+# type, so the slim variant — no Chromium — loses nothing actually used
+# here. -rootless runs as uid 1000 ("node") instead of root, real defense
+# in depth on top of the CVE reduction; ./data ownership was chown'd to
+# 1000:1000 to match on the one-time switch). Its own login is
+# Socket.IO-based, not a REST path, so the usual path-matched Caddy
+# rate-limit zone used for every other app's auth endpoint doesn't apply —
+# only the general per-IP zone covers it (see ../pi-reverse-proxy/Caddyfile).
+# Enable 2FA in Settings after first login as the compensating control.
 #
 # Notifications are wired through Kuma's OWN bundled Apprise CLI (or its
 # native Discord webhook provider) directly in Settings > Notifications —
@@ -23,7 +28,7 @@
 # wants to fire a notification without embedding a webhook URL of its own.
 services:
   uptime-kuma:
-    image: louislam/uptime-kuma:2.4.0@sha256:91e963bfda569ba115206e843febb446f473ab525add4e08b2b9e3beffa16985
+    image: louislam/uptime-kuma:2.4.0-slim-rootless@sha256:8f5c20a6002de53f8ed8a9b744ea08f566cfb690e5bbbfc1c278483aaf374992
     container_name: uptime-kuma
     restart: unless-stopped
     volumes:

@@ -1809,18 +1809,17 @@ Pass item holds `UPTIMEKUMA_APIKEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`.
 One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
 `"conditions": []` explicitly or the insert fails a NOT NULL constraint.
 
-**Known issue, not yet acted on (found by the first Trivy scan, 2026-07-23):
-the standard `louislam/uptime-kuma:2.4.0` image carries 64 CRITICAL CVEs, 43
-of them in `chromium-common`** — the image bundles a full Chromium for
-"real browser" monitors. None of the 23 monitors here use that type
-(confirmed live: only http/keyword/ping/port). Upstream publishes a
-`2.4.0-slim` tag (~171MB vs ~572MB) without the Chromium bundle, and a
-`-rootless` variant on top of that. Switching to `2.4.0-slim-rootless`
-would eliminate the great majority of this image's CVE exposure and add
-real container hardening (non-root), at the cost of losing browser-monitor
-capability this instance never used anyway — a clean trade, not yet
-applied pending confirmation the volume/permission layout is compatible
-with the rootless variant.
+**Switched to `louislam/uptime-kuma:2.4.0-slim-rootless` (2026-07-23)** —
+the standard `2.4.0` image carried 64 CRITICAL CVEs, 43 of them in
+`chromium-common` (bundled for "real browser" monitors; confirmed live via
+the metrics endpoint that none of the 23 monitors here use that type, only
+http/keyword/ping/port). The new image cut CRITICAL count to 15 (remaining
+ones are base-OS packages, not Chromium). Also runs as uid 1000 ("node")
+instead of root — real container hardening on top of the CVE reduction.
+`./data` was root-owned from the old image's root process; one-time
+`chown -R 1000:1000` on the Pi before the swap, otherwise the rootless
+container can't write its own database. Verified live: all 23 monitors +
+full heartbeat history survived, status page still serving.
 
 ---
 
@@ -3207,10 +3206,21 @@ one-off manual commands:
 separately:**
 1. Check the DrayTek Vigor2866's port-forwarding table directly to confirm
    WAN port 22 isn't forwarded to the Pi (only 80/443 are documented).
-2. Review the Tailscale ACL policy in the Tailscale admin console — it
-   governs which tailnet peers can reach either host's SSH port (and
-   everything else Tailscale-reachable), and isn't visible or editable
-   from either machine.
+2. ~~Review the Tailscale ACL policy~~ — **done, 2026-07-23**, via the
+   "Tailscale" Pass item's API key (`TAILSCALE_API_KEY`), not the admin
+   console: fetched the live policy over the API, found a real bug in the
+   "global resources" grant — `"dst": ["tag:resource-global", "*"]` had a
+   stray `"*"`, making it functionally identical to the commented-out
+   "allow all connections" default just above it. Any tailnet device
+   (including `tag:work`/`tag:family`) could reach ANY destination on ANY
+   port, which undermined the Caddy `private_ranges 100.64.0.0/10` LAN-gate
+   that BookStack/Forgejo/Apprise/Kopia rely on trusting the tailnet CGNAT
+   range as "personal only." Fixed to `"dst": ["tag:resource-global"]`,
+   validated via Tailscale's `/acl/validate` dry-run endpoint before
+   applying, pushed live, then verified every LAN-gated hostname and a
+   tailnet ping still worked post-change. The `tag:personal` grant (full
+   access for your own devices) was untouched — this only closed the
+   accidental over-grant to everything else.
 
 ### Hardening pass 3 (CAA)
 
