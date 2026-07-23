@@ -18,7 +18,7 @@ services:
   db:
     # MySQL 8 — pinned by digest, not just the exact patch-version tag,
     # since even a specific-version tag can be repushed to a new digest.
-    image: mysql@sha256:28474aba911e2a51b664e5c77d6ffe5657ae4b27550ff588e8c54db426023c44
+    image: mysql@sha256:5700b0892591a760c4caef7a0024c887afd46317d73dd420801706e661c4db56
     container_name: blog-db
     restart: unless-stopped
     environment:

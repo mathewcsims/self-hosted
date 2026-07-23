@@ -23,9 +23,9 @@ name: vikunja
 
 services:
   vikunja:
-    # v2.3.0. Pinned by digest, not the tag alone — tags on this registry
+    # v2.4.0. Pinned by digest, not the tag alone — tags on this registry
     # aren't immutable, so a bare version tag can still silently move.
-    image: ghcr.io/go-vikunja/vikunja@sha256:d07a34034a86cb8d74f5865bd99c1882865514c56827c00eb5ac3bf1005f2e38
+    image: ghcr.io/go-vikunja/vikunja@sha256:1a5dd2d410b5359f689c77bbd1c66742cde1993f82d4adfe9aefa400ff1dd833
     container_name: vikunja
     restart: unless-stopped
     # Do NOT set `user:` — on podman-machine (macOS) the container's root maps

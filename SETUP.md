@@ -2065,6 +2065,45 @@ Nothing is ever hidden entirely — every CVE from every scan is in
 `latest-report.md` regardless of bucket. The buckets only change what the
 notification emphasizes.
 
+**First resolution pass (2026-07-23)**: worked through the 420 fixable
+findings from the baseline. Two images got a free win just from re-pulling
+the same tag (`mysql:8.4.10`, `turboot/nimbus:latest` — same version,
+freshly rebuilt digest with patched OS packages). Three got real version
+bumps: `ghcr.io/go-vikunja/vikunja` 2.3.0 → 2.4.0, `codeberg.org/forgejo/
+forgejo` 16.0.0 → 16.0.1, `getmeili/meilisearch` v1.49.0 → v1.50.0 (inside
+`karakeep/compose.yaml`). The other 18 images with fixable findings were
+already confirmed on their latest available upstream release/tag — their
+fixable CVEs are OS-base-package fixes not yet incorporated into a new
+upstream build; nothing to do until upstream rebuilds, not a gap on this
+end.
+
+Measured impact, re-scanned before/after: 420 → 381 fixable (-39), image
+count with any fixable findings 23 → 21. Precise per-image accounting for
+the five touched images: Vikunja fully cleared (26→0), Meilisearch fully
+cleared (1→0), mysql partially (22→19), nimbus partially (16→7), Forgejo
+unchanged (1→1, a gRPC xDS/RBAC dependency issue — Forgejo, a git host,
+never exercises that code path, so like Kuma's Chromium this is present
+but not actually reachable; will clear whenever Forgejo's own go.mod
+bumps grpc upstream). A version bump doesn't necessarily change the base
+OS layer underneath, which is why several only partially cleared rather
+than dropping to zero.
+
+**Real incident during this pass, handled correctly**: bumping
+Meilisearch to v1.50.0 crash-looped it — v1.50 refuses to start against a
+v1.49-written database without an explicit migration
+(`Error: Your database version (1.49.0) is incompatible with your current
+engine version (1.50.0)`), taking Karakeep's search down. Fixed properly:
+backed up `karakeep/meilisearch-data/` first (17MB, trivial), then ran a
+one-off `meilisearch --experimental-dumpless-upgrade` against the same
+volume outside compose to perform the in-place migration (Meilisearch's
+own docs flag this as experimental and warn it can leave an instance
+unrecoverable if interrupted — hence the backup first). The migration
+step itself completed and persisted (`VERSION` file read `1.50.0`
+immediately after) even though the *following* serve-forever phase got
+killed by a tool timeout; restarted normally via `pass-deploy.sh` and
+confirmed genuinely healthy — clean startup, no crash loop, Karakeep's
+`/api/health` and the app itself both verified live afterward.
+
 ---
 
 ## Kopia backups (https://backup.mathewcsims.uk) — server on the Pi, LAN-only

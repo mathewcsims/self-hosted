@@ -54,7 +54,7 @@ services:
     # silently change what's running here — an intentional `docker compose
     # pull` + digest update is required, same discipline as Vikunja's version
     # pin (see ../vikunja/compose.yaml) and copyparty's.
-    image: turboot/nimbus@sha256:c22c98b5f53cc2e917c06a6d0d44a4033cf6f30885f4f203671201119d90b19d
+    image: turboot/nimbus@sha256:3a8f9651f467c422fd3e45321e7cc1e3e2a856819eef8183d01c3f9af7c9b151
     container_name: nimbus
     restart: unless-stopped
     environment:

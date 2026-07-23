@@ -158,7 +158,7 @@ services:
   # MEILI_MASTER_KEY, never a scoped tenant/index key — but no reason to
   # stay 18 months behind regardless.
   meilisearch:
-    image: getmeili/meilisearch:v1.49.0@sha256:b607c2957462d9a3181871cb532e5770eda9ade76167ec38903801aa28195b85
+    image: getmeili/meilisearch:v1.50.0@sha256:3c535df5fd4e1fc5b119bd5f3930a022dd12ad5fe428584eec26613e534e6046
     container_name: karakeep-meilisearch
     restart: unless-stopped
     environment:
