@@ -115,6 +115,9 @@ below says which.
 | `forgejo/compose.yaml` | **Mac** | Forgejo (git + issues), SQLite; LAN-only (`fj.mathewcsims.uk`) plus direct git-over-SSH on port 2222; reads secrets from Proton Pass |
 | `forgejo/data/` | **Mac** | **your repos, SQLite DB, SSH host keys live here** |
 | `contact-sync/` | **Mac** | hub-and-spoke contact sync engine (Proton/Google/2× Microsoft) — `sync.py` + per-provider spoke modules; canonical vCard store lives outside the repo at `~/contact-sync/store/` (its own private Forgejo repo); daily launchd job |
+| `ntfy/compose.yaml` | **Pi** | self-hosted push notifications, on trial alongside Discord; auth default-deny, fed by Apprise |
+| `ntfy/data/` | **Pi** | **auth DB, message cache, attachments live here** |
+| `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
@@ -1648,7 +1651,12 @@ unchanged alongside; Apprise fans every `/notify` out to **both** (see
 `scripts/pass-seed-apprise.sh` — the ntfy target is registered from the
 "Ntfy" Pass item's `PUBLISHER_TOKEN`, into topic `alerts`).
 
-**Image**: `binwiederhier/ntfy:v2.14.0`, pinned by digest.
+**Image**: `binwiederhier/ntfy:v2.26.3`, pinned by digest. **Emergency-bumped
+2026-07-23 from v2.14.0** — the first Trivy scan (see below) surfaced
+CVE-2026-39087, CVSS 9.8, unauthenticated RCE via `parseActions`, exactly
+the code path the action-buttons trial exercised. Fixed in v2.21+; patched
+same day it was found, deployed and verified healthy with auth still
+enforced before this doc was updated.
 
 **Public, not LAN-gated** — phones must receive pushes away from home,
 same reachability class as the Discord webhook it's trialling against.
@@ -1800,6 +1808,19 @@ reused via `loginByToken` for the rest of the session. The "Uptime Kuma"
 Pass item holds `UPTIMEKUMA_APIKEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`.
 One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
 `"conditions": []` explicitly or the insert fails a NOT NULL constraint.
+
+**Known issue, not yet acted on (found by the first Trivy scan, 2026-07-23):
+the standard `louislam/uptime-kuma:2.4.0` image carries 64 CRITICAL CVEs, 43
+of them in `chromium-common`** — the image bundles a full Chromium for
+"real browser" monitors. None of the 23 monitors here use that type
+(confirmed live: only http/keyword/ping/port). Upstream publishes a
+`2.4.0-slim` tag (~171MB vs ~572MB) without the Chromium bundle, and a
+`-rootless` variant on top of that. Switching to `2.4.0-slim-rootless`
+would eliminate the great majority of this image's CVE exposure and add
+real container hardening (non-root), at the cost of losing browser-monitor
+capability this instance never used anyway — a clean trade, not yet
+applied pending confirmation the volume/permission layout is compatible
+with the rootless variant.
 
 ---
 
@@ -1964,6 +1985,50 @@ this task's reminder row disappear" — check `task_reminders` directly via
 `podman run --rm -v vikunja/db:/db:ro alpine sh -c "apk add --no-cache
 sqlite && sqlite3 /db/vikunja.db 'SELECT * FROM task_reminders'"` and
 compare against which client/action most recently touched that task.
+
+---
+
+## Trivy vulnerability scanning (Mac, launchd, weekly)
+
+Closes a real gap: every CVE/version check in this repo up to 2026-07-23
+was a one-off manual review during a session like this one — nothing
+watched for newly-disclosed CVEs on already-pinned digests in between.
+`trivy-scan/scan.py` (launchd job `uk.mathewcsims.trivy-scan`, Sundays
+04:00) now does that continuously.
+
+**How it works**: derives the full image list live from every `image:` in
+every `compose.yaml` and `FROM` in every `Dockerfile` in the repo — not a
+maintained list that could drift from what's actually pinned. Runs
+`trivy image --severity HIGH,CRITICAL` against each. State (which CVE IDs
+have already been seen, per image) lives outside the repo at
+`~/trivy-scan-state/state.json`, same tracked-script/untracked-data split
+as `contact-sync/`. Only **newly-seen** CVEs trigger a notification — a
+CVE already known and accepted doesn't re-alert every week.
+
+**Real bug found and fixed before this went live**: the first run
+produced 1433 findings in one message and the Discord leg of the Apprise
+fan-out failed outright (`400 Unsupported Parameters` — confirmed live,
+Discord's own embed-description limit, ~4096 chars). ntfy delivered fine;
+Discord silently didn't, and Apprise's `424` response was it honestly
+reporting a partial failure. Fixed by always sending a short per-image
+summary (counts by severity) to the notification, with the full per-CVE
+detail written to `~/trivy-scan-state/latest-report.md` for local review
+instead of trying to cram it into a chat message.
+
+**Second bug found and fixed**: the first real run also picked up 38
+images instead of the real ~24 — a stale `.claude/worktrees/` checkout
+from a past agent session (`isolation: "worktree"`) had pre-digest-pin
+copies of several compose files lying around, never cleaned up. Excluded
+`.claude/` and `.git/` from the image-discovery glob so only what's
+actually deployed gets scanned. (The stale worktree itself is still on
+disk — worktree removal is a destructive-classifier-blocked action, left
+for manual cleanup: `git worktree remove .claude/worktrees/<name>`.)
+
+**What the first clean baseline scan immediately found**: CVE-2026-39087
+in ntfy (see the ntfy section above — patched same day) and 64 CRITICAL
+CVEs in the Uptime Kuma image, 43 of them in its bundled Chromium that
+this instance's monitors don't use (see the Uptime Kuma section above —
+a `-slim-rootless` tag switch would fix this, not yet applied).
 
 ---
 

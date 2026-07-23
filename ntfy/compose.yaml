@@ -28,7 +28,12 @@
 # third party at all.
 services:
   ntfy:
-    image: binwiederhier/ntfy:v2.14.0@sha256:5a051798d14138c3ecb12c038652558ab6a077e1aceeb867c151cbf5fa8451ef
+    # v2.26.3. EMERGENCY BUMP (2026-07-23) from v2.14.0 — CVE-2026-39087,
+    # CVSS 9.8, unauthenticated RCE via parseActions (the exact code path
+    # the action-buttons trial exercised, X-Actions header parsing). Fixed
+    # in v2.21+; found by the first Trivy scan run, patched same day. This
+    # instance is public (no LAN gate), so the exposure window mattered.
+    image: binwiederhier/ntfy:v2.26.3@sha256:081b53dbb20674fcfe05fdb4eb8af9036a2645ef979543d16f7f80803af467b1
     container_name: ntfy
     restart: unless-stopped
     command: serve

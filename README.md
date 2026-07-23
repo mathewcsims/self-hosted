@@ -30,6 +30,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Forgejo](https://forgejo.org) | `fj.mathewcsims.uk` | Mac (self-hosted git remote + web UI for sensitive personal projects — LAN-only, SQLite, git-over-SSH on port 2222) |
 | Contact sync (this repo) | — (no URL; launchd job) | Mac (cross-provider address-book sync: Proton + Google + 2× Microsoft → one canonical store, git-versioned on Forgejo) |
 | [ntfy](https://github.com/binwiederhier/ntfy) | `ntfy.mathewcsims.uk` | Pi (self-hosted push notifications — on trial alongside Discord; auth default-deny, fed by Apprise) |
+| Trivy scan (this repo) | — (no URL; launchd job) | Mac (weekly vulnerability scan of every pinned image in the repo, notifies on new CVEs) |
 
 ## Architecture, in short
 
