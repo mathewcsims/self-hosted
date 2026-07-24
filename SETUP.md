@@ -2380,6 +2380,52 @@ the original Pi or Mac to still exist, and it only relies on Kopia's
 actively-maintained, everyday `b2` backend rather than an edge case nobody
 else is really using.
 
+**Verifying restores (periodic testing):** it is NOT enough to confirm that
+backups are running and data is being uploaded — the only way to know a backup
+is actually usable is to test restoring from it. A bug in the backup process,
+a corruption in the repository, or a lost encryption key would only be discovered
+when you actually need the backup, which is the worst possible time. Schedule
+a restore test **at least quarterly** (monthly is better for critical data),
+and always after any major infrastructure change (Kopia upgrade, B2 configuration
+change, etc.).
+
+Run a **test restore** like this (example for the Mac's `karakeep/data`):
+```sh
+# 1. List available snapshots for the source you want to test
+KOPIA_PASSWORD="$(pass-cli item view --vault-name "Self-Hosted Secrets" --item-title Kopia --output json | python3 -c 'import json,sys;d=json.load(sys.stdin);print([f["value"] for s in d["item"]["content"]["content"]["Custom"]["sections"] for f in s["section_fields"] if f["name"]=="REPOSITORY_PASSWORD"][0])')" \
+  kopia snapshot list --all | grep karakeep/data
+
+# 2. Pick a recent snapshot ID and restore it to a temporary location
+#    (replace <snapshot-id> with an actual ID from the list above)
+TEST_RESTORE_DIR="/tmp/kopia-test-restore-$(date +%Y%m%d)"
+KOPIA_PASSWORD="..." kopia restore <snapshot-id> "$TEST_RESTORE_DIR"
+
+# 3. Verify the restore succeeded and the data is intact
+ls -la "$TEST_RESTORE_DIR/karakeep/data"
+# Check a few sample files match expectations (size, type, content)
+file "$TEST_RESTORE_DIR/karakeep/data/..."  # verify file types
+sha256sum "$TEST_RESTORE_DIR/karakeep/data/..."  # compare with known good
+
+# 4. Clean up the test restore
+rm -rf "$TEST_RESTORE_DIR"
+```
+
+**What to test:**
+- Every backed-up application directory, at least once per year
+- Critical data (Vikunja, Forgejo repos, Ghost content) every quarter
+- NAS share (if mounted) every quarter
+- Pi-resident app data at least annually
+
+**Automating the check:** add a `test-restore` target to `kopia-mac/backup.sh`
+that performs a lightweight restore of one or two non-critical paths (e.g.
+`speedtest-tracker/config`) after each successful backup, and alerts if it
+fails. A full restore of every path is too heavy for daily automation, but a
+spot-check of a few paths catches most failures.
+
+**Documenting results:** keep a simple log of restore tests (date, what was
+tested, success/failure) — e.g. append to `kopia-mac/restore-test.log`. This
+provides audit evidence and helps track test frequency.
+
 ---
 
 ## TimeTagger (https://time.mathewcsims.uk)
