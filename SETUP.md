@@ -3389,6 +3389,40 @@ separately:**
    access for your own devices) was untouched — this only closed the
    accidental over-grant to everything else.
 
+**`tag:friend` — permanent, deliberately narrow access for a trusted
+person who isn't you (added 2026-07-25):** owned only by
+`autogroup:owner`, so only you can assign it. Two grants:
+`tag:resource-friend` on port 443 only — gets them through Caddy's
+LAN-gate to BookStack/Forgejo/Apprise/Kopia, plus golink, same as
+everything already public; and `autogroup:internet` for exit-node
+routing (a separate authorization from the exit node existing — see
+below). Not in any SSH stanza, not in
+`tag:personal`/`tag:family`/`tag:work`'s grants.
+
+**`tag:resource-friend` is a second, deliberately separate tag** applied
+directly to Babel and golink (alongside their existing
+`tag:personal`/`tag:resource-global` tags — device tagging is a full
+replace via the API, not additive, so re-fetch a device's current tags
+before setting new ones or you'll silently drop the others) — a device
+tag update, not an ACL edit, is now this repo's actual mechanism for
+"grant a new resource to friends." Started as raw IPs in the grant
+(`100.107.231.17`/`100.71.193.118`), moved to a `"hosts"` alias block for
+readability, then to this tag-based design as the properly idiomatic
+Tailscale pattern — each intermediate step validated via `/acl/validate`
+and independently re-fetched to confirm it actually persisted, not
+trusted from the POST response echo alone.
+
+Babel was already a fully-approved exit node (`0.0.0.0/0`/`::/0` in both
+`advertisedRoutes` and `enabledRoutes`, confirmed via the per-device
+`/device/{id}/routes` API endpoint — the device-list endpoint's own
+`advertisedRoutes` field returns `null` regardless, a real gotcha hit
+live).
+
+Joining is via a real tailnet member invite (admin console → Users →
+Invite — no API for this part), not a pre-tagged auth key: this is a
+permanent relationship, not a scoped one-off, so a real accountable
+identity was the right call over a device-only key.
+
 ### Hardening pass 3 (CAA)
 
 One cheap, low-effort addition on top of the existing per-site HSTS header
