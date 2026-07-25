@@ -2888,6 +2888,7 @@ syncs against it independently:
 | MS personal | Graph API, device-code public client | Graph rotates refresh tokens — every run stores the new one back to Pass ("Contact Sync Microsoft") |
 | MS work | Thunderbird MCP extension's local HTTP API (work Exchange account, migrated from macOS Contacts.app/JXA 2026-07-25 when Mathew moved his work mail to Thunderbird) | **asymmetric**: its ~21 contacts sync outward + receive updates to those same contacts, but personal contacts are NEVER pushed into the employer's mailbox. Matching is name-based, not email-based — Thunderbird's local cache doesn't populate primary emails for these Exchange-directory contacts. Two identically-named duplicate "stfc.ac.uk Contacts" address books exist locally with no technical way to distinguish them; `thunderbird_client.WORK_ADDRESS_BOOK_ID` picks the more-recently-modified one as a documented, single-line-to-change assumption |
 | Proton | unofficial [proton-cli](https://github.com/roman-16/proton-cli), audited + built from source | see audit notes below |
+| iCloud | macOS Contacts.app via JXA (added 2026-07-25) | full symmetric spoke (create/update/delete), same as Google/Proton — unlike the asymmetric ms_work spoke |
 
 The engine lives at `contact-sync/` in this repo (stdlib-only Python,
 same discipline as `vikunja-webhook-relay/`); the *data* lives at
@@ -2948,6 +2949,48 @@ cache is missing (e.g. a fresh checkout). Pass's own copy is now just
 the bootstrap value and goes stale over time; that's expected, not a
 problem — update it manually only if ever needed to reseed the cache
 (e.g. on a new machine).
+
+**iCloud spoke, added 2026-07-25.** Mathew's iCloud Contacts was empty
+when this was added (Contacts.app showed only his own "Me" card) — the
+first apply was a genuine bulk-populate of all ~620 canonical contacts
+into iCloud (`contact-sync/spoke_icloud.py`), not a merge of pre-existing
+data. Full symmetric spoke via JXA (`osascript -l JavaScript`), same
+create/update/delete contract as `spoke_google.py`; the safety caps in
+`sync.py`'s daily run would have skipped a change this large as "outbound
+plan too large", so the initial populate was run directly, once, outside
+the normal daily path (same pattern as `initial_merge.py`'s original
+2026-07-18 convergence).
+
+Two things learned the hard way, both now handled:
+- **JXA performance**: a per-contact loop of separate `osascript`
+  processes measured ~270ms/contact for reads — reading each property as
+  one array across the whole `people` collection instead
+  (`app.people.firstName()` etc., zipped in Python/JS) dropped that to
+  ~3ms/contact. Reads, creates, updates, and deletes are each one batched
+  Apple Event, not one per contact.
+- **The "Me" card isn't excludable via any documented API** — no
+  `myCard`/"my card" exists in JXA, classic AppleScript, or the app's own
+  `sdef` dictionary. On the very first sync.py run after wiring this
+  spoke in, the Me card (unmapped to any canonical contact) was pulled
+  like a normal contact and treated as brand-new, propagating an empty
+  duplicate "Mathew Sims" to Google/MS-personal/Proton before being
+  caught and cleaned up. Fixed by hardcoding its ID as `ME_CARD_ID` in
+  `spoke_icloud.py` (identified empirically — the sole pre-existing
+  person before the populate) and filtering it out at the JXA read
+  itself. If this Mac's Me card is ever recreated (e.g. iCloud account
+  reset), the symptom — a stray near-empty self-contact appearing across
+  every provider again — is the signal to update that constant.
+- Canonical has no middle-name field (only given/family) — a name like
+  "Arts Award College" (given="Arts", family="College") silently drops
+  "Award" if written as firstName+lastName alone. `spoke_icloud._expected_name()`
+  recovers it into Contacts.app's `middleName`, but only when
+  given+middle+family round-trips back to the original name exactly;
+  hyphenated names, honorifics ("Dr Firstname Lastname"), and org names
+  correctly fall back to given+family-only rather than risk a corrupted
+  reconstruction. `differs()` compares against this expected/writable
+  name, not the raw canonical name, so that permanent, known-imperfect
+  gap (same category as Proton's un-clearable notes field) doesn't show
+  as an eternal daily "update".
 
 **MS work migration to Thunderbird (2026-07-25):** when Mathew moved his
 work account's mail/contacts management to Thunderbird, the 21 canonical

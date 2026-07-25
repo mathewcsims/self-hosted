@@ -243,3 +243,34 @@ def from_thunderbird(raw_contacts):
         n["phones"] = _dedupe(norm_phone(p["number"]) for p in (c.get("phones") or []) if p.get("number"))
         out.append(n)
     return out
+
+
+# ── macOS Contacts.app (iCloud account) — full symmetric spoke, added
+# 2026-07-25. Unlike the retired ms_work JXA spoke, this one reads/writes
+# the whole iCloud address book (create/update/delete), same contract as
+# spoke_google.py / spoke_proton.py.
+
+def from_icloud(path):
+    out = []
+    for c in json.load(open(path)):
+        n = _blank("icloud", c["id"])
+        given = c.get("firstName") or ""
+        family = c.get("lastName") or ""
+        n["given"], n["family"] = given, family
+        # Contacts.app's own computed full name (includes middleName,
+        # which canonical has no dedicated field for — see spoke_icloud's
+        # _fields() for how a middle word gets recovered on write).
+        n["name"] = c.get("fullName") or (given + " " + family).strip()
+        n["org"] = c.get("organization") or ""
+        n["title"] = c.get("jobTitle") or ""
+        n["notes"] = c.get("note") or ""
+        n["emails"] = _dedupe(norm_email(e) for e in (c.get("emails") or []))
+        n["phones"] = _dedupe(norm_phone(p) for p in (c.get("phones") or []))
+        n["urls"] = _dedupe(c.get("urls") or [])
+        # birthDate comes pre-formatted by the JXA read script as
+        # "YYYY-MM-DD" (year-known) or "--MM-DD" (Contacts' own no-year
+        # sentinel, year 1604) — no further parsing needed here.
+        n["birthday"] = c.get("birthday") or ""
+        n["modified"] = c.get("modificationDate") or ""
+        out.append(n)
+    return out

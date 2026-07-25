@@ -39,6 +39,7 @@ sys.path.insert(0, HERE)
 import initial_merge  # noqa: E402  (reused: merge_cluster, to_vcard, norm_name)
 import normalize  # noqa: E402
 import spoke_google  # noqa: E402
+import spoke_icloud  # noqa: E402
 import spoke_thunderbird  # noqa: E402
 import spoke_ms  # noqa: E402
 import spoke_proton  # noqa: E402
@@ -82,6 +83,8 @@ def pull_provider(name):
         return spoke_thunderbird.pull(tmp)
     if name == "proton":
         return spoke_proton.pull_all(tmp)
+    if name == "icloud":
+        return spoke_icloud.pull_all(tmp)
     raise ValueError(name)
 
 
@@ -121,6 +124,8 @@ def provider_differs(prov, canon, pc):
         return spoke_ms.differs(canon, pc)
     if prov == "ms_work":
         return spoke_thunderbird.differs(canon, pc)
+    if prov == "icloud":
+        return spoke_icloud.differs(canon, pc)
     return spoke_proton.differs(canon, pc)
 
 
@@ -132,7 +137,7 @@ def main():
     by_provider = index_canonical(canonical)
 
     summary = []
-    providers = ["google", "ms_personal", "proton", "ms_work"]
+    providers = ["google", "ms_personal", "proton", "icloud", "ms_work"]
     pulls = {}
     for prov in providers:
         try:
@@ -178,6 +183,7 @@ def main():
         "google": (spoke_google.make_plan, spoke_google.apply_plan),
         "ms_personal": (spoke_ms.make_plan, spoke_ms.apply_plan),
         "proton": (spoke_proton.make_plan, spoke_proton.apply_plan),
+        "icloud": (spoke_icloud.make_plan, spoke_icloud.apply_plan),
     }
     for prov, (mk, ap) in plans.items():
         if pulls[prov] is None:
