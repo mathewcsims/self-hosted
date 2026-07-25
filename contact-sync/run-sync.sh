@@ -52,22 +52,34 @@ GOOGLE_CLIENT_ID=$(pass_field "Contact Sync Google" GOOGLE_CLIENT_ID)
 GOOGLE_CLIENT_SECRET=$(pass_field "Contact Sync Google" GOOGLE_CLIENT_SECRET)
 GOOGLE_REFRESH_TOKEN=$(pass_field "Contact Sync Google" GOOGLE_REFRESH_TOKEN)
 MS_CLIENT_ID=$(pass_field "Contact Sync Microsoft" MS_CLIENT_ID)
-MS_REFRESH_TOKEN=$(pass_field "Contact Sync Microsoft" MS_REFRESH_TOKEN)
+# Pass's own copy is only the bootstrap value. The agent PAT used for
+# unattended runs is read-only by design (see SETUP.md's "agent access
+# model") — it can never write the rotated token back to Pass, so that's
+# not attempted here. Instead the rotated token is cached locally
+# (outside the repo, 0600, same as every other on-disk secret in this
+# stack) and preferred over Pass's copy on every subsequent run, keeping
+# the chain of rotations self-sufficient without needing write access.
+MS_TOKEN_CACHE="$HOME/contact-sync/.ms-refresh-token"
+if [ -s "$MS_TOKEN_CACHE" ]; then
+    MS_REFRESH_TOKEN=$(cat "$MS_TOKEN_CACHE")
+else
+    MS_REFRESH_TOKEN=$(pass_field "Contact Sync Microsoft" MS_REFRESH_TOKEN)
+fi
 FORGEJO_BOT_TOKEN=$(pass_field "Forgejo Claude Agent" BOT_TOKEN)
 export GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN
 export MS_CLIENT_ID MS_REFRESH_TOKEN FORGEJO_BOT_TOKEN
 # Proton needs no env: proton-cli reuses its own session file (encrypted
 # key blob; see SETUP.md's Phase 0 audit notes).
 
-# Graph rotates refresh tokens: capture fd 3 and store the new one.
+# Graph rotates refresh tokens: capture fd 3 and cache the new one locally
+# (see MS_TOKEN_CACHE note above — Pass itself is never written here).
 ROTATED=$(mktemp)
 python3 "$REPO_ROOT/contact-sync/sync.py" >> "$LOG" 2>&1 3> "$ROTATED" || log "SYNC FAILED (see above)"
 if [ -s "$ROTATED" ]; then
-    PROTON_PASS_AGENT_REASON="Storing rotated MS refresh token from scheduled sync" \
-        pass-cli item update --vault-name "Self-Hosted Secrets" \
-        --item-title "Contact Sync Microsoft" \
-        --field MS_REFRESH_TOKEN="$(cat "$ROTATED")" >/dev/null 2>>"$LOG" \
-        && log "rotated MS refresh token stored"
+    install -m 600 /dev/null "$MS_TOKEN_CACHE" 2>/dev/null || true
+    cat "$ROTATED" > "$MS_TOKEN_CACHE"
+    chmod 600 "$MS_TOKEN_CACHE"
+    log "rotated MS refresh token cached locally"
 fi
 rm -f "$ROTATED"
 

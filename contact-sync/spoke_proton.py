@@ -34,7 +34,11 @@ def run_cli(args):
         full = args[:i] + ["--output", "json"] + args[i:]
     else:
         full = args + ["--output", "json"]
-    return subprocess.run([CLI] + full, capture_output=True, text=True, timeout=120)
+    # `contacts list` paginates the full export server-side; observed live
+    # at ~145s end-to-end across 13 pages (individual page latency varies
+    # a lot, some 13s+) — 120s was cutting it close and started failing
+    # daily. 300s gives real headroom without masking a genuine hang.
+    return subprocess.run([CLI] + full, capture_output=True, text=True, timeout=300)
 
 
 def pull_all(tmp_path):

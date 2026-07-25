@@ -2911,6 +2911,11 @@ exactly one destination: `mail.proton.me:443`. One local patch
 makes the bulk list endpoint include full decrypted vCards — 15s for
 all 809 contacts instead of ~45min of per-contact gets. 2FA was needed
 once, interactively, at first login; routine runs reuse the session.
+As the contact count grew past ~1,025, the export's server-side
+pagination pushed total `contacts list` time past the CLI wrapper's
+120s subprocess timeout (confirmed live: ~145s across 13 pages, real
+API latency, not a hang) — `spoke_proton.py`'s `run_cli()` timeout was
+raised to 300s (2026-07-25) to give real headroom.
 
 **Initial convergence (2026-07-18):** 1,426 records in → 1,025 canonical
 contacts (merge report kept at `~/contact-sync/initial-merge-report.md`;
@@ -2925,10 +2930,24 @@ Pre-first-write snapshots of every provider are at
 **Graph quirks found live:** max 3 emailAddresses / 2 businessPhones /
 2 homePhones per contact (the spoke caps and compares cap-aware, so
 over-cap contacts don't look perpetually out-of-sync); refresh tokens
-rotate on every use (captured via fd 3 → stored back to Pass); one
-create was silently dropped server-side (accepted-then-vanished) and
-re-created on verification — counts are always re-verified against the
-provider after an apply, not trusted from API success responses.
+rotate on every use (captured via fd 3); one create was silently dropped
+server-side (accepted-then-vanished) and re-created on verification —
+counts are always re-verified against the provider after an apply, not
+trusted from API success responses.
+
+**MS refresh-token rotation storage (fixed 2026-07-25):** `run-sync.sh`
+originally tried writing each rotated token straight back to the
+"Contact Sync Microsoft" Pass item, which failed every run with
+`NotAllowed` — the unattended run's agent PAT is read-only by design
+(see the agent access model above), it can never write to Pass, no
+matter the vault or item. Fixed by caching the rotated token locally
+instead, at `~/contact-sync/.ms-refresh-token` (0600, outside the repo,
+covered by the existing `~/contact-sync` Kopia backup source) — each run
+prefers this cache over Pass's copy, falling back to Pass only if the
+cache is missing (e.g. a fresh checkout). Pass's own copy is now just
+the bootstrap value and goes stale over time; that's expected, not a
+problem — update it manually only if ever needed to reseed the cache
+(e.g. on a new machine).
 
 **MS work migration to Thunderbird (2026-07-25):** when Mathew moved his
 work account's mail/contacts management to Thunderbird, the 21 canonical
