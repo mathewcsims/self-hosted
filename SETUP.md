@@ -3389,28 +3389,54 @@ separately:**
    access for your own devices) was untouched — this only closed the
    accidental over-grant to everything else.
 
-**`tag:friend` — permanent, deliberately narrow access for a trusted
-person who isn't you (added 2026-07-25):** owned only by
-`autogroup:owner`, so only you can assign it. Two grants:
-`tag:resource-friend` on port 443 only — gets them through Caddy's
-LAN-gate to BookStack/Forgejo/Apprise/Kopia, plus golink, same as
-everything already public; and `autogroup:internet` for exit-node
-routing (a separate authorization from the exit node existing — see
-below). Not in any SSH stanza, not in
-`tag:personal`/`tag:family`/`tag:work`'s grants.
+**Tag structure simplified to exactly four tags (2026-07-25), down from
+seven — `tag:work` and `tag:family` deleted (confirmed via the API: zero
+devices carried either, ever), `tag:resource-friend` retired in favor of
+a cleaner design, `tag:funnel` kept (the `memos` tailnet device actively
+uses it):**
 
-**`tag:resource-friend` is a second, deliberately separate tag** applied
-directly to Babel and golink (alongside their existing
-`tag:personal`/`tag:resource-global` tags — device tagging is a full
-replace via the API, not additive, so re-fetch a device's current tags
-before setting new ones or you'll silently drop the others) — a device
-tag update, not an ACL edit, is now this repo's actual mechanism for
-"grant a new resource to friends." Started as raw IPs in the grant
-(`100.107.231.17`/`100.71.193.118`), moved to a `"hosts"` alias block for
-readability, then to this tag-based design as the properly idiomatic
-Tailscale pattern — each intermediate step validated via `/acl/validate`
-and independently re-fetched to confirm it actually persisted, not
-trusted from the POST response echo alone.
+- **`tag:personal`** — the owner's own devices. Full access (unchanged).
+  Nothing grants access *into* tag:personal from anywhere else — the only
+  grant naming it is as a *source*, so it's implicitly owner-only by
+  Tailscale's default-deny, not by an explicit block rule.
+- **`tag:resource-global`** — accessible by any tailnet member, any port
+  (unchanged). Currently: golink, and the four tailnet-only ScaleTail
+  apps (cyberchef/memos/stirlingpdf/transmute).
+- **`tag:friend`** — a single tag used as *both* source and destination:
+  applied to a trusted person's own device (once invited) AND to any
+  resource meant to be shared with them specifically, port 443 only, plus
+  `autogroup:internet` for exit-node routing. Not in any SSH stanza.
+  Currently: Babel (the LAN-gated web services — BookStack, Forgejo,
+  Apprise, Kopia).
+- **`tag:funnel`** — unchanged, controls who can enable Tailscale Funnel.
+
+**A real mistake was made building this and caught on review, worth
+recording exactly**: the first version added `tag:resource-friend` to
+Babel and golink *alongside* their existing `tag:resource-global` tag,
+without removing it. Since `tag:resource-global`'s grant is
+`{"src": ["*"], ...}` — *anyone* on the tailnet, all ports — the careful
+new narrow grant was completely superseded by the old broad one for both
+devices. It wasn't a broken/invalid config, just one that silently didn't
+restrict anything: any tailnet member already had full access to Babel
+and golink regardless of the new tag, making the "deliberately narrow"
+language describing it simply wrong. Mathew caught this by asking "why
+does a friend need a specific grant to access things already tagged
+resource-global" — the fix was removing `tag:resource-global` from Babel
+entirely (it now carries only `tag:personal`/`tag:friend`), which is what
+actually makes `tag:friend`'s narrower grant the operative rule for it.
+golink correctly stays on `tag:resource-global` only — it's meant to be
+open to everyone, which already includes any friend, so it doesn't need
+`tag:friend` too. **Lesson for next time a tag/grant is added to an
+already-tagged device: check what its *other* tags already grant before
+assuming the new one is what's controlling access.**
+
+The whole thing went through three real design iterations before this —
+raw IPs in the grant, then a `"hosts"` alias block for readability, then
+the single-shared-tag design above — each validated via `/acl/validate`
+and independently re-fetched afterward to confirm it actually persisted,
+not trusted from the POST response echo alone. Final state was also
+independently re-audited end to end (full `tagOwners`, full `grants`,
+every device's tags) rather than assumed correct from the apply step.
 
 Babel was already a fully-approved exit node (`0.0.0.0/0`/`::/0` in both
 `advertisedRoutes` and `enabledRoutes`, confirmed via the per-device
@@ -3421,7 +3447,9 @@ live).
 Joining is via a real tailnet member invite (admin console → Users →
 Invite — no API for this part), not a pre-tagged auth key: this is a
 permanent relationship, not a scoped one-off, so a real accountable
-identity was the right call over a device-only key.
+identity was the right call over a device-only key. Once their device
+joins, applying `tag:friend` to it is the one remaining step (an API
+call, not an ACL edit).
 
 ### Hardening pass 3 (CAA)
 
