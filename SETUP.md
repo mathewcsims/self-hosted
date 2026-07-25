@@ -2886,7 +2886,7 @@ syncs against it independently:
 |-------|-----------|-------|
 | Google | People API, OAuth desktop-app client | refresh token in Pass ("Contact Sync Google") |
 | MS personal | Graph API, device-code public client | Graph rotates refresh tokens — every run stores the new one back to Pass ("Contact Sync Microsoft") |
-| MS work | macOS Contacts.app via JXA (work Exchange account in Internet Accounts) | **asymmetric**: its 21 contacts sync outward + receive updates to those same contacts, but personal contacts are NEVER pushed into the employer's mailbox |
+| MS work | Thunderbird MCP extension's local HTTP API (work Exchange account, migrated from macOS Contacts.app/JXA 2026-07-25 when Mathew moved his work mail to Thunderbird) | **asymmetric**: its ~21 contacts sync outward + receive updates to those same contacts, but personal contacts are NEVER pushed into the employer's mailbox. Matching is name-based, not email-based — Thunderbird's local cache doesn't populate primary emails for these Exchange-directory contacts. Two identically-named duplicate "stfc.ac.uk Contacts" address books exist locally with no technical way to distinguish them; `thunderbird_client.WORK_ADDRESS_BOOK_ID` picks the more-recently-modified one as a documented, single-line-to-change assumption |
 | Proton | unofficial [proton-cli](https://github.com/roman-16/proton-cli), audited + built from source | see audit notes below |
 
 The engine lives at `contact-sync/` in this repo (stdlib-only Python,
@@ -2929,6 +2929,21 @@ rotate on every use (captured via fd 3 → stored back to Pass); one
 create was silently dropped server-side (accepted-then-vanished) and
 re-created on verification — counts are always re-verified against the
 provider after an apply, not trusted from API success responses.
+
+**MS work migration to Thunderbird (2026-07-25):** when Mathew moved his
+work account's mail/contacts management to Thunderbird, the 21 canonical
+contacts linked under `sources.ms_work` still held stale macOS
+Contacts.app IDs. `contact-sync/migrate_ms_work_to_thunderbird.py` (a
+one-time script, `--apply` to write, dry-run by default) re-pointed them
+at their new Thunderbird card UUIDs: 17 by exact normalized-name match,
+4 by an explicit `MANUAL_OVERRIDES` dict confirmed with Mathew directly
+(reworded names between the two systems that the automatic matcher
+correctly declined to guess) — 0 left ambiguous or unresolved. Report at
+`~/contact-sync/migration-report.md`; pre-migration backup at
+`~/contact-sync/canonical.json.pre-thunderbird-migration.bak`. Requires
+Thunderbird running with the MCP extension loaded for the launchd job to
+reach it — if unavailable, `ms_work` is skipped for that run same as any
+other offline spoke, everything else proceeds.
 
 **Ongoing sync:** `contact-sync/run-sync.sh` via launchd
 (`uk.mathewcsims.contact-sync`, daily 07:30 — deliberately clear of the

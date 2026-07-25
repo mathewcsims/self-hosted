@@ -39,7 +39,7 @@ sys.path.insert(0, HERE)
 import initial_merge  # noqa: E402  (reused: merge_cluster, to_vcard, norm_name)
 import normalize  # noqa: E402
 import spoke_google  # noqa: E402
-import spoke_macos  # noqa: E402
+import spoke_thunderbird  # noqa: E402
 import spoke_ms  # noqa: E402
 import spoke_proton  # noqa: E402
 
@@ -79,7 +79,7 @@ def pull_provider(name):
             json.dump(raw, f)
         return normalize.from_ms_graph(tmp)
     if name == "ms_work":
-        return spoke_macos.pull(tmp)
+        return spoke_thunderbird.pull(tmp)
     if name == "proton":
         return spoke_proton.pull_all(tmp)
     raise ValueError(name)
@@ -120,7 +120,7 @@ def provider_differs(prov, canon, pc):
     if prov == "ms_personal":
         return spoke_ms.differs(canon, pc)
     if prov == "ms_work":
-        return spoke_macos.differs(canon, pc)
+        return spoke_thunderbird.differs(canon, pc)
     return spoke_proton.differs(canon, pc)
 
 
@@ -202,10 +202,10 @@ def main():
     if pulls["ms_work"] is not None:
         plan_path = os.path.join(DATA, ".plan-ms-work.json")
         try:
-            spoke_macos.make_plan(canonical_path, plan_path)
+            spoke_thunderbird.make_plan(canonical_path, plan_path)
             plan = json.load(open(plan_path))
             if plan["update"]:
-                spoke_macos.apply_plan(plan_path, canonical_path)
+                spoke_thunderbird.apply_plan(plan_path, canonical_path)
             outbound["ms_work"] = len(plan["update"])
         except Exception as e:
             summary.append(f"⚠️ ms_work: outbound failed ({e})")

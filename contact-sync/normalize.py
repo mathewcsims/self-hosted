@@ -205,7 +205,9 @@ def from_ms_graph(path):
     return out
 
 
-# ── macOS Contacts.app JXA pull (work Exchange account) ─────────────────
+# ── macOS Contacts.app JXA pull (work Exchange account) — RETIRED
+# 2026-07-25, kept only for historical reference / re-migration if ever
+# needed again. See from_thunderbird below, its replacement.
 
 def from_macos_jxa(path):
     out = []
@@ -221,5 +223,45 @@ def from_macos_jxa(path):
         n["emails"] = _dedupe(norm_email(e["value"]) for e in c.get("emails", []))
         n["phones"] = _dedupe(norm_phone(p["value"]) for p in c.get("phones", []))
         n["modified"] = c.get("modificationDate") or ""
+        out.append(n)
+    return out
+
+
+# ── Thunderbird MCP extension's local HTTP API (work account, replacing
+# the macOS Contacts.app spoke 2026-07-25 — Mathew switched his work
+# account to Thunderbird) ────────────────────────────────────────────────
+#
+# No `modified` timestamp is exposed by the extension's contact API at
+# all — every contact normalizes to "" for that field, meaning the
+# generic newest-wins fold_in() logic in sync.py can never treat a
+# Thunderbird-side edit as authoritative over canonical on a genuine
+# conflict (canonical's own modified timestamp, whatever it is, always
+# wins ties). Acceptable given this spoke is asymmetric/updates-only
+# anyway — canonical has always been the source of truth pushed outward
+# to work, never the reverse.
+
+def from_thunderbird(raw_contacts):
+    """raw_contacts: list of the extension's own contact dicts (id,
+    displayName, firstName, lastName, email, phones, organization,
+    title, note, birthday, addressBook, addressBookId) — already
+    fetched and address-book-filtered by the caller, not a file path
+    like the other from_* functions (no bulk-enumerate endpoint exists,
+    so spoke_thunderbird.py does its own HTTP calls upstream of this)."""
+    out = []
+    for c in raw_contacts:
+        n = _blank("ms_work", c["id"])
+        given = c.get("firstName") or ""
+        family = c.get("lastName") or ""
+        n["given"], n["family"] = given, family
+        n["name"] = (c.get("displayName") or (given + " " + family).strip())
+        n["org"] = c.get("organization") or ""
+        n["title"] = c.get("title") or ""
+        n["notes"] = c.get("note") or ""
+        email = c.get("email") or ""
+        n["emails"] = _dedupe([norm_email(email)]) if email else []
+        # Each phone is {type, number} (confirmed against the extension's
+        # own readFlatContactFields/readVCardContactFields), not a bare
+        # string like the other spokes' raw shapes.
+        n["phones"] = _dedupe(norm_phone(p["number"]) for p in (c.get("phones") or []) if p.get("number"))
         out.append(n)
     return out
