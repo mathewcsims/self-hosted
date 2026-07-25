@@ -1,0 +1,39 @@
+# Tailscale webhook -> Apprise relay. Bridges two schemas that don't line
+# up: Tailscale's webhook feature POSTs an array of {type, message, data}
+# events with an HMAC-SHA256 signature in a `Tailscale-Webhook-Signature:
+# t=<ts>,v1=<hex>` header (signing string is "<ts>.<raw body>"); Apprise's
+# /notify endpoint (see ../apprise/) wants a flat {title, body} shape.
+#
+# Runs HERE on the Pi, fronted by Caddy at
+# tailscale-relay.mathewcsims.uk. UNLIKE every other relay/admin surface in
+# this repo, this one is deliberately PUBLIC, not LAN-gated: Tailscale's
+# own cloud infrastructure sends these webhooks from outside the tailnet
+# entirely (it can't be LAN-gated any more than ntfy's push delivery can),
+# so HMAC signature verification is the real access control here — same
+# reasoning as ntfy's auth-default-deny being its real gate despite also
+# being public. WEBHOOK_SECRET must match exactly what Tailscale generated
+# when the webhook was registered (see scripts/pass-create-tailscale-
+# webhook-secret.sh) — it's shown once at creation time and can't be
+# retrieved again, only rotated.
+#
+# Joins `pi-shared` to be reached by Caddy AND to reach the `apprise`
+# container by name for the forward.
+services:
+  tailscale-webhook-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tailscale-webhook-relay
+    restart: unless-stopped
+    environment:
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+    # No `ports:` — reached only by Caddy (tailscale-relay.mathewcsims.uk),
+    # over `pi-shared`, by container name. Same no-published-port pattern
+    # as every other Pi-resident app in this repo.
+    networks:
+      - pi-shared
+
+networks:
+  pi-shared:
+    external: true
+    name: pi-shared

@@ -1987,6 +1987,52 @@ compare against which client/action most recently touched that task.
 
 ---
 
+## Tailscale webhook relay (https://tailscale-relay.mathewcsims.uk) — runs on the Pi
+
+Bridges the same kind of schema mismatch as the Vikunja webhook relay,
+this time for [Tailscale's webhook feature](https://tailscale.com/kb/1213/webhooks):
+Tailscale POSTs a JSON array of `{type, message, data}` events, signed via
+a `Tailscale-Webhook-Signature: t=<epoch>,v1=<hmac-sha256 hex>` header
+(signing string is `"<epoch>.<raw body>"`); Apprise's `/notify` endpoint
+wants a flat `{title, body}` shape.
+
+**Deliberately PUBLIC, not LAN-gated** — the one relay in this repo where
+that's correct rather than a gap: Tailscale's own cloud infrastructure
+sends these from outside the tailnet entirely, so a LAN/CGNAT gate would
+block the real sender. HMAC signature verification inside the relay is
+the actual access control (same reasoning as ntfy's auth-default-deny).
+Includes a 5-minute clock-skew replay check on the timestamp (Tailscale's
+docs don't specify a tolerance; matches the common Stripe-style
+convention this signing scheme otherwise mirrors).
+
+**Subscribed to 17 event types** — everything non-deprecated except the
+two `node*Authorized`/`node*NeedsAuthorization` aliases: node/user
+lifecycle (created/approved/deleted/needs-approval), key expiry
+(`nodeKeyExpired`, `nodeKeyExpiringInOneDay`), `policyUpdate` (fires on
+every ACL change — a real security-relevant signal: if the ACL is ever
+modified by anything other than a deliberate action here, this is how
+you'd find out), exit-node/subnet-router misconfiguration warnings, and
+the webhook's own tamper-evidence events (`webhookUpdated`/
+`webhookDeleted` — notified before whatever changed them could also
+silence them, since the notify path doesn't depend on the webhook
+surviving).
+
+**Webhook created via the API, not the admin console** — `POST
+/tailnet/-/webhooks` returns the signing secret exactly once in the
+response; it can't be retrieved again afterward, only rotated (delete +
+recreate the webhook, which mints a new secret). Stored in the
+"Tailscale Webhook Relay" Pass item — a separate item from the main
+"Tailscale" one (which holds the API key itself), same one-secret-per-
+concern pattern as everywhere else in this repo.
+
+**Verified live end-to-end**: sent Tailscale's own test-delivery
+(`POST /webhooks/{id}/test`) — confirmed the relay received it, validated
+the real signature, and forwarded successfully to both Discord and ntfy.
+An unsigned request to the same endpoint was independently confirmed
+rejected with 401.
+
+---
+
 ## Trivy vulnerability scanning (Mac, launchd, weekly)
 
 Closes a real gap: every CVE/version check in this repo up to 2026-07-23

@@ -22,6 +22,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | [Apprise API](https://github.com/caronc/apprise-api) | `apprise.mathewcsims.uk` | Pi (LAN-only — generic notification relay to Discord) |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 | Vikunja webhook relay (this repo) | `vikunja-relay.mathewcsims.uk` | Pi (LAN-only — bridges Vikunja's webhook events to Apprise) |
+| Tailscale webhook relay (this repo) | `tailscale-relay.mathewcsims.uk` | Pi (public — bridges Tailscale's webhook events to Apprise; HMAC-verified) |
 | [Kopia](https://kopia.io) | `backup.mathewcsims.uk` | Pi (LAN-only — encrypted, deduplicated backups to Backblaze B2) |
 | [TimeTagger](https://github.com/almarklein/timetagger) | `time.mathewcsims.uk` | Mac (fronted by oauth2-proxy for Infomaniak SSO — TimeTagger itself has no OAuth) |
 | Owl ([Memos](https://github.com/usememos/memos)) | `owl.mathewcsims.uk` | Mac (personal notes instance, migrated from a Tailscale-only ScaleTail deployment — closed registration, unrelated to the Prospect Memos instance above) |
