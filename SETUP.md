@@ -1774,10 +1774,12 @@ admin username and password there directly, nothing to configure in
 
 ### Monitoring layout (full audit, 2026-07-23)
 
-22 monitors, all wired to the Discord notification, all tagged (Homelab +
-host tag), all with TLS cert-expiry alerts on, retries=3, 60s retry
-cadence while failing, and re-notification every 10 consecutive failed
-checks (so a long outage keeps pinging rather than alerting once).
+24 monitors (as of 2026-07-25 — started at 22, ntfy and the Tailscale
+webhook relay added since), all wired to the Discord notification, all
+tagged (Homelab + host tag), all with TLS cert-expiry alerts on,
+retries=3, 60s retry cadence while failing, and re-notification every 10
+consecutive failed checks (so a long outage keeps pinging rather than
+alerting once).
 
 - **App-truth checks, not just "HTTP 200"** wherever the app exposes a
   real health endpoint: Karakeep `/api/health` (keyword `"status":"ok"`),
@@ -1785,9 +1787,11 @@ checks (so a long outage keeps pinging rather than alerting once).
   `/healthz` (keyword `Service ready`), Apprise `/status` (keyword `OK`),
   Ghost `/ghost/api/admin/site/`, Speedtest Tracker `/api/healthcheck`,
   Forgejo `/api/healthz`, TimeTagger via oauth2-proxy's own `/ping`.
-- **Expected-status monitors** for auth-gated surfaces: Kopia accepts
-  `401` (its normal unauthenticated answer), the Vikunja relay accepts
-  `501` (it's POST-only; 501 on GET proves the Caddy→relay chain).
+- **Expected-status monitors** for auth-gated/POST-only surfaces: Kopia
+  accepts `401` (its normal unauthenticated answer); the Vikunja relay and
+  the Tailscale webhook relay (added 2026-07-25) both accept `501` — both
+  only implement `do_POST`, so a GET proves the Caddy→relay chain without
+  needing a real signed payload.
 - **Non-HTTP**: TCP check on Forgejo's git-over-SSH port (10.0.1.14:2222),
   ICMP ping for the Mac itself (catches host-down vs app-down), and ICMP
   pings for the four tailnet-only ScaleTail apps (CyberChef, Memos,
@@ -1796,7 +1800,7 @@ checks (so a long outage keeps pinging rather than alerting once).
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 22 monitors in three groups
+- **Status page** (`/status/all`): all 24 monitors in three groups
   (Services / Monitoring & infrastructure / Tailnet apps).
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
