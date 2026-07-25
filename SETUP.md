@@ -3404,10 +3404,22 @@ uses it):**
   apps (cyberchef/memos/stirlingpdf/transmute).
 - **`tag:friend`** — a single tag used as *both* source and destination:
   applied to a trusted person's own device (once invited) AND to any
-  resource meant to be shared with them specifically, port 443 only, plus
-  `autogroup:internet` for exit-node routing. Not in any SSH stanza.
-  Currently: Babel (the LAN-gated web services — BookStack, Forgejo,
-  Apprise, Kopia).
+  resource meant to be shared with them specifically, all ports
+  (`"ip": ["*"]`), plus `autogroup:internet` for exit-node routing. Not
+  port-restricted to 443, deliberately — verified live, not just
+  reasoned, that this is genuinely safe rather than sloppy: SSH access is
+  gated by the separate `ssh` section (`tag:friend` isn't in it) not by
+  network port reachability, Babel has `RunSSH: true` (Tailscale SSH,
+  confirmed via `tailscale status --self --json`) which intercepts
+  tailnet-sourced port-22 connections entirely, bypassing the real system
+  sshd — this repo's own earlier SSH-hardening work already established
+  that. And `ss -tlnp` on Babel confirmed nothing besides 22/80/443 is
+  even listening on a host port at all; everything else here follows the
+  never-publish-a-host-port pattern (Caddy-internal-network only). So a
+  port restriction here would have been redundant, not defense-in-depth
+  — removed after Mathew questioned why it was there given the `ssh`
+  section already does that job. Currently: Babel (the LAN-gated web
+  services — BookStack, Forgejo, Apprise, Kopia).
 - **`tag:funnel`** — unchanged, controls who can enable Tailscale Funnel.
 
 **A real mistake was made building this and caught on review, worth
