@@ -3389,19 +3389,36 @@ separately:**
    access for your own devices) was untouched — this only closed the
    accidental over-grant to everything else.
 
-**Tag structure simplified to exactly four tags (2026-07-25), down from
-seven — `tag:work` and `tag:family` deleted (confirmed via the API: zero
-devices carried either, ever), `tag:resource-friend` retired in favor of
-a cleaner design, `tag:funnel` kept (the `memos` tailnet device actively
-uses it):**
+**Tag structure simplified to exactly three tags, in two passes
+(2026-07-25), down from seven** — `tag:work` and `tag:family` deleted
+first (confirmed via the API: zero devices carried either, ever),
+`tag:resource-friend` retired in favor of a cleaner design, and then
+**`tag:resource-global` itself removed entirely**: with no non-owner,
+non-friend users existing or planned, "accessible by any tailnet member"
+had no one left to usefully apply to — everything either belongs to the
+owner (`tag:personal`) or is deliberately shared with a specific trusted
+person (`tag:friend`), no third category needed. `tag:funnel` kept — the
+`memos` tailnet device actively uses it.
+
+Removing `tag:resource-global` meant: deleting its grant
+(`{"src": ["*"], "dst": ["tag:resource-global"], ...}`) and its
+`tagOwners` entry, deleting the now-meaningless SSH "main user access to
+all" rule (its only `dst` was this tag), and stripping the tag itself
+from the 5 devices that carried it (golink, and the four tailnet-only
+ScaleTail apps — cyberchef/memos/stirlingpdf/transmute), leaving each
+with just `tag:personal` (owner-only by default, per the point below)
+plus whatever else they already had (`memos` keeps `tag:funnel`).
+Re-adding friend-level access to any of them going forward is a
+`tag:friend` device-tag change, made as needed, not an ACL edit.
+Independently re-verified afterward: zero functional references to the
+old tag remain in the live policy (only two explanatory comments noting
+its removal), and every affected device's tag list confirmed via a fresh
+API fetch, not assumed from the request that made the change.
 
 - **`tag:personal`** — the owner's own devices. Full access (unchanged).
   Nothing grants access *into* tag:personal from anywhere else — the only
   grant naming it is as a *source*, so it's implicitly owner-only by
   Tailscale's default-deny, not by an explicit block rule.
-- **`tag:resource-global`** — accessible by any tailnet member, any port
-  (unchanged). Currently: golink, and the four tailnet-only ScaleTail
-  apps (cyberchef/memos/stirlingpdf/transmute).
 - **`tag:friend`** — a single tag used as *both* source and destination:
   applied to a trusted person's own device (once invited) AND to any
   resource meant to be shared with them specifically, all ports
