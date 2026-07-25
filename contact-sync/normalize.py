@@ -205,28 +205,6 @@ def from_ms_graph(path):
     return out
 
 
-# ── macOS Contacts.app JXA pull (work Exchange account) — RETIRED
-# 2026-07-25, kept only for historical reference / re-migration if ever
-# needed again. See from_thunderbird below, its replacement.
-
-def from_macos_jxa(path):
-    out = []
-    for c in json.load(open(path)):
-        n = _blank("ms_work", c["id"])
-        given = c.get("firstName") or ""
-        family = c.get("lastName") or ""
-        n["given"], n["family"] = given, family
-        n["name"] = (given + " " + family).strip()
-        n["org"] = c.get("organization") or ""
-        n["title"] = c.get("jobTitle") or ""
-        n["notes"] = c.get("note") or ""
-        n["emails"] = _dedupe(norm_email(e["value"]) for e in c.get("emails", []))
-        n["phones"] = _dedupe(norm_phone(p["value"]) for p in c.get("phones", []))
-        n["modified"] = c.get("modificationDate") or ""
-        out.append(n)
-    return out
-
-
 # ── Thunderbird MCP extension's local HTTP API (work account, replacing
 # the macOS Contacts.app spoke 2026-07-25 — Mathew switched his work
 # account to Thunderbird) ────────────────────────────────────────────────
