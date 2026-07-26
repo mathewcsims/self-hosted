@@ -47,6 +47,24 @@ services:
     image: ghcr.io/karakeep-app/karakeep@sha256:8157c269bacf954c0c759f79bb52bb61cb877a44d5cc8d60f6763a87f678a9e0
     container_name: karakeep
     restart: unless-stopped
+    # Mitigations pending upstream fixes for the CRITICAL CVEs found in the
+    # 2026-07-26 Trivy scan that are genuinely reachable through this
+    # container's real workflow: libaom3/libxml2 (pulled in by ffmpeg/
+    # librsvg2, which decode attacker-supplied images/video from bookmarked
+    # pages) and node-tar's gzip-bomb DoS (CVE-2026-59873, tar@7.5.12 is a
+    # real dependency of the workers app). None of these have a published
+    # fix yet (see the image comment above) — this doesn't patch anything,
+    # it caps the blast radius of a crash/resource-exhaustion attempt so it
+    # stays a contained restart instead of taking down the host. Verified
+    # which CVEs are actually reachable by inspecting the running
+    # container directly (apt-cache rdepends, checked which binaries are
+    # Go/Rust, etc.) rather than trusting Trivy's package list alone — see
+    # the mbedtls/perl/glib findings from the same scan, which were ruled
+    # NOT reachable and got no mitigation here.
+    mem_limit: 2g
+    pids_limit: 512
+    cap_drop:
+      - ALL
     environment:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}

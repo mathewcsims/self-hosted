@@ -1557,6 +1557,36 @@ now instead of left floating.
 4. **NextDNS rewrite**: add `karakeep.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 
+**CRITICAL CVE triage + mitigations (2026-07-26).** Trivy's weekly scan
+flagged 14 CRITICAL findings after the postcss-fix digest bump above, all
+base-OS or transitive deps with no published fix yet. Rather than treat
+Trivy's package list at face value, checked reachability by inspecting
+the running container directly (`apt-cache rdepends`, checking which
+binaries actually run):
+
+- **Genuinely reachable, mitigated:** `libaom3`/`libxml2` (pulled in by
+  ffmpeg's `libavcodec`/`libavformat` and `librsvg2` — real decoders for
+  attacker-supplied images/video from bookmarked pages) and
+  `CVE-2026-59873` (node-tar gzip-bomb DoS — confirmed `tar@7.5.12` is a
+  real dependency of the workers app). No patch exists yet, so
+  `compose.yaml` now sets `mem_limit: 2g`, `pids_limit: 512`, and
+  `cap_drop: [ALL]` on the `web` service — doesn't fix the CVEs, caps the
+  blast radius of a crash/resource-exhaustion attempt to a contained
+  restart. Verified live post-deploy: all workers started clean, crawler
+  connected to the chrome sidecar, health checks passing, real bookmark
+  traffic flowing with no capability-related errors.
+- **Checked and ruled NOT reachable, no mitigation applied:**
+  `libmbedcrypto7` (CVE-2025-47917, CVE-2026-34873, CVE-2026-34875) only
+  reaches the image via `librist4`, ffmpeg's RIST broadcast-streaming
+  protocol — nothing in Karakeep's workflow ever invokes it; the 4
+  perl-base CVEs and the glib CVE — base-image cruft, no evidence the
+  app shells to perl or does GDBus introspection; `CVE-2023-45853`
+  (zlib) — the vulnerable function is minizip's zip-*writer*, contrib
+  code Debian's zlib1g package doesn't build in; the two Go stdlib CVEs
+  — no Go binary actually runs here (`monolith` is Rust, `yt-dlp` is
+  Python); `GHSA-7rqj-j65f-68wh` (@auth/core email-homoglyph bypass) —
+  signups are disabled, so that self-registration path doesn't exist.
+
 ---
 
 ## Apprise API (https://apprise.mathewcsims.uk) — LAN-only, runs on the Pi
