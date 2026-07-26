@@ -29,9 +29,22 @@ name: karakeep
 
 services:
   web:
-    # v0.32.0. Pinned by digest, not the tag alone — tags on this registry
-    # aren't immutable, so a bare version tag can still silently move.
-    image: ghcr.io/karakeep-app/karakeep@sha256:215d9c8ef733ec823368a95495ac434bd87fdfe4257f9fdb0309c8914ffeae51
+    # v0.32.0, rebuilt 2026-07 (bumped 2026-07-26 for the postcss CVE fixes
+    # below — same "latest" tag, image was rebuilt without a version bump).
+    # Pinned by digest, not the tag alone — tags on this registry aren't
+    # immutable, so a bare version tag can still silently move.
+    #
+    # Trivy weekly scan flagged 6 findings on 2026-07-26; verified live by
+    # pulling ghcr.io/karakeep-app/karakeep:latest and re-scanning before
+    # bumping — CVE-2026-45623 and GHSA-r28c-9q8g-f849 (both postcss) are
+    # fixed in this digest. Still open, no fix published anywhere yet as
+    # of this bump: GHSA-7rqj-j65f-68wh / GHSA-xmf8-cvqr-rfgj (@auth/core,
+    # fix says 0.41.3 but no karakeep build ships it), CVE-2026-14257
+    # (brace-expansion, same story — also unfixed in Ghost, traffic-
+    # analytics, and Uptime Kuma's latest builds, so likely a wider
+    # ecosystem lag, not karakeep-specific), CVE-2026-64831 (ffmpeg, no
+    # fix published at all). Re-check next weekly scan.
+    image: ghcr.io/karakeep-app/karakeep@sha256:8157c269bacf954c0c759f79bb52bb61cb877a44d5cc8d60f6763a87f678a9e0
     container_name: karakeep
     restart: unless-stopped
     environment:
