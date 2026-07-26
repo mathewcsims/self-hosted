@@ -1611,13 +1611,30 @@ Docker path, looks abandoned. HealthLog stood out: actively developed
 factor — reminders go out over **ntfy**, which this repo already runs, so
 no new notification infrastructure was needed.
 
-**Samsung Health / Google Fit sync**: not supported. HealthLog's "Google
-Health" integration is specifically the Google Health API (Fitbit/Pixel
-devices only, not a Google Fit or generic Health Connect passthrough) —
-confirmed directly against its docs. Samsung Health isn't mentioned
-anywhere. Not a blocker for the primary use case (medication reminders),
-and it's open source — a real option if this ever matters enough to
-contribute the integration.
+**Samsung Health sync — works, via an undocumented bridge (confirmed
+live 2026-07-26).** HealthLog's "Google Health" integration is the
+Google Health API (Fitbit/Pixel data — Samsung Health is mentioned
+nowhere in its docs), and the first connect attempt failed with Google's
+`FAILED_PRECONDITION: The account is not linked to Google Health` —
+meaning the Google account had no Fitbit/Google Health profile at all,
+NOT a config problem on this side (the OAuth code exchange itself
+succeeded). The fix and the resulting data path, working end to end:
+
+1. Install the **Fitbit app** on the (Samsung) phone, signed into the
+   same Google account — no Fitbit hardware needed; completing setup is
+   what creates the Google Health profile the API precondition demands.
+2. Grant the Fitbit app read access to Samsung Health's data types in
+   **Health Connect** (Samsung Health has written to Health Connect
+   since v6.22.5) — the same bridge HealthLog's own docs describe for
+   Garmin.
+3. Reconnect in HealthLog (Settings → Google Health) — the failed
+   attempt leaves nothing stale; the app cleanly rejects replayed OAuth
+   callbacks.
+
+So: Samsung Health → Health Connect → Fitbit app → Google Health API →
+HealthLog. Confirmed syncing in practice. All four scopes granted
+read-only (activity/fitness, health metrics, profile, sleep); Google
+tokens are stored app-encrypted in Postgres, not raw.
 
 **Architecture:** same pattern as every other Mac-hosted app — Caddy on
 the Pi terminates TLS and proxies to plain HTTP on the Mac
