@@ -87,6 +87,8 @@ fi
 SOURCES="
 $REPO_ROOT/karakeep/data
 $REPO_ROOT/karakeep/meilisearch-data
+$REPO_ROOT/healthlog/data
+$REPO_ROOT/healthlog/pgdata
 $REPO_ROOT/vikunja/db
 $REPO_ROOT/vikunja/files
 $REPO_ROOT/blog/db
