@@ -118,6 +118,7 @@ below says which.
 | `ntfy/compose.yaml` | **Pi** | self-hosted push notifications, on trial alongside Discord; auth default-deny, fed by Apprise |
 | `ntfy/data/` | **Pi** | **auth DB, message cache, attachments live here** |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
+| `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
@@ -1800,7 +1801,7 @@ alerting once).
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 24 monitors in three groups
+- **Status page** (`/status/all`): all 25 monitors in three groups
   (Services / Monitoring & infrastructure / Tailnet apps).
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
@@ -1812,6 +1813,18 @@ reused via `loginByToken` for the rest of the session. The "Uptime Kuma"
 Pass item holds `UPTIMEKUMA_APIKEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`.
 One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
 `"conditions": []` explicitly or the insert fails a NOT NULL constraint.
+A second, for adding a monitor to a status page's group: `saveStatusPage`
+takes `(slug, config, imgDataUrl, publicGroupList)` — `imgDataUrl` must
+be `""` not `null`/omitted (a null fails a `.startsWith` call server-
+side), and if `config` was fetched from the **public** REST endpoint
+(`/api/status-page/:slug`) rather than the authenticated `getStatusPage`
+socket event, it's missing `domainNameList` entirely (stripped from the
+public response) — round-tripping it back as-is throws an opaque
+`"Invalid array"` with no field name in the message; ground-truthed by
+reading `/app/server/model/status_page.js` directly inside the running
+container (`docker exec uptime-kuma grep -n ...` on the Pi) rather than
+guessing further. Fix: explicitly set `config.domainNameList = []` if
+missing before saving.
 
 **Switched to `louislam/uptime-kuma:2.4.0-slim-rootless` (2026-07-23)** —
 the standard `2.4.0` image carried 64 CRITICAL CVEs, 43 of them in
@@ -1824,6 +1837,69 @@ instead of root — real container hardening on top of the CVE reduction.
 `chown -R 1000:1000` on the Pi before the swap, otherwise the rootless
 container can't write its own database. Verified live: all 23 monitors +
 full heartbeat history survived, status page still serving.
+
+### Podman watchdog (Mac, added 2026-07-26)
+
+**The incident:** the Mac's Podman VM (`krunkit`, libkrun backend) wedged
+for roughly two days without anyone noticing — `podman ps` just hung/
+timed out, every container looked "gone" from the CLI even though the
+VM process was technically still alive. Root-caused via macOS's own
+crash-writes diagnostics (`/Library/Logs/DiagnosticReports/krunkit_*.diag`):
+34.36 GB written to disk over 12.26 hours (~780 KB/s sustained,
+tripping Apple's runaway-write heuristic), with the process's stack
+stuck specifically in the VM's virtio block-device worker thread. Not a
+sleep/wake issue (this Mac hadn't slept in the relevant window) and not
+a disk-space issue (196 GB free throughout). The specific container
+responsible for the write volume couldn't be identified after the fact —
+none of the app data directories on disk are anywhere near 34 GB, so it
+was write *churn* (DB WAL/journal activity, log rotation, or similar)
+rather than persisted growth, and the container logs from that window
+were lost when the VM had to be force-restarted (`kill -9` the wedged
+`krunkit` PID, then `podman machine start`) to recover.
+
+**Why this needed its own monitor, not one of the existing 24:** every
+other Uptime Kuma monitor in this stack checks an app *over the
+network* from the Pi. This failure was the Mac's own local Podman
+socket hanging — invisible from outside, since nothing external could
+tell "app down" apart from "Podman itself wedged."
+
+**The fix — a dead-man's-switch, not a poll:** `podman-watchdog/` runs
+every 2 minutes via launchd (`uk.mathewcsims.podman-watchdog`,
+`StartInterval`, not `StartCalendarInterval`). Each run does one
+`podman ps` with a **hard 15s subprocess timeout** — critical, since the
+whole point is that `podman ps` can itself hang indefinitely when the VM
+is wedged — then pings Uptime Kuma's push-monitor API with `status=up`
+(includes the container count) or `status=down` (includes the reason:
+timeout, non-zero exit, or exception). The Kuma monitor ("Podman (Mac)",
+id 25, 150s interval / 60s retry / 2 retries) fans out through the same
+Discord notification channel as every other monitor.
+
+**Setup note:** Kuma's plain API key only authenticates read-only
+endpoints (see the caveat above) — monitor creation went through the
+Socket.IO `add` interface with a live admin 2FA code, same as every
+other scripted monitor add. Two undocumented quirks hit along the way,
+worth knowing if this is ever redone: (1) the `add` payload needs the
+**exact full field set** an existing monitor has (fetched via a
+`monitorList` push event, not a request/response call — `getMonitorList`
+has no callback in this version) — a partial/guessed payload throws an
+opaque `Cannot read properties of undefined (reading 'every')` with no
+useful detail; (2) a push monitor's `pushToken` is **not** server-generated
+on create — the Kuma frontend normally generates it client-side, so a
+scripted `add` leaves it null and needs a follow-up `editMonitor` call
+with a random token to actually make the monitor reachable.
+
+**Push token storage — the one secret in this repo NOT in Pass:** lives
+at `~/podman-watchdog/push-token` (0600, outside the repo) instead.
+Two reasons: it's low-sensitivity (a Kuma push token can only post
+up/down pings to one monitor — a leak's worst case is a false status,
+not a real security exposure), and more fundamentally, Pass writes
+require the user's own interactive session — every automated/launchd
+job in this repo authenticates as a Pass "agent" PAT, which is
+**read-only by design** (see the agent access model above), so a script
+creating a monitor programmatically has no durable way to write the
+resulting token back into Pass without a human in the loop regardless.
+Same tradeoff already made for contact-sync's MS Graph refresh-token
+cache.
 
 ---
 
