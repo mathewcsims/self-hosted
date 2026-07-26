@@ -1933,6 +1933,7 @@ alerting once).
 
 - **App-truth checks, not just "HTTP 200"** wherever the app exposes a
   real health endpoint: Karakeep `/api/health` (keyword `"status":"ok"`),
+  HealthLog `/api/health` (keyword `"status":"ok"`, added 2026-07-26),
   Vikunja `/api/v1/info` (keyword `"version"`), all three Memos instances
   `/healthz` (keyword `Service ready`), Apprise `/status` (keyword `OK`),
   Ghost `/ghost/api/admin/site/`, Speedtest Tracker `/api/healthcheck`,
@@ -1950,7 +1951,7 @@ alerting once).
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 25 monitors in three groups
+- **Status page** (`/status/all`): all 26 monitors in three groups
   (Services / Monitoring & infrastructure / Tailnet apps).
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
