@@ -109,6 +109,9 @@ below says which.
 | `karakeep/compose.yaml` | **Mac** | Karakeep + Meilisearch; reads secrets from Proton Pass |
 | `karakeep/data/` | **Mac** | **your bookmarks/assets/archives live here** |
 | `karakeep/meilisearch-data/` | **Mac** | search index |
+| `healthlog/compose.yaml` | **Mac** | HealthLog (medication reminders, vitals) + Postgres sidecar; personal health data — see its own section below; reads secrets from Proton Pass |
+| `healthlog/data/` | **Mac** | **your health data, encrypted at rest, lives here** |
+| `healthlog/pgdata/` | **Mac** | Postgres datadir |
 | `bookstack/compose.yaml` | **Mac** | BookStack + MariaDB sidecar; LAN-only (`author.mathewcsims.uk`); reads secrets from Proton Pass |
 | `bookstack/config/` | **Mac** | **your wiki pages/books/shelves live here** |
 | `bookstack/db/` | **Mac** | **BookStack's MariaDB datadir** |
@@ -1586,6 +1589,105 @@ binaries actually run):
   — no Go binary actually runs here (`monolith` is Rust, `yt-dlp` is
   Python); `GHSA-7rqj-j65f-68wh` (@auth/core email-homoglyph bypass) —
   signups are disabled, so that self-registration path doesn't exist.
+
+---
+
+## HealthLog (https://healthlog.mathewcsims.uk)
+
+[HealthLog](https://github.com/MBombeck/HealthLog) — self-hosted health
+tracker: medication reminders (over ntfy/Web Push/Telegram/APNs), vitals
+(weight, blood pressure, glucose, sleep), mood/wellness questionnaires
+(WHO-5, PHQ-9, GAD-7). Added 2026-07-26 as a self-hosted replacement for
+Pillo (medication reminders specifically). **PolyForm Noncommercial 1.0.0
+licensed** — source-available, not OSI open-source; free for this personal
+noncommercial use, not a "true" open-source project.
+
+**Why this one over the alternatives considered:** researched live rather
+than from memory (self-hosted medication trackers are a niche category
+with a lot of abandoned/toy projects) — Helse's medication-reminder
+feature ("Treatments") isn't shipped yet; MedStats has zero stars, no
+Docker path, looks abandoned. HealthLog stood out: actively developed
+(weekly releases), real Docker Compose deployment, and — the deciding
+factor — reminders go out over **ntfy**, which this repo already runs, so
+no new notification infrastructure was needed.
+
+**Samsung Health / Google Fit sync**: not supported. HealthLog's "Google
+Health" integration is specifically the Google Health API (Fitbit/Pixel
+devices only, not a Google Fit or generic Health Connect passthrough) —
+confirmed directly against its docs. Samsung Health isn't mentioned
+anywhere. Not a blocker for the primary use case (medication reminders),
+and it's open source — a real option if this ever matters enough to
+contribute the integration.
+
+**Architecture:** same pattern as every other Mac-hosted app — Caddy on
+the Pi terminates TLS and proxies to plain HTTP on the Mac
+(`healthlog/compose.yaml`, port 3200 — not the Karakeep-conventional 3000,
+already taken). Two containers: the HealthLog app itself and a Postgres
+16 sidecar (`./pgdata`, not a bare podman-managed volume — bind-mounted
+like every other app's data dir here, so it's a plain directory Kopia can
+back up, not something opaque to the backup pipeline).
+
+**This is the one app in this repo where access control was treated as
+the top priority above all else**, given what it stores:
+
+- **Registration is permanently disabled** (`app_settings.singleton
+  .registration_enabled = false`, confirmed directly via `psql` against
+  the running container, not just trusted from the admin UI) — the only
+  path to an account is now gone entirely. Passkey-only login (WebAuthn),
+  no password fallback configured.
+- **The first-registrant-becomes-admin race**: HealthLog has no setup
+  token — whoever registers the very first account on a fresh instance
+  becomes admin, and there's no way to control who that is except being
+  first. The real risk: the moment Caddy requests this hostname's TLS
+  cert, it's published to public Certificate Transparency logs and gets
+  probed by bots within minutes — "DNS hasn't propagated yet" is not a
+  real defense window. Handled by bringing the real public hostname up
+  from the start (WebAuthn passkeys are bound to the exact origin at
+  registration — a LAN-IP-first-then-switch-domains approach would have
+  produced an unusable passkey) but with a **temporary Caddy IP-allowlist**
+  (home public IP + the `10.0.1.0/24` LAN range — both needed, since
+  NextDNS's split-DNS rewrite sends home devices straight to the Pi's LAN
+  IP, never touching the WAN path, so Caddy sees a private address for
+  local requests) blocking everyone else until registration was complete
+  and disabled. Confirmed live before removing it: a public-IP-only
+  allowlist actually blocked a request from the Mac itself, for exactly
+  the LAN-rewrite reason above — the fix needed both ranges.
+- **Container hardening**: `no-new-privileges:true` on both containers
+  (upstream's own recommendation), plus `mem_limit`/`pids_limit` on each
+  (1g/256, matching the mitigation pattern used for Karakeep's unfixed
+  CRITICAL CVEs elsewhere in this doc) as general defense-in-depth, not a
+  response to any specific found issue here.
+- **Caddy-layer rate limiting** on `/api/auth/*` (HealthLog has no
+  documented built-in rate limiting on its own auth endpoints) — broad
+  path match since the exact WebAuthn route names aren't documented
+  anywhere; worth narrowing once confirmed against real traffic patterns.
+- Data is encrypted at rest by the app itself (AES-256-GCM, its own
+  `ENCRYPTION_KEY`) independent of anything at the infrastructure level.
+
+**Secrets** (`POSTGRES_PASSWORD`, `ENCRYPTION_KEY`, `API_TOKEN_HMAC_KEY`,
+all 32-byte hex): the "HealthLog" Proton Pass item, created via
+`scripts/pass-create-healthlog-secrets.sh` — run under Mathew's own
+pass-cli session, not the agent's (agent PATs are read-only by design, see
+above), same pattern as `scripts/pass-create-vikunja-relay-secret.sh`.
+
+**To bring it up on a fresh machine:**
+1. **Mac:** `./scripts/pass-create-healthlog-secrets.sh` (once, if the
+   Pass item doesn't already exist), then
+   `./scripts/pass-deploy.sh healthlog HealthLog` — starts on
+   `10.0.1.14:3200`.
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** `./scripts/dns-digitalocean.sh add healthlog <Pi's public IP>`
+   (the zone's apex CAA records already cover every subdomain, no
+   per-subdomain CAA record needed) and
+   `./scripts/dns-nextdns.sh add healthlog.mathewcsims.uk 10.0.1.19`.
+4. **First run only:** complete passkey registration as the very first
+   user immediately (you're the admin from that point on), then disable
+   registration in the admin panel — verify with `podman exec
+   healthlog-postgres psql -U healthlog -d healthlog -c "SELECT
+   registration_enabled FROM app_settings;"` rather than trusting the UI
+   toggle alone. Only remove any setup-time IP-allowlist in the Caddyfile
+   after that's confirmed.
 
 ---
 

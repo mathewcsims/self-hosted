@@ -1,0 +1,86 @@
+# HealthLog — self-hosted health tracker (medication reminders, vitals,
+# wellness signals). Added 2026-07-26 as a Pillo replacement. Personal
+# health data, single user, public hostname — access control and data
+# protection are the top priority for this one specifically (see
+# pi-reverse-proxy/Caddyfile's HealthLog block for the deployment-time
+# IP-allowlist used to close the "first registrant becomes admin" window,
+# and SETUP.md for the full writeup).
+#
+# Upstream: https://github.com/MBombeck/HealthLog — PolyForm Noncommercial
+# 1.0.0 licensed (source-available, not OSI open-source; free for this
+# personal noncommercial self-hosted use). Reference compose:
+# https://github.com/MBombeck/HealthLog/blob/main/docker-compose.yml
+#
+# Secrets (POSTGRES_PASSWORD, ENCRYPTION_KEY, API_TOKEN_HMAC_KEY) come from
+# the "HealthLog" Proton Pass item via scripts/pass-deploy.sh — created by
+# scripts/pass-create-healthlog-secrets.sh (run under your own pass-cli
+# session, not the agent's — see that script's own header for why).
+
+name: healthlog
+
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    container_name: healthlog-postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: healthlog
+      POSTGRES_DB: healthlog
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U healthlog"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+    pids_limit: 256
+
+  web:
+    # No dedicated release tag scheme documented beyond `:latest` in
+    # upstream's own reference compose — pinned to today's digest anyway,
+    # same discipline as every other app here. Multi-arch (amd64+arm64),
+    # GHCR.
+    image: ghcr.io/mbombeck/healthlog:latest
+    container_name: healthlog
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://healthlog:${POSTGRES_PASSWORD}@postgres:5432/healthlog
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      API_TOKEN_HMAC_KEY: ${API_TOKEN_HMAC_KEY}
+
+      # Must match the Caddy-fronted public hostname exactly — WebAuthn
+      # passkeys are bound to this origin at registration time, and the
+      # background job runner needs APP_URL for the same URLs server-side.
+      NEXT_PUBLIC_APP_URL: https://healthlog.mathewcsims.uk
+      APP_URL: https://healthlog.mathewcsims.uk
+
+      # Real HTTPS throughout (Caddy terminates TLS on the Pi) — cookies
+      # must be marked Secure, never relaxed for this app.
+      SESSION_COOKIE_SECURE: "true"
+    volumes:
+      - ./data:/app/data
+    ports:
+      # Host port 3200, not 3000 — karakeep already has 3000. Same
+      # podman-machine quirk as every other Mac app here: a published port
+      # must be bound to the Mac's actual LAN IP, not 0.0.0.0. Never
+      # directly internet-facing — the router doesn't forward 3200, and
+      # the only path in is through Caddy on the Pi.
+      - "10.0.1.14:3200:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 1g
+    pids_limit: 256
