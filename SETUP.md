@@ -1782,15 +1782,25 @@ time a fresh-hostname deploy looks broken immediately after a Caddy
 restart.
 
 **Container hardening**: `no-new-privileges:true`, `cap_drop: [ALL]`,
-`pids_limit: 32`. `mem_limit: 128m` is set but **not actually enforced**
-— Babel's kernel doesn't have cgroup memory-limit support compiled
-in/enabled (confirmed live: `docker compose up` warns "Your kernel does
-not support memory limit capabilities... Limitation discarded"), a
-common Raspberry Pi OS default. Fixing that needs a `/boot/cmdline.txt`
-change (`cgroup_enable=memory cgroup_memory=1`) and a reboot of the
-Pi — not done as part of this deploy since Babel is the sole
-internet-facing host and a reboot is disruptive; worth doing at a
-convenient time if the memory limit ever actually matters in practice.
+`pids_limit: 32`, `mem_limit: 128m`. The memory limit initially wasn't
+enforced — Raspberry Pi OS Bookworm doesn't compile in cgroup memory
+support by default (confirmed live: `docker compose up` warned "Your
+kernel does not support memory limit capabilities... Limitation
+discarded"). Fixed 2026-07-27 by appending `cgroup_enable=memory
+cgroup_memory=1` to `/boot/firmware/cmdline.txt` (the real, authoritative
+boot cmdline on Bookworm — `/boot/cmdline.txt` is a vestigial placeholder
+that says as much) and rebooting Babel. One wrinkle worth remembering:
+after the reboot, `/proc/cgroups` still showed the `memory` line as
+absent, and `/proc/cmdline` showed a `cgroup_disable=memory` flag
+injected by the Pi's own firmware ahead of the fix's flags (source not
+fully identified — possibly baked into the board's device tree) — both
+looked like the fix hadn't worked. It had: `/proc/cgroups` is a legacy
+cgroup-v1-only view, and Babel runs cgroup v2 exclusively, where
+`/sys/fs/cgroup/cgroup.controllers` and `.../cgroup.subtree_control` are
+the actual source of truth — both listed `memory` as available. Confirmed
+working by redeploying chhoto-url and checking
+`docker inspect chhoto-url --format '{{.HostConfig.Memory}}'`, which now
+returns `134217728` (128MB) instead of being silently discarded.
 
 **No container-level healthcheck** — this image genuinely has no shell
 at all (confirmed live: `docker exec chhoto-url sh` → "executable file
