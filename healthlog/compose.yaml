@@ -54,6 +54,25 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      # No TZ was ever set here, so the container ran on the image's own
+      # baked-in default (Europe/Berlin, confirmed live via `date`/Node's
+      # Intl.DateTimeFormat) — mismatched against Mathew's actual London
+      # profile timezone (users.timezone, set in-app) by a full hour in
+      # summer. The in-app profile timezone setting only affects the
+      # database row — it can't reach into the container's own OS clock,
+      # so this has to be set here explicitly. Worth fixing on its own
+      # merits (real drift between the server's clock and the user's
+      # actual timezone), but NOTE: this was found and fixed while
+      # chasing a medication-reminder notification loop (2026-07-27,
+      # firing every 15 min despite a logged dose) — set this and
+      # redeployed, the loop kept happening. It turned out to be
+      # unrelated: re-logging the dose fresh through the web UI is what
+      # actually stopped it. Root cause of that loop is still unconfirmed
+      # (the original intake event was source=REMINDER/
+      # attribution_source=AUTO, created early then updated later, vs. a
+      # clean source=WEB entry that worked) — watching for recurrence
+      # before filing upstream.
+      TZ: Europe/London
       DATABASE_URL: postgresql://healthlog:${POSTGRES_PASSWORD}@postgres:5432/healthlog
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       API_TOKEN_HMAC_KEY: ${API_TOKEN_HMAC_KEY}
