@@ -33,6 +33,7 @@ services:
       - caddy_data:/data            # issued certs + ACME account — persist this!
       - caddy_config:/config
       - ./logs:/var/log/caddy       # access log, host-readable for fail2ban (see Caddyfile's global log block)
+      - ../msims-link/landing:/srv/msims-link-landing:ro  # served directly by Caddy on a 404 from chhoto-url — see msims.link's handle_errors block
     networks:
       - pi-shared
 

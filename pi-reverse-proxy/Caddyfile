@@ -730,7 +730,18 @@ msims.link {
 		}
 	}
 
-	reverse_proxy chhoto-url:4567
+	# An unknown/expired short link 404s from chhoto-url itself (confirmed
+	# live) — this is a normal proxied response, not a Caddy-generated
+	# error, so handle_errors doesn't see it; handle_response is the
+	# mechanism that intercepts the upstream's own status code.
+	reverse_proxy chhoto-url:4567 {
+		@notfound status 404
+		handle_response @notfound {
+			root * /srv/msims-link-landing
+			rewrite * /not-found.html
+			file_server
+		}
+	}
 }
 
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
