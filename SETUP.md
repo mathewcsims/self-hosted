@@ -120,6 +120,9 @@ below says which.
 | `contact-sync/` | **Mac** | hub-and-spoke contact sync engine (Proton/Google/2× Microsoft) — `sync.py` + per-provider spoke modules; canonical vCard store lives outside the repo at `~/contact-sync/store/` (its own private Forgejo repo); daily launchd job |
 | `ntfy/compose.yaml` | **Pi** | self-hosted push notifications, on trial alongside Discord; auth default-deny, fed by Apprise |
 | `ntfy/data/` | **Pi** | **auth DB, message cache, attachments live here** |
+| `msims-link/compose.yaml` | **Pi** | chhoto-url — self-hosted URL shortener (`msims.link`); reads secrets from Proton Pass |
+| `msims-link/data/` | **Pi** | **your short links (SQLite, WAL mode) live here** |
+| `msims-link/landing/` | **Pi** | static fallback for the bare domain (Caddy's own redirect normally intercepts before this is ever served — see the msims.link section) |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
@@ -1708,6 +1711,129 @@ above), same pattern as `scripts/pass-create-vikunja-relay-secret.sh`.
 
 ---
 
+## msims.link — URL shortener, runs on the Pi
+
+[chhoto-url](https://github.com/SinTan1729/chhoto-url) — self-hosted URL
+shortener, MIT licensed, ~6MB image, SQLite built in (no DB sidecar
+container). Chosen over Shlink/YOURLS/Kutt specifically for the resource
+footprint — Babel already runs several small services, and this is a
+personal single-user tool that didn't need Shlink's heavier analytics
+stack or YOURLS/Kutt's extra DB containers. Live manifest checked before
+choosing: publishes real `arm64`/`arm/v7` images, not just amd64.
+
+**Own domain, not a mathewcsims.uk subdomain** — a link shortener needs
+to actually be short. `msims.link` was picked after checking real
+availability + actual cart pricing (not registry base-rate tables, which
+miss premium-tier pricing entirely) across `.link`/`.cc`/`.to`/`.gd` —
+`.to` and `.gd` both turned out expensive despite looking like the
+obvious short-domain picks (`.to` is $51.80/yr at even a budget
+registrar), landing on `.link` at $4.48 first year / $8.98/yr after.
+Registered through the same DigitalOcean account as `mathewcsims.uk`
+(`scripts/dns-digitalocean.sh` generalized to accept `DOMAIN=` for any
+zone in the account, not just the original hardcoded one).
+
+**Security review done before deploying** (read the actual Rust source,
+not just docs/marketing pages — this is the standard this repo holds
+every self-hosted app to):
+- Password/API key: Argon2-hashed (`CHHOTO_HASH_ALGORITHM=Argon2`
+  below) — the app verifies against a stored hash; plaintext is never
+  held server-side once configured. Real signed+encrypted session
+  cookies (`actix-session`, secret key regenerated fresh on every
+  container restart so a restart invalidates all sessions,
+  `SameSite=Strict`).
+- Gap found and compensated for at the Caddy layer: **no built-in
+  brute-force protection on `/api/login` at all** — confirmed by reading
+  `backend/src/services/post.rs` directly; a failed attempt just logs a
+  warning, no lockout or delay. Same class of gap already found and
+  mitigated the same way for Memos/Karakeep — a Caddy rate-limit zone on
+  that path.
+- `cookie_secure` is hardcoded `false` in the app's own source
+  (`backend/src/main.rs`), with no env var to override it — their docs
+  are upfront that the app does no transport encryption itself and
+  expects a TLS-terminating reverse proxy in front. Accepted: Caddy is
+  the only path in, the container is never directly reachable (no
+  `ports:`, `pi-shared` network only).
+- `CHHOTO_PUBLIC_MODE` left at its default (`Disable`) — this is a
+  personal shortener, not something anyone else should be able to
+  create links through.
+
+**Bare-domain redirect, not the shortener's own login screen.** Visiting
+`https://msims.link/` redirects (real HTTP 301, at the Caddy layer) to
+`https://mathewcsims.uk` rather than showing a random visitor the
+shortener's branded login prompt. This needed `CHHOTO_CUSTOM_LANDING_DIRECTORY`
+set (pointing at `./landing`, a trivial fallback page) — **without** it,
+chhoto-url serves its actual admin/login UI directly at `/` with no
+separate path at all, confirmed live (`/admin/manage/` 404s otherwise).
+Setting it moves the real dashboard to `/admin/manage/`, which Caddy's
+own exact-path redirect (`path /`, not a prefix) doesn't touch. The
+`./landing/index.html` content is essentially never seen in practice —
+Caddy intercepts `/` before the request ever reaches the container — it
+exists purely as a fallback if that Caddy rule is ever removed.
+
+**A real, if brief, false alarm during setup** worth recording since it
+looked exactly like a serious routing bug: right after the Caddy
+restart, short links appeared to 404 through the public URL while
+working fine hitting the container directly. Root cause was TLS
+certificate issuance (ACME `tls-alpn-01`) still settling for the
+brand-new `msims.link` cert — tested too soon after `docker compose
+restart caddy`. No code or config was actually broken; a second test a
+few seconds later confirmed everything worked. Worth remembering next
+time a fresh-hostname deploy looks broken immediately after a Caddy
+restart.
+
+**Container hardening**: `no-new-privileges:true`, `cap_drop: [ALL]`,
+`pids_limit: 32`. `mem_limit: 128m` is set but **not actually enforced**
+— Babel's kernel doesn't have cgroup memory-limit support compiled
+in/enabled (confirmed live: `docker compose up` warns "Your kernel does
+not support memory limit capabilities... Limitation discarded"), a
+common Raspberry Pi OS default. Fixing that needs a `/boot/cmdline.txt`
+change (`cgroup_enable=memory cgroup_memory=1`) and a reboot of the
+Pi — not done as part of this deploy since Babel is the sole
+internet-facing host and a reboot is disruptive; worth doing at a
+convenient time if the memory limit ever actually matters in practice.
+
+**No container-level healthcheck** — this image genuinely has no shell
+at all (confirmed live: `docker exec chhoto-url sh` → "executable file
+not found"), so nothing exists inside the container to run a
+wget/curl-based check with. Uptime Kuma, checking
+`https://msims.link/api/version` from outside, is the real health
+signal here, same as it is for every other app in this repo.
+
+**Secrets** (`CHHOTO_PASSWORD`/`CHHOTO_API_KEY`, both pre-hashed Argon2
+strings, plus the plaintext originals for actual use) live in the
+"MsimsLink" Proton Pass item, created via
+`scripts/pass-create-msims-link-secrets.sh` — run under your own
+pass-cli session, not the agent's (agent PATs are read-only by design).
+Requires the `argon2` CLI (`brew install argon2`) — the exact hashing
+invocation chhoto-url's own docs recommend. Note: the `argon2` CLI has
+its own undocumented input-length limit — the 128-character API key
+upstream's docs suggest generating is too long for it ("Provided
+password longer than supported in command line utility"); the script
+generates 64 characters instead (still ~380 bits of entropy).
+
+**To bring it up on a fresh machine:**
+1. **Mac:** `./scripts/pass-create-msims-link-secrets.sh` (once, if the
+   Pass item doesn't already exist).
+2. **Pi:** `scp -r msims-link mathew@babel:~/msims-link`, then
+   `./scripts/pass-deploy-remote.sh msims-link mathew@babel
+   /home/mathew/msims-link MsimsLink` (use the real absolute remote
+   path, not `~` — it expands on the *local* shell before ever reaching
+   SSH, confirmed live the hard way).
+3. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+4. **DNS:** `DOMAIN=msims.link ./scripts/dns-digitalocean.sh add @
+   <Pi's public IP>`, `DOMAIN=msims.link ./scripts/dns-digitalocean.sh
+   add-caa @ issue "letsencrypt.org."` (note the trailing dot — DO's API
+   rejects the value without it, unlike the display format it shows back
+   in `list-caa`), and `./scripts/dns-nextdns.sh add msims.link
+   10.0.1.19`.
+5. **Backups:** `../msims-link/data:/data/msims-link:ro` was added to
+   `kopia-server/compose.yaml`'s volume list — redeploy `kopia-server`
+   after adding a new app here, same as every other Pi app's data
+   directory.
+
+---
+
 ## Apprise API (https://apprise.mathewcsims.uk) — LAN-only, runs on the Pi
 
 [Apprise API](https://github.com/caronc/apprise-api) — a small HTTP front-end
@@ -1934,6 +2060,7 @@ alerting once).
 - **App-truth checks, not just "HTTP 200"** wherever the app exposes a
   real health endpoint: Karakeep `/api/health` (keyword `"status":"ok"`),
   HealthLog `/api/health` (keyword `"status":"ok"`, added 2026-07-26),
+  msims.link `/api/version` (keyword `Chhoto URL`, added 2026-07-27),
   Vikunja `/api/v1/info` (keyword `"version"`), all three Memos instances
   `/healthz` (keyword `Service ready`), Apprise `/status` (keyword `OK`),
   Ghost `/ghost/api/admin/site/`, Speedtest Tracker `/api/healthcheck`,
@@ -1951,7 +2078,7 @@ alerting once).
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 26 monitors in three groups
+- **Status page** (`/status/all`): all 27 monitors in three groups
   (Services / Monitoring & infrastructure / Tailnet apps).
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the

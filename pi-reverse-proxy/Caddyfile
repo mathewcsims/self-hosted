@@ -701,6 +701,38 @@ healthlog.mathewcsims.uk {
 	}
 }
 
+# ── msims.link (running HERE on the Pi) ──────────────────────────────────
+# Self-hosted URL shortener (chhoto-url). Bare root redirects to the real
+# landing page (mathewcsims.uk) rather than showing the shortener's own
+# app/login screen to random visitors — `path /` is an exact match (not a
+# prefix), so it doesn't catch /admin/manage/ (the actual management UI)
+# or real short-link slugs.
+msims.link {
+	import security_headers
+
+	@bare_root path /
+	redir @bare_root https://mathewcsims.uk 301
+
+	import general_ratelimit msims_link
+
+	# chhoto-url has no built-in brute-force protection on /api/login at
+	# all — confirmed by reading its actual source (a failed attempt just
+	# logs a warning, no lockout/delay). Same defense-in-depth pattern as
+	# every other app's auth endpoint in this repo.
+	rate_limit {
+		zone rl_msims_link_auth {
+			match {
+				path /api/login
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+	}
+
+	reverse_proxy chhoto-url:4567
+}
+
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
 # Only the hostnames explicitly configured above are served. Any other
 # SNI/Host — including a bare-IP scan of the public address — gets a closed

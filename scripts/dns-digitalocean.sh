@@ -18,7 +18,10 @@
 set -eu
 
 ACTION="${1:?Usage: $0 list|add|remove|add-caa|list-caa|remove-caa ...}"
-DOMAIN="mathewcsims.uk"
+# Defaults to mathewcsims.uk for backward compatibility — override with
+# DOMAIN=other-zone.tld for any other zone in the same DigitalOcean
+# account (e.g. msims.link).
+DOMAIN="${DOMAIN:-mathewcsims.uk}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"

@@ -57,6 +57,7 @@ services:
       - ../uptime-kuma/data:/data/uptime-kuma:ro
       - ../speedtest-tracker/config:/data/speedtest-tracker:ro
       - ../apprise/config:/data/apprise:ro
+      - ../msims-link/data:/data/msims-link:ro
     # No `ports:` — reached only by Caddy (backup.mathewcsims.uk, LAN-gated),
     # over `pi-shared`, by container name. Same no-published-port pattern as
     # every other Pi-resident app in this repo.

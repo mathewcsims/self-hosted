@@ -1,0 +1,86 @@
+# msims.link — self-hosted URL shortener (chhoto-url), added 2026-07-27.
+# Runs HERE on the Pi (not the Mac), same pattern as ntfy/Apprise/Nimbus:
+# it's a public hostname reachable from anywhere, and Caddy on the Pi is
+# the only internet-facing host in this stack.
+#
+# Upstream: https://github.com/SinTan1729/chhoto-url — MIT licensed, Rust,
+# ~6MB image, SQLite built in (no DB sidecar container needed). Chosen
+# over Shlink/YOURLS/Kutt specifically for the resource footprint: Babel
+# already runs several small services, and this is a personal single-user
+# tool that doesn't need Shlink's heavier analytics stack or YOURLS/Kutt's
+# extra DB containers.
+#
+# Security review done before deploying (read the actual Rust source, not
+# just docs — see SETUP.md's msims.link section for the full writeup):
+# - Password/API key: Argon2-hashed (CHHOTO_HASH_ALGORITHM below) — the
+#   app verifies against a stored hash, plaintext is never held server-
+#   side. Real signed+encrypted session cookies (actix-session, key
+#   regenerated fresh on every restart, SameSite=Strict).
+# - Gap found and compensated for at the Caddy layer (see the Caddyfile):
+#   no built-in brute-force protection on /api/login at all — a failed
+#   attempt just logs a warning, no lockout/delay. Same class of gap
+#   already found and mitigated the same way for Memos/Karakeep.
+# - `cookie_secure` is hardcoded false in the app itself (their own docs
+#   are upfront that it does no transport encryption and expects a
+#   TLS-terminating reverse proxy in front) — accepted given Caddy is the
+#   only path in and the container is never directly reachable.
+#
+# Secrets (CHHOTO_PASSWORD/CHHOTO_API_KEY, both pre-hashed Argon2 strings)
+# come from the "MsimsLink" Proton Pass item via
+# scripts/pass-deploy-remote.sh — created by
+# scripts/pass-create-msims-link-secrets.sh (run under your own pass-cli
+# session, not the agent's — see that script's own header for why).
+
+services:
+  chhoto-url:
+    image: ghcr.io/sintan1729/chhoto-url@sha256:392f9697e43ed828f347519c6fce1fd5f02443ae8cb2836bd539e540949db52a
+    container_name: chhoto-url
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      CHHOTO_DB_URL: /data/urls.sqlite
+      # Recommended by upstream for a real deployment — write no longer
+      # blocks reads. Requires a whole directory (not a single file)
+      # bind-mounted, which volumes: below already does.
+      CHHOTO_SQLITE_USE_WAL_MODE: "True"
+      CHHOTO_SITE_URL: https://msims.link
+      CHHOTO_PASSWORD: ${CHHOTO_PASSWORD}
+      CHHOTO_API_KEY: ${CHHOTO_API_KEY}
+      # Adds real per-request CPU/memory cost (Argon2's whole point is
+      # being memory-hard) in exchange for never holding the actual
+      # password/API key in the environment or compose file — a
+      # deliberate, worthwhile tradeoff for a personal tool that isn't
+      # handling meaningful login volume.
+      CHHOTO_HASH_ALGORITHM: Argon2
+      # Explicitly off (also the default) — this is a personal shortener,
+      # not something anyone else should be able to create links through.
+      CHHOTO_PUBLIC_MODE: "Disable"
+      # Without this, the app's own admin/login UI is served AT "/" with
+      # no separate path — confirmed live: /admin/manage/ 404s unless
+      # this is set. Setting it moves the real dashboard to
+      # /admin/manage/ and frees up "/" for the ./landing content below,
+      # which Caddy's own redirect for exact "/" (see the Caddyfile)
+      # normally intercepts before it's ever served — this is the
+      # fallback if that Caddy rule is ever removed/bypassed.
+      CHHOTO_CUSTOM_LANDING_DIRECTORY: /landing
+    volumes:
+      - ./data:/data
+      - ./landing:/landing:ro
+    # No `ports:` — reached only by Caddy (msims.link) over `pi-shared`,
+    # by container name. Same pattern as ntfy/Apprise/Nimbus.
+    networks:
+      - pi-shared
+    # No container-level healthcheck: this image (~6MB) has no shell and
+    # no wget/curl at all — confirmed live, `docker exec` can't even find
+    # `sh`. Nothing exists inside the container to run one with. Uptime
+    # Kuma (checking https://msims.link/api/version from outside) is the
+    # real health signal, same as it is for every other app here.
+    mem_limit: 128m
+    pids_limit: 32
+
+networks:
+  pi-shared:
+    external: true
