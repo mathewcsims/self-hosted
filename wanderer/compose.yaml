@@ -1,10 +1,10 @@
 # Wanderer (https://github.com/open-wanderer/wanderer) — self-hosted GPS
 # trail/ride logging app. Added 2026-07-28 for cycle-ride logging with KML
-# import (ride data converted KML->GPX with gpsbabel before import — Wanderer
-# imports GPX/FIT/TCX as first-class formats; its own KML import path is
-# explicitly called "experimental" by the project, so GPX-after-conversion
-# is the reliable route). Runs on the Mac, same pattern as karakeep/healthlog
-# — Caddy on the Pi terminates TLS and proxies to plain HTTP here.
+# import. Upstream calls its own KML support "experimental", but confirmed
+# working directly in real use (2026-07-28) — imports KML rides natively,
+# no gpsbabel/GPX conversion step needed in practice. Runs on the Mac, same
+# pattern as karakeep/healthlog — Caddy on the Pi terminates TLS and
+# proxies to plain HTTP here.
 #
 # ── Security review before deploying ──────────────────────────────────────
 # Read the actual GitHub Security Advisories (not just docs) before pinning

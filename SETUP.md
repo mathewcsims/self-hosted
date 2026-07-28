@@ -3394,11 +3394,9 @@ cycle-ride logging over Dawarich (a general location-history tracker,
 heavier 4-container stack) specifically because it's built for per-ride
 entries rather than continuous location history, and its deployment is
 lighter (SQLite via a bundled PocketBase image, not a separate Postgres).
-Neither Wanderer nor Dawarich's KML import path is fully mature — Wanderer's
-own project calls it "experimental" — so rides are converted **KML → GPX
-via `gpsbabel`** (`gpsbabel -i kml -f ride.kml -o gpx -F ride.gpx`,
-`brew install gpsbabel`) before importing, since GPX is Wanderer's
-first-class, well-tested format.
+Upstream calls its own KML import "experimental", but confirmed working
+directly in real use (2026-07-28) — KML rides import natively with no
+conversion step needed in practice, despite the label.
 
 **Security review before deploying** (read the actual GitHub Security
 Advisories, not just docs):
@@ -3500,10 +3498,9 @@ read-only by design).
    `{"createRule": null}` using the returned token. Verify with a direct
    `POST` to `/api/collections/users/records` — should return
    `403 Only superusers can perform this action`.
-5. **Importing rides:** convert KML to GPX first
-   (`gpsbabel -i kml -f ride.kml -o gpx -F ride.gpx`), then import the GPX
-   through Wanderer's own UI — its native KML import exists but is called
-   "experimental" by the project itself.
+6. **Importing rides:** KML imports directly through Wanderer's own UI —
+   confirmed working in real use, despite upstream's own "experimental"
+   label on that import path.
 
 ---
 

@@ -34,7 +34,7 @@ automatic HTTPS), and a DrayTek Vigor2866 router in front of both.
 | Trivy scan (this repo) | — (no URL; launchd job) | Mac (weekly vulnerability scan of every pinned image in the repo, notifies on new CVEs) |
 | [HealthLog](https://github.com/MBombeck/HealthLog) | `healthlog.mathewcsims.uk` | Mac (self-hosted medication reminders + health tracking — PolyForm Noncommercial licensed, passkey-only login, registration disabled after initial setup) |
 | [chhoto-url](https://github.com/SinTan1729/chhoto-url) | `msims.link` | Pi (self-hosted URL shortener on its own short domain — bare root redirects to `mathewcsims.uk` rather than showing the shortener's own login screen) |
-| [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX import, KML rides converted to GPX first via `gpsbabel`; Meilisearch + PocketBase sidecars) |
+| [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars) |
 
 ## Architecture, in short
 
