@@ -1,0 +1,172 @@
+# Wanderer (https://github.com/open-wanderer/wanderer) — self-hosted GPS
+# trail/ride logging app. Added 2026-07-28 for cycle-ride logging with KML
+# import (ride data converted KML->GPX with gpsbabel before import — Wanderer
+# imports GPX/FIT/TCX as first-class formats; its own KML import path is
+# explicitly called "experimental" by the project, so GPX-after-conversion
+# is the reliable route). Runs on the Mac, same pattern as karakeep/healthlog
+# — Caddy on the Pi terminates TLS and proxies to plain HTTP here.
+#
+# ── Security review before deploying ──────────────────────────────────────
+# Read the actual GitHub Security Advisories (not just docs) before pinning
+# a version:
+#   - GHSA-9qg7-jr2x-prvh — unauthenticated IDOR: private trails/comments
+#     were readable via the ActivityPub endpoints with no auth at all.
+#   - GHSA-7vqq-mjjr-h9j5 — unauthenticated SSRF (CVSS 10.0) in the
+#     /api/v1/trail/download endpoint.
+#   - GHSA-hx3v-rv4v-w875 / GHSA-m7v2-6gj3-3g2p — stored XSS via waypoint
+#     name/icon fields.
+# All four are fixed by v0.20.0 (confirmed via commit/PR history — GitHub's
+# own advisory API left `patched_versions` null, so this isn't a formality
+# to skip). Pinned by digest below, not just the tag, since tags on Docker
+# Hub aren't immutable.
+#
+# Registration: PUBLIC_DISABLE_SIGNUP defaults to "false" (signup OPEN) in
+# upstream's own reference compose — same "first registrant becomes admin"
+# race as HealthLog's initial setup. Handled the same way: a temporary
+# Caddy IP-allowlist during first bring-up (see pi-reverse-proxy/Caddyfile),
+# removed once the one real account is registered and PUBLIC_DISABLE_SIGNUP
+# is flipped to "true" and redeployed.
+#
+# Federation: Wanderer has ActivityPub federation baked in with no env var
+# to disable user-level AP endpoints at all (confirmed live — no
+# FEDERATION_ENABLED/DISABLE_FEDERATION toggle exists in the codebase).
+# Instance-to-instance federation is opt-in only (an admin has to manually
+# discover+approve a peer via /federation/) — never touch that admin UI and
+# nothing federates outward. Per-trail privacy defaults to PRIVATE, so the
+# residual exposure is limited to trails deliberately marked public, same
+# as any other public/private toggle — not a reason to avoid deploying,
+# just something to know before marking a ride public.
+#
+# Secrets (MEILI_MASTER_KEY, POCKETBASE_ENCRYPTION_KEY, UPLOAD_USER,
+# UPLOAD_PASSWORD) come from the "Wanderer" Proton Pass item via
+# scripts/pass-deploy.sh — created by scripts/pass-create-wanderer-secrets.sh
+# (run under your own pass-cli session, not the agent's).
+#
+# ── PUBLIC_DISABLE_SIGNUP does NOT lock down registration by itself ───────
+# Confirmed by reading the actual source (web/src/hooks.server.ts,
+# routes/api/v1/user/+server.ts): this env var only gates the SvelteKit
+# frontend/wrapper route. The underlying PocketBase `users` collection's
+# own `createRule` ships as `""` (empty string = open to anyone, no auth)
+# in every migration up to and including v0.20.0, and is NEVER changed by
+# this env var, any hook, or any migration. A direct POST to PocketBase's
+# own /api/collections/users/records — reachable to anything that can
+# reach the `db` container, though not published to the host or internet
+# in this compose file — would create a real account regardless of this
+# setting. Fixed 2026-07-28 by authenticating as a PocketBase superuser
+# (created via `pocketbase superuser upsert`, credentials in the
+# "Wanderer" Pass item) and PATCHing the `users` collection's createRule
+# to `null` (superuser-only) via PocketBase's own admin API. That fix
+# lives in data/pb_data (the persistent volume), not here — it survives
+# redeploys and does not need reapplying, but a full `pb_data` wipe/reset
+# would silently reopen it, so re-verify after any such reset.
+name: wanderer
+
+services:
+  search:
+    # Meilisearch — required by Wanderer, not optional (web depends on it
+    # for search). Pinned to the exact version upstream's own reference
+    # compose ships, not left floating.
+    image: getmeili/meilisearch:v1.36.0
+    container_name: wanderer-search
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MEILI_URL: http://search:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - ./data/meili:/meili_data
+    # No published port — internal only, reached by web/db over the
+    # compose network by container name.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:7700/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+
+  db:
+    # PocketBase-backed (SQLite), bundled in this image — no separate
+    # Postgres needed. Pinned by digest to v0.20.0, which fixes all four
+    # GHSAs above.
+    image: flomp/wanderer-db@sha256:591974a7cb92be1d30a9033da0b97ef628d0ee1328e3ec29683b0075619805ba
+    container_name: wanderer-db
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      search:
+        condition: service_healthy
+    environment:
+      MEILI_URL: http://search:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      # Must stay fixed forever once real data exists — rotating this
+      # breaks decryption of existing records. Generated once via
+      # `openssl rand -hex 16` (32 hex chars) by
+      # pass-create-wanderer-secrets.sh, never the checked-in upstream
+      # default.
+      POCKETBASE_ENCRYPTION_KEY: ${POCKETBASE_ENCRYPTION_KEY}
+      # Must match the real public hostname exactly — mismatch here (or
+      # on web, below) causes CORS/CSRF failures per upstream's own docs.
+      ORIGIN: https://wanderer.mathewcsims.uk
+    volumes:
+      - ./data/pb_data:/pb_data
+      - ./data/plugins:/data/plugins
+    healthcheck:
+      test: ["CMD", "/curl", "--fail", "http://localhost:8090/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+
+  web:
+    image: flomp/wanderer-web@sha256:d76177573caab135e8167179c9954168b5c582a48cbef0fcb7e1571af0c84d98
+    container_name: wanderer-web
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      search:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    environment:
+      MEILI_URL: http://search:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      ORIGIN: https://wanderer.mathewcsims.uk
+      BODY_SIZE_LIMIT: "104857600" # 100MB — plenty for a GPX/KML/photo upload, not upstream's own Infinity default
+      PUBLIC_POCKETBASE_URL: http://db:8090
+      # Closed 2026-07-28 once the one real account (mat@mathewcsims.uk)
+      # was confirmed registered — verified directly against
+      # data/pb_data/data.db, not just trusted from the UI. See the
+      # header comment above for why this started open.
+      PUBLIC_DISABLE_SIGNUP: "true"
+      UPLOAD_FOLDER: /app/uploads
+      # Basic-auth in front of the upload endpoint specifically — cheap
+      # defense-in-depth on a public host, same reasoning as every other
+      # app's auth-endpoint hardening in this repo.
+      UPLOAD_USER: ${UPLOAD_USER}
+      UPLOAD_PASSWORD: ${UPLOAD_PASSWORD}
+      OVERPASS_API_URL: https://overpass-api.de
+      VALHALLA_URL: https://valhalla1.openstreetmap.de
+      NOMINATIM_URL: https://nominatim.openstreetmap.org
+      PUBLIC_MAP_MAX_POLYLINES: "100"
+    volumes:
+      - ./data/uploads:/app/uploads
+    ports:
+      # Same podman-machine quirk as every other Mac app here: a published
+      # port must be bound to the Mac's actual LAN IP — podman-machine
+      # can't bind 0.0.0.0 to the real interface. The Pi's reverse proxy
+      # connects to this address; the router never forwards this port, so
+      # it's never directly internet-facing.
+      - "10.0.1.14:3400:3000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m

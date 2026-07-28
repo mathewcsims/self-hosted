@@ -3386,6 +3386,127 @@ exactly what changed in every run.
 
 ---
 
+## Wanderer (https://wanderer.mathewcsims.uk) — runs on the Mac
+
+[Wanderer](https://github.com/open-wanderer/wanderer) — self-hosted GPS
+trail/ride log (elevation, distance, photos, tags per trail). Chosen for
+cycle-ride logging over Dawarich (a general location-history tracker,
+heavier 4-container stack) specifically because it's built for per-ride
+entries rather than continuous location history, and its deployment is
+lighter (SQLite via a bundled PocketBase image, not a separate Postgres).
+Neither Wanderer nor Dawarich's KML import path is fully mature — Wanderer's
+own project calls it "experimental" — so rides are converted **KML → GPX
+via `gpsbabel`** (`gpsbabel -i kml -f ride.kml -o gpx -F ride.gpx`,
+`brew install gpsbabel`) before importing, since GPX is Wanderer's
+first-class, well-tested format.
+
+**Security review before deploying** (read the actual GitHub Security
+Advisories, not just docs):
+- **GHSA-9qg7-jr2x-prvh** — unauthenticated IDOR: private trails/comments
+  were readable via the ActivityPub endpoints with no auth at all.
+- **GHSA-7vqq-mjjr-h9j5** — unauthenticated SSRF (CVSS 10.0) in the
+  `/api/v1/trail/download` endpoint.
+- **GHSA-hx3v-rv4v-w875** / **GHSA-m7v2-6gj3-3g2p** — stored XSS via
+  waypoint name/icon fields.
+- All four fixed by **v0.20.0** (confirmed via commit/PR history — GitHub's
+  own advisory API left `patched_versions` null for all four, not something
+  to skip verifying). Images pinned by digest, not just the tag, since tags
+  on Docker Hub aren't immutable.
+- **Federation**: Wanderer bakes in ActivityPub with no env var to disable
+  user-level AP endpoints at all (confirmed live — no
+  `FEDERATION_ENABLED`/`DISABLE_FEDERATION` toggle exists anywhere in the
+  codebase). Instance-to-instance federation is opt-in only — an admin has
+  to manually discover+approve a peer via `/federation/` — so nothing
+  federates outward unless that admin UI is deliberately used. Trails
+  default to **private**, so residual exposure is limited to trails
+  deliberately marked public, same as any other visibility toggle.
+- **The first-registrant-becomes-admin race**: `PUBLIC_DISABLE_SIGNUP`
+  defaults to `"false"` (signup open) in upstream's own reference compose —
+  same risk class as HealthLog's initial setup, handled the same way: a
+  **temporary Caddy IP-allowlist** (home public IP + `10.0.1.0/24` LAN
+  range — both needed, since NextDNS's split-DNS rewrite sends home devices
+  straight to the Pi's LAN IP, so Caddy sees a private address for local
+  requests) blocked everyone else until the one real account was
+  registered — confirmed directly against `data/pb_data/data.db` (exactly
+  one row in `users`, not just trusted from the UI) — then
+  `PUBLIC_DISABLE_SIGNUP` was set to `"true"` and redeployed, and the
+  allowlist was removed from the Caddyfile.
+- **`PUBLIC_DISABLE_SIGNUP` alone does NOT lock down registration** — a
+  real finding, not a formality. Reading the actual source
+  (`web/src/hooks.server.ts`, `routes/api/v1/user/+server.ts`) shows the
+  env var only gates the SvelteKit frontend/wrapper route. The underlying
+  PocketBase `users` collection ships with `createRule: ""` (empty string
+  = open to anyone, confirmed via direct SQLite read of `_collections`)
+  in every migration through v0.20.0, never touched by this env var, any
+  hook, or any migration. A direct `POST` to PocketBase's own
+  `/api/collections/users/records` would create a real account regardless
+  of the setting — not reachable from the host or internet in this
+  deployment (`db` publishes no port at all, only `web` does), but fixed
+  properly anyway: authenticated as a PocketBase superuser (created via
+  `pocketbase superuser upsert` inside the `db` container — no shell in
+  that image, but the binary itself is directly `exec`-able) and PATCHed
+  `createRule` to `null` (superuser-only) via PocketBase's own admin API,
+  reached through `web`'s container (which has `curl` and network access
+  to `db:8090` internally — no new port needed). Verified live: a direct
+  POST afterward returns `403 Only superusers can perform this action`.
+  This fix lives in `data/pb_data` (the persistent volume), so it survives
+  redeploys — but a full `pb_data` wipe/reset would silently reopen it, so
+  re-verify after any such reset. Superuser credentials
+  (`admin@wanderer.local`, dashboard at `/_/`) live in the "Wanderer"
+  Proton Pass item alongside the app secrets.
+- **Container hardening**: `no-new-privileges:true` and `mem_limit: 512m`
+  on all three containers (search/db/web), general defense-in-depth rather
+  than a response to any specific found issue.
+- **Upload endpoint** protected by `UPLOAD_USER`/`UPLOAD_PASSWORD` basic
+  auth — cheap defense-in-depth on a public host, same reasoning as every
+  other app's auth-endpoint hardening in this repo.
+
+**Architecture**: three containers — `search` (Meilisearch, required by
+the app for search, not optional), `db` (PocketBase/SQLite, bundled in the
+`flomp/wanderer-db` image), `web` (the actual app). Only `web` is published
+(bound to the Mac's real LAN IP, same podman-machine quirk as every other
+Mac app here — podman-machine can't bind `0.0.0.0` to the real interface);
+`search` and `db` are internal-only, reached by container name.
+
+**Secrets** (`MEILI_MASTER_KEY`, `POCKETBASE_ENCRYPTION_KEY` — must stay
+fixed forever once real data exists, rotating it breaks decryption of
+existing records — `UPLOAD_USER`, `UPLOAD_PASSWORD`): the "Wanderer" Proton
+Pass item, created via `scripts/pass-create-wanderer-secrets.sh` — run
+under Mathew's own pass-cli session, not the agent's (agent PATs are
+read-only by design).
+
+**To bring it up on a fresh machine:**
+1. **Mac:** `./scripts/pass-create-wanderer-secrets.sh` (once, if the Pass
+   item doesn't already exist), then
+   `./scripts/pass-deploy.sh wanderer Wanderer` — starts on `10.0.1.14:3400`.
+2. **Pi:** copy the updated `pi-reverse-proxy/Caddyfile` over and
+   `docker compose restart caddy`.
+3. **DNS:** `./scripts/dns-digitalocean.sh add wanderer <Pi's public IP>`
+   and `./scripts/dns-nextdns.sh add wanderer.mathewcsims.uk 10.0.1.19`.
+4. **First run only:** register the one real account immediately (the
+   IP-allowlist is protecting this window), verify via
+   `sqlite3 -readonly wanderer/data/pb_data/data.db "SELECT * FROM users;"`
+   (exactly one row, not the UI's word for it), then set
+   `PUBLIC_DISABLE_SIGNUP: "true"` in `wanderer/compose.yaml`, redeploy,
+   and only then remove the setup-time IP-allowlist from the Caddyfile.
+5. **Also first run only:** lock down the PocketBase `users` collection's
+   `createRule` — `PUBLIC_DISABLE_SIGNUP` alone doesn't do this (see the
+   security section above for why). Create a superuser
+   (`podman exec wanderer-db /pocketbase superuser upsert <email>
+   <password> --dir=/pb_data`), authenticate against
+   `http://db:8090/api/collections/_superusers/auth-with-password` from
+   inside the `web` container (it has `curl` and reaches `db` internally),
+   then `PATCH http://db:8090/api/collections/users` with
+   `{"createRule": null}` using the returned token. Verify with a direct
+   `POST` to `/api/collections/users/records` — should return
+   `403 Only superusers can perform this action`.
+5. **Importing rides:** convert KML to GPX first
+   (`gpsbabel -i kml -f ride.kml -o gpx -F ride.gpx`), then import the GPX
+   through Wanderer's own UI — its native KML import exists but is called
+   "experimental" by the project itself.
+
+---
+
 ## Adding another app (the general recipe)
 
 Two patterns, depending on where the app runs:

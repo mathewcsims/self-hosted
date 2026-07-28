@@ -105,6 +105,7 @@ $REPO_ROOT/marque/data
 $REPO_ROOT/bookstack/config
 $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data
+$REPO_ROOT/wanderer/data
 /Users/mathewcsims/contact-sync
 "
 # Extra, deliberately-untracked sources (one absolute path per line) — for

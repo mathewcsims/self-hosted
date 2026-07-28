@@ -708,6 +708,36 @@ healthlog.mathewcsims.uk {
 	}
 }
 
+# ── Wanderer (running on the Mac) ─────────────────────────────────────────
+# Self-hosted GPS trail/ride log. The setup-time IP-allowlist (protecting
+# against the first-registrant-becomes-admin race — PUBLIC_DISABLE_SIGNUP
+# defaults open in upstream's own reference compose) was removed 2026-07-28
+# once registration was confirmed closed: verified directly against
+# data/pb_data/data.db (exactly one real user row, mat@mathewcsims.uk — the
+# `_superusers` table's own bootstrap installer row doesn't count), not
+# just trusted from the UI toggle. Real, permanent access control from here
+# on: registration closed + the rate limit below.
+wanderer.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit wanderer
+
+	# Wanderer has no documented built-in rate limiting on its own auth
+	# endpoints (confirmed against its docs) — same defense-in-depth
+	# reasoning as every other app's auth endpoint in this repo.
+	rate_limit {
+		zone rl_wanderer_auth {
+			match {
+				path /api/collections/users/auth-with-password /api/collections/users/records
+			}
+			key {remote_host}
+			events 15
+			window 1m
+		}
+	}
+
+	reverse_proxy http://{$MAC_IP}:3400
+}
+
 # ── msims.link (running HERE on the Pi) ──────────────────────────────────
 # Self-hosted URL shortener (chhoto-url). Bare root redirects to the real
 # landing page (mathewcsims.uk) rather than showing the shortener's own
