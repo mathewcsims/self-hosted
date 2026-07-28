@@ -15,6 +15,30 @@
 # the "HealthLog" Proton Pass item via scripts/pass-deploy.sh — created by
 # scripts/pass-create-healthlog-secrets.sh (run under your own pass-cli
 # session, not the agent's — see that script's own header for why).
+#
+# Medication-reminder notification loop (fires every 15 min indefinitely,
+# reported 2026-07-27, recurred 2026-07-28) — root cause CONFIRMED and
+# FIXED upstream, resolved by updating the image:
+#   The reminder tick's "already sent today" dedup used to be keyed off
+#   the Telegram message ledger, which only gets a row when a Telegram
+#   send succeeds. This deployment notifies via ntfy, not Telegram, so
+#   that ledger never had a row for it — the dedup check always saw
+#   "not yet sent" and the 15-minute tick re-fired forever, regardless
+#   of whether the dose was later logged in-window. Confirmed via the
+#   container's own structured logs (repeated `sendNotification` calls
+#   at the same phase/slot every 15 min) and the upstream source
+#   (src/lib/notifications/reminder-dedup.ts).
+#   Fixed upstream in v1.33.1 (2026-07-27, commit c6b944b) — moved the
+#   dedup anchor to the channel-agnostic `push_attempts` table. Our
+#   image was pinned to `:latest` but hadn't been recreated since
+#   2026-07-25 (podman doesn't auto-pull `:latest` on `compose up`), so
+#   it was still running the old logic two days after the fix shipped.
+#   Fixed by explicitly `podman pull`-ing and redeploying via
+#   `./scripts/pass-deploy.sh healthlog HealthLog` (2026-07-28), now on
+#   v1.33.2. Lesson: `:latest` here means "latest at the time the
+#   container was last recreated", not "actually latest" — there's no
+#   watchtower/auto-update on this app, so a real fix landing upstream
+#   doesn't reach the running container until someone manually pulls.
 
 name: healthlog
 
@@ -61,17 +85,10 @@ services:
       # summer. The in-app profile timezone setting only affects the
       # database row — it can't reach into the container's own OS clock,
       # so this has to be set here explicitly. Worth fixing on its own
-      # merits (real drift between the server's clock and the user's
-      # actual timezone), but NOTE: this was found and fixed while
-      # chasing a medication-reminder notification loop (2026-07-27,
-      # firing every 15 min despite a logged dose) — set this and
-      # redeployed, the loop kept happening. It turned out to be
-      # unrelated: re-logging the dose fresh through the web UI is what
-      # actually stopped it. Root cause of that loop is still unconfirmed
-      # (the original intake event was source=REMINDER/
-      # attribution_source=AUTO, created early then updated later, vs. a
-      # clean source=WEB entry that worked) — watching for recurrence
-      # before filing upstream.
+      # merits, but NOTE: this was originally found while chasing a
+      # medication-reminder notification loop (2026-07-27) that turned
+      # out to be unrelated — see the loop's real root cause and fix
+      # below.
       TZ: Europe/London
       DATABASE_URL: postgresql://healthlog:${POSTGRES_PASSWORD}@postgres:5432/healthlog
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
