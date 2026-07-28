@@ -2060,12 +2060,21 @@ admin username and password there directly, nothing to configure in
 
 ### Monitoring layout (full audit, 2026-07-23)
 
-24 monitors (as of 2026-07-25 — started at 22, ntfy and the Tailscale
-webhook relay added since), all wired to the Discord notification, all
-tagged (Homelab + host tag), all with TLS cert-expiry alerts on,
-retries=3, 60s retry cadence while failing, and re-notification every 10
-consecutive failed checks (so a long outage keeps pinging rather than
-alerting once).
+28 monitors (as of 2026-07-28 — started at 22, ntfy/Tailscale webhook
+relay/Wanderer added since), all wired to the Discord notification, all
+tagged (Homelab + host tag — HealthLog, msims.link, and Wanderer had
+silently drifted from this despite it being the documented convention
+right here; caught 2026-07-28, all three tagged retroactively via
+`addMonitorTag`, worth double-checking against this doc rather than
+assuming future additions get it right), all with TLS cert-expiry alerts
+on, retries=3, 60s retry cadence while failing, and re-notification every
+10 consecutive failed checks (so a long outage keeps pinging rather than
+alerting once). `wanderer-memo-relay` is deliberately NOT in Kuma — it
+has no HTTP endpoint at all (a pure outbound SSE listener + Owl poster,
+no published port), same shape as `contact-sync`/`trivy-scan`'s launchd
+jobs, neither of which are monitored here either. Its `restart:
+unless-stopped` plus its own container logs are the operational
+visibility for it.
 
 - **App-truth checks, not just "HTTP 200"** wherever the app exposes a
   real health endpoint: Karakeep `/api/health` (keyword `"status":"ok"`),
@@ -2074,7 +2083,9 @@ alerting once).
   Vikunja `/api/v1/info` (keyword `"version"`), all three Memos instances
   `/healthz` (keyword `Service ready`), Apprise `/status` (keyword `OK`),
   Ghost `/ghost/api/admin/site/`, Speedtest Tracker `/api/healthcheck`,
-  Forgejo `/api/healthz`, TimeTagger via oauth2-proxy's own `/ping`.
+  Forgejo `/api/healthz`, TimeTagger via oauth2-proxy's own `/ping`,
+  Wanderer's own root page (keyword `wanderer`, matching its `<title>`,
+  added 2026-07-28 — no dedicated health endpoint found on it).
 - **Expected-status monitors** for auth-gated/POST-only surfaces: Kopia
   accepts `401` (its normal unauthenticated answer); the Vikunja relay and
   the Tailscale webhook relay (added 2026-07-25) both accept `501` — both
@@ -2088,8 +2099,11 @@ alerting once).
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 27 monitors in three groups
-  (Services / Monitoring & infrastructure / Tailnet apps).
+- **Status page** (`/status/all`): all 28 monitors in three groups
+  (Services / Monitoring & infrastructure / Tailnet apps). Wanderer added
+  to the Services group. Each group's monitor order is alphabetical
+  (case-insensitive) — re-sorted 2026-07-28 after Wanderer landed at the
+  end instead; keep new additions sorted into place rather than appended.
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
 read-only endpoints (`/metrics`, badges). ALL write operations (monitors,
@@ -2097,10 +2111,28 @@ notifications, status pages) go through its Socket.IO interface, which
 needs the real admin login — username + password + a TOTP code (2FA is
 enabled) via the `login` event, after which the returned JWT can be
 reused via `loginByToken` for the rest of the session. The "Uptime Kuma"
-Pass item holds `UPTIMEKUMA_APIKEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`.
+Pass item holds `UPTIMEKUMA_APIKEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
+and (added 2026-07-28) `TOTP_SECRET` — the base32 secret from the
+authenticator enrollment, stored as a plain field (not pass-cli's
+dedicated TOTP field type, which `item totp` looks for and won't find
+here), so the code is generated with a direct RFC 6238 implementation
+(stdlib `hmac`/`hashlib`/hardcoded to 30s/6-digit) rather than that CLI
+subcommand. Storing this closes the loop the agent previously couldn't:
+before this, adding/editing a monitor needed Mathew's live 6-digit code
+pasted in from his phone every time.
+
 One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
 `"conditions": []` explicitly or the insert fails a NOT NULL constraint.
-A second, for adding a monitor to a status page's group: `saveStatusPage`
+The full monitor object returned by `monitorList` also isn't directly
+resubmittable to `add` as-is — several of its fields are response-only
+decorations, not real `monitor` table columns, and each throws its own
+opaque `SQLITE_ERROR: table monitor has no column named X` one at a time
+rather than a single combined error: strip `id`, `childrenIDs`, `path`,
+`pathName`, `parent`, `forceInactive`, `includeSensitiveData`,
+`maintenance`, `screenshot`, `remoteBrowser`, and `tags` (tags live in a
+separate join table, added via `notificationIDList`/tag-specific calls
+instead, not the `add` payload) before submitting.
+A second gotcha, for adding a monitor to a status page's group: `saveStatusPage`
 takes `(slug, config, imgDataUrl, publicGroupList)` — `imgDataUrl` must
 be `""` not `null`/omitted (a null fails a `.startsWith` call server-
 side), and if `config` was fetched from the **public** REST endpoint
@@ -2111,7 +2143,11 @@ public response) — round-tripping it back as-is throws an opaque
 reading `/app/server/model/status_page.js` directly inside the running
 container (`docker exec uptime-kuma grep -n ...` on the Pi) rather than
 guessing further. Fix: explicitly set `config.domainNameList = []` if
-missing before saving.
+missing before saving. `publicGroupList` itself isn't returned by
+`getStatusPage` at all (confirmed live — only `config` comes back); fetch
+it from the public REST endpoint instead, splice the new monitor
+(`{id, name}` is enough) into the right group's `monitorList`, and submit
+that alongside the authenticated `config`.
 
 **Switched to `louislam/uptime-kuma:2.4.0-slim-rootless` (2026-07-23)** —
 the standard `2.4.0` image carried 64 CRITICAL CVEs, 43 of them in
