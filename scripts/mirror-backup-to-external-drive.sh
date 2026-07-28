@@ -72,9 +72,15 @@ import json, os, sys, subprocess
 
 d = json.load(sys.stdin)
 fields = {}
-for s in d["item"]["content"]["content"]["Custom"]["sections"]:
+content = d["item"]["content"]
+for s in content["content"]["Custom"]["sections"]:
     for f in s["section_fields"]:
         fields[f["name"]] = list(f["content"].values())[0]
+# `pass-cli item update --field x=y` writes into a separate top-level
+# `extra_fields` array, not into any section — confirmed live. See
+# pass-deploy.sh for the same fix and full explanation.
+for f in content.get("extra_fields", []):
+    fields[f["name"]] = list(f["content"].values())[0]
 
 env = os.environ.copy()
 env["RCLONE_B2_ACCOUNT"] = fields["B2_KEY_ID"]

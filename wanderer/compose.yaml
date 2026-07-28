@@ -170,3 +170,40 @@ services:
       retries: 10
       start_period: 20s
     mem_limit: 512m
+
+  # Wanderer -> Owl relay. Wanderer has no webhook system at all (confirmed
+  # by reading its source) — this holds PocketBase's own built-in realtime
+  # SSE connection open against `db` directly (not reachable through `web`
+  # or Caddy) and posts a Memo to Owl on every new trail creation. See
+  # memo-relay/relay.py's own header comment for the full design rationale
+  # (why superuser auth, why best-effort/no retry queue).
+  memo-relay:
+    build:
+      context: ./memo-relay
+      dockerfile: Dockerfile
+    container_name: wanderer-memo-relay
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "8090"
+      WANDERER_SUPERUSER_EMAIL: ${WANDERER_SUPERUSER_EMAIL}
+      WANDERER_SUPERUSER_PASSWORD: ${WANDERER_SUPERUSER_PASSWORD}
+      WANDERER_PUBLIC_URL: https://wanderer.mathewcsims.uk
+      # Not sensitive — the app account's own username (confirmed live,
+      # not the same as the login email's local part). Used to build the
+      # real trail viewer URL, /trail/view/@{username}@{host}/{id}.
+      WANDERER_USERNAME: mathewcsims
+      # Owl (Memos) — LAN IP + published port, same as every other
+      # Mac-app-to-Mac-app reference in this repo (podman-machine
+      # networking, not reachable via a container-name hostname since
+      # they're separate compose projects).
+      OWL_URL: http://10.0.1.14:5231
+      MEMOS_TOKEN: ${MEMOS_TOKEN}
+    # No `ports:` — outbound-only (holds an SSE connection to `db`, posts
+    # to Owl), nothing needs to reach this container at all.
+    mem_limit: 128m

@@ -45,10 +45,16 @@ import json, os, sys, shlex
 
 d = json.load(sys.stdin)
 fields = {}
-sections = d["item"]["content"]["content"]["Custom"]["sections"]
+content = d["item"]["content"]
+sections = content["content"]["Custom"]["sections"]
 for section in sections:
     for f in section["section_fields"]:
         fields[f["name"]] = list(f["content"].values())[0]
+# `pass-cli item update --field x=y` writes into a separate top-level
+# `extra_fields` array, not into any section — confirmed live. See
+# pass-deploy.sh for the same fix and full explanation.
+for f in content.get("extra_fields", []):
+    fields[f["name"]] = list(f["content"].values())[0]
 
 allowed_email = fields.pop("ALLOWED_EMAIL")
 with open(os.environ["ALLOWED_EMAIL_FILE"], "w") as f:

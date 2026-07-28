@@ -48,11 +48,16 @@ PROTON_PASS_AGENT_REASON="DigitalOcean DNS management: $ACTION $*" \
 import json, os, sys, urllib.request, urllib.error, urllib.parse
 
 d = json.load(sys.stdin)
+content = d["item"]["content"]
 token = None
-for s in d["item"]["content"]["content"]["Custom"]["sections"]:
-    for f in s["section_fields"]:
-        if f["name"] == "DIGITAL_OCEAN_DNS_TOKEN":
-            token = list(f["content"].values())[0]
+fields = [f for s in content["content"]["Custom"]["sections"] for f in s["section_fields"]]
+# `pass-cli item update --field x=y` writes into a separate top-level
+# `extra_fields` array, not into any section — confirmed live. See
+# pass-deploy.sh for the same fix and full explanation.
+fields += content.get("extra_fields", [])
+for f in fields:
+    if f["name"] == "DIGITAL_OCEAN_DNS_TOKEN":
+        token = list(f["content"].values())[0]
 
 domain = os.environ["DOMAIN"]
 

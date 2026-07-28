@@ -3502,6 +3502,115 @@ read-only by design).
    confirmed working in real use, despite upstream's own "experimental"
    label on that import path.
 
+### Wanderer -> Owl relay (`wanderer/memo-relay/`)
+
+On every new trail Wanderer creates, posts a Memo to Owl (the personal
+Memos instance, `owl.mathewcsims.uk`) with the ride's stats and a link back
+to it. Wanderer has **no webhook system at all** — confirmed by reading its
+actual source (both the SvelteKit frontend and the Go/PocketBase backend) —
+so this uses PocketBase's own built-in realtime API instead: a persistent
+Server-Sent Events connection to `/api/realtime` on the `db` container
+(never reachable through `web` or Caddy — internal to the compose project
+only), subscribed to the `trails` collection, reacting to `action: create`
+events.
+
+**Why superuser auth, not a scoped token**: trails default to private
+(`viewRule: id = @request.auth.id`), and only the superuser account can see
+every trail's realtime events regardless of owner — same pragmatic
+tradeoff Karakeep makes using its full `MEILI_MASTER_KEY` rather than a
+scoped index key elsewhere in this repo.
+
+**Best-effort, no retry queue** — same pattern as
+`vikunja-webhook-relay`'s Apprise forward: a failed Owl post is logged, not
+retried. If this container is down when a ride is created, that event is
+simply missed. Acceptable for a personal convenience feature.
+
+**Data flow verified**: trail schema confirmed directly against the live
+instance (`distance` in metres, `duration` in seconds, `elevation_gain`/
+`elevation_loss` in metres — not guessed from docs).
+
+**Three real bugs found and fixed after the first live test**, none
+guessable from docs alone:
+- **No title on the posted Memo.** Memos has no separate title field — a
+  memo's displayed title is derived from a leading Markdown heading. The
+  original first line was bold text (`**name**`), which Owl's frontend
+  doesn't treat as a title at all. Fixed by leading with a real `# `
+  heading.
+- **`duration` reads as 0 for KML-sourced trails specifically.** Confirmed
+  as a genuine upstream Wanderer bug, not a timing issue on this side:
+  its KML->GPX conversion (`web/src/lib/util/gpx_util.ts`) parses
+  per-point timestamps out of the KML but discards them before building
+  GPX points, so the Go backend's duration computation
+  (`MovingData()` from track-point timestamp deltas) gets none to work
+  with and permanently stores 0 — computed synchronously at trail
+  creation, not fixed by waiting longer. GPX imports are unaffected.
+  Shown as "n/a" rather than a false "0m". Worth reporting upstream if
+  this keeps mattering.
+- **Wrong trail URL format.** Not `/trail/{id}` — the real viewer route is
+  `/trail/view/@{username}@{host}/{id}`, an ActivityPub-style actor handle
+  embedded in the URL. `{username}` is the app account's own username
+  (`mathewcsims`), confirmed different from the login email's local part
+  (`mat`) — read directly from the `users` table, not assumed.
+- **Posting can't be a fixed delay after `create` at all.** First fix was
+  a flat 20s wait, which turned out to be the wrong shape of fix entirely
+  — a human manually reviewing/editing a freshly imported trail (fixing
+  the name, adding photos, correcting stats) can take far longer than any
+  sensible fixed wait, and firing partway through an edit posts a
+  half-finished entry. Replaced with a real debouncer: every `create` OR
+  `update` event for a trail resets a per-trail timer
+  (`DEBOUNCE_SECONDS`, default 15 minutes); the trail is only re-fetched
+  and posted once it's gone quiet for that whole window, however long the
+  actual editing session took. Each trail posts at most once per process
+  lifetime.
+
+**Photos/attachments**: the trail's `photos` field (a real PocketBase file
+field, `maxSelect: 99`) — including Wanderer's own auto-generated
+route-map image, which lives in the same field as real uploaded photos
+with nothing to distinguish them — are fetched from `/api/files/trails/
+{id}/{filename}` on `db` (superuser-authenticated) and attached to the
+Memo via Owl's `POST /api/v1/attachments` (`memo` field set to the newly
+created memo's `name`, linking it directly rather than a separate
+`SetMemoAttachments` call).
+
+**Secrets** (`WANDERER_SUPERUSER_EMAIL`, `WANDERER_SUPERUSER_PASSWORD`,
+`MEMOS_TOKEN` — an Owl Personal Access Token): added to the existing
+"Wanderer" Proton Pass item via
+`scripts/pass-add-wanderer-memo-relay-secret.sh` — run under Mathew's own
+pass-cli session. The Memos PAT is created first in Owl's own UI
+(Settings -> Access Tokens), never handled by the agent.
+
+**To bring it up**: `./scripts/pass-add-wanderer-memo-relay-secret.sh`
+once, then redeploy the whole `wanderer` compose project
+(`./scripts/pass-deploy.sh wanderer Wanderer`) — the relay is a fourth
+service in the same compose file, so this brings it up alongside the app.
+Note: `podman compose up -d` does NOT rebuild an already-built image just
+because its source changed — after editing `relay.py`, run
+`podman compose build memo-relay` in `wanderer/` first, then redeploy, or
+the container keeps running stale code silently.
+
+---
+
+### A real bug found in shared Pass tooling while wiring this up
+
+`pass-cli item update --field x=y` (used by `pass-add-*-secret.sh`
+scripts to add secrets to an item after its initial creation) writes new
+fields into a separate top-level `extra_fields` array, not into any
+section — confirmed live by reading the raw `item view --output json`
+response. Every `pass-deploy*.sh` / `dns-*.sh` / `mirror-backup-to-
+external-drive.sh` script that reads secrets only looked at
+`content.content.Custom.sections`, so any field added via `item update`
+was silently invisible at deploy time — the CLI reports success
+(`"N field(s) updated"` or `"created"`), the field is genuinely there and
+readable via `item view`, it just wasn't where any deploy script looked.
+Fixed in all affected scripts (`pass-deploy.sh`, `pass-deploy-remote.sh`,
+`pass-deploy-kopia-server.sh`, `pass-deploy-timetagger.sh`,
+`dns-digitalocean.sh`, `dns-nextdns.sh`,
+`mirror-backup-to-external-drive.sh`) to also read `extra_fields` and
+merge it in. `pass-seed-apprise.sh` already did this correctly. Worth
+knowing for any future `pass-add-*-secret.sh` script: fields land in
+`extra_fields`, and any NEW script reading Pass items needs to account
+for this too.
+
 ---
 
 ## Adding another app (the general recipe)

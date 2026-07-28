@@ -46,12 +46,17 @@ fetch_exports() {
 import json, sys, shlex
 
 d = json.load(sys.stdin)
-sections = d["item"]["content"]["content"]["Custom"]["sections"]
-for section in sections:
-    for f in section["section_fields"]:
-        name = f["name"]
-        value = list(f["content"].values())[0]
-        print(f"export {name}={shlex.quote(value)}")
+content = d["item"]["content"]
+sections = content["content"]["Custom"]["sections"]
+fields = [f for section in sections for f in section["section_fields"]]
+# `pass-cli item update --field x=y` writes into a separate top-level
+# `extra_fields` array, not into any section — confirmed live. See
+# pass-deploy.sh for the same fix and full explanation.
+fields += content.get("extra_fields", [])
+for f in fields:
+    name = f["name"]
+    value = list(f["content"].values())[0]
+    print(f"export {name}={shlex.quote(value)}")
 '
 }
 
