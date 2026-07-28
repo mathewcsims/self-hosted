@@ -134,10 +134,21 @@ def post_memo(trail, pb_token=None):
     # derived from a leading Markdown heading. A plain bold-text first line
     # rendered with no title at all in Owl's UI; a real `#` heading is what
     # Memos' own frontend looks for.
+    #
+    # The trail link is wrapped as an explicit [text](url) Markdown link,
+    # not posted as a bare URL. Confirmed live (2026-07-28): Memos' own
+    # bare-URL auto-linkifier fails on Wanderer's URL shape specifically —
+    # the ActivityPub-style @user@host segment in the path trips it up,
+    # and the memo comes back from Memos' own API with
+    # `property.hasLink: false`, meaning Memos itself never recognized it
+    # as a link at all, regardless of how correct the raw text is.
+    # Explicit link syntax is parsed as a real link node directly, bypasses
+    # that bare-URL heuristic entirely, and is unaffected by anything in
+    # the URL's own path.
     content = (
         f"# 🚴 {name}\n"
         f"📅 {date} · 📏 {distance_km:.1f} km · ⛰️ {elevation_gain:.0f}m gain · ⏱️ {duration}\n"
-        f"🔗 {link}\n"
+        f"🔗 [View on Wanderer]({link})\n"
         f"#cycling #wanderer"
     )
 

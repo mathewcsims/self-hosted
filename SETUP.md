@@ -3587,6 +3587,18 @@ guessable from docs alone:
   embedded in the URL. `{username}` is the app account's own username
   (`mathewcsims`), confirmed different from the login email's local part
   (`mat`) — read directly from the `users` table, not assumed.
+- **Memos itself fails to linkify the correct URL.** Fixed the URL format
+  above, then found a second, separate bug: even with the exactly correct
+  URL as a bare string, Memos' own bare-URL auto-linkifier chokes on the
+  `@user@host` segment in the path and never recognizes it as a link at
+  all — confirmed via Memos' own API, `property.hasLink: false` on the
+  posted memo despite the raw text being byte-for-byte correct. Fixed by
+  posting the link as an explicit Markdown `[text](url)` link instead of
+  a bare URL — bypasses the bare-URL heuristic entirely, parsed as a real
+  link node regardless of what's in the URL's own path. Verified live:
+  `hasLink: true` after the fix, both on new posts and on the one
+  already-posted memo (patched in place via `PATCH .../memos/{id}
+  ?updateMask=content`).
 - **Posting can't be a fixed delay after `create` at all.** First fix was
   a flat 20s wait, which turned out to be the wrong shape of fix entirely
   — a human manually reviewing/editing a freshly imported trail (fixing
