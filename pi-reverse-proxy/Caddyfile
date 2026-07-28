@@ -211,6 +211,13 @@ vikunja.mathewcsims.uk {
 # by default, so nothing extra is needed here for that specifically.
 blog.mathewcsims.uk {
 	import security_headers
+	# Ghost admin's own "View site" panel (/ghost/#/site) embeds the live
+	# site in a same-origin iframe — security_headers' blanket DENY blocks
+	# ALL framing, even same-origin, unlike SAMEORIGIN, which is why that
+	# panel showed a broken/blank preview. Override just for this site;
+	# no other app in this repo frames itself, so the global default
+	# stays DENY.
+	header X-Frame-Options "SAMEORIGIN"
 	import general_ratelimit blog
 
 	# Ghost has its own built-in login/password-reset rate limit
