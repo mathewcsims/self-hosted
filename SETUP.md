@@ -18,7 +18,6 @@ recipe — see "Adding another app" near the end.
 | Uptime Kuma | `https://status.mathewcsims.uk` | **Pi** | set up on first visit; 2FA recommended |
 | Vikunja webhook relay | `https://vikunja-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — HMAC-signed requests only |
 | Kopia backups | `https://backup.mathewcsims.uk` | **Pi**, LAN-only (Mac also backs up, no daemon) | username + password, see its section below |
-| LiteLLM AI gateway | `https://litellm.mathewcsims.uk` | Mac `:4000`, LAN-only | Caddy basic_auth + LiteLLM UI login (dashboard); bearer keys (API) — see its section below |
 
 ## Architecture
 
@@ -128,9 +127,6 @@ below says which.
 | `msims-link/landing/` | **Pi** | static fallback for the bare domain (Caddy's own redirect normally intercepts before this is ever served — see the msims.link section) |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
 | `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
-| `litellm/compose.yaml` | **Mac** | LiteLLM AI gateway + Postgres sidecar; LAN-only (`litellm.mathewcsims.uk`); reads secrets from Proton Pass |
-| `litellm/litellm_config.yaml` | **Mac** | model routing + env-var references (no secrets — tracked) |
-| `litellm/pgdata/` | **Mac** | **virtual keys + spend tracking live here** (Postgres datadir, gitignored) |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
@@ -3784,92 +3780,6 @@ knowing for any future `pass-add-*-secret.sh` script: fields land in
 for this too.
 
 ---
-
-## LiteLLM AI gateway (https://litellm.mathewcsims.uk) — LAN-only, runs on the Mac
-
-One OpenAI-compatible endpoint (`/v1`) in front of every AI provider this
-stack uses, so no app ever holds a real provider credential — apps get
-per-app **virtual keys** minted by LiteLLM, scoped to just the model(s)
-they need. First consumer: Marque's (Memos) speech-to-text, backed by the
-org-provisioned **Gemini Enterprise Agent Platform (GEAP)** models
-(project `prj-d-ada-vtxai-svpc-13kf`). The gateway exists because those
-two auth models are incompatible: Memos can only send a static API key;
-GEAP only accepts short-lived OAuth2 tokens minted from Application
-Default Credentials. LiteLLM holds the ADC credential and refreshes
-tokens itself; Marque just sees an "OpenAI" endpoint with a static key.
-Personal providers (Claude/Mistral/AI Studio) can be added later as
-extra `model_list` entries + Pass fields.
-
-A naming note: this repo's prose uses Google's current branding (GEAP)
-throughout; LiteLLM's config schema still uses Google's legacy product
-identifiers in its model prefix and parameter keys — those appear
-verbatim in `litellm/litellm_config.yaml` as required third-party machine
-identifiers, not a naming choice.
-
-**Security posture** (this one container holds every AI credential the
-stack has, and can spend money — it gets every layer available):
-- LAN-gated behind Caddy, standard `@lan`/`abort` shape — never
-  internet-reachable despite the real hostname/cert.
-- Caddy `basic_auth` on the dashboard paths only (`/ui/*`, `/sso/*`) —
-  deliberately NOT on `/v1/*`, where it would collide with LiteLLM's own
-  Bearer auth over the same `Authorization` header. The bcrypt hash lives
-  in the Pi's gitignored `.env` (`LITELLM_UI_HASH`) — this repo is
-  public, and a published bcrypt hash is only as strong as the password
-  behind it. Generate: `docker exec caddy caddy hash-password`.
-- LiteLLM's own auth on every API call: master key for admin, scoped
-  virtual keys for consumers.
-- Advisory history reviewed before pinning (see compose.yaml's header):
-  extensive and recent — multiple critical auth bypasses, SQL injection
-  in key verification, and two releases (1.82.7/1.82.8) that shipped
-  actual credential-harvesting malware. All fixed by v1.84.0; pinned
-  v1.94.0 by digest. The malware incident is why the digest pin matters
-  more here than anywhere else in the repo.
-
-**The GCP credential — org constraints, found live:** the org blocks
-service-account key creation (`constraints/iam.disableServiceAccountKeyCreation`
-— "create new key" greyed out in the console, plus a policy banner), so
-this uses **user-level ADC** instead: `gcloud auth application-default
-login` + `set-quota-project prj-d-ada-vtxai-svpc-13kf`, then
-`scripts/pass-create-litellm-secrets.sh` base64s the resulting
-`authorized_user` JSON into the "LiteLLM" Pass item (a field, not a Pass
-attachment — pass-cli's agent surface is download-only for attachments,
-so a field is the only shape the tooling can both read and write).
-`scripts/pass-deploy-litellm.sh` decodes it to the gitignored
-`litellm/gcp-credentials.json` (0600) on every deploy and always restarts
-the gateway container, because Google's client libraries cache
-credentials in memory. **Known failure mode:** the refresh token inside
-user ADC is subject to the org's session policies — if it's revoked,
-transcription fails with auth errors until you re-run the two gcloud
-commands, then `scripts/pass-update-litellm-gcp-adc.sh` (your own
-pass-cli session — agent PATs can't update items), then the deploy
-script.
-
-**Gotchas:**
-- `LITELLM_SALT_KEY` encrypts provider credentials stored in the DB and
-  must NEVER change once set — same "fixed forever" class as Wanderer's
-  `POCKETBASE_ENCRYPTION_KEY`.
-- The config's model id and region are PLACEHOLDERS
-  (`gemini-2.5-flash` / `europe-west2`) — which model/region the org has
-  actually provisioned is deliberately still an open decision; swap the
-  two marked lines in `litellm_config.yaml` when settled.
-- Caddy's `basic_auth` hash provisions at config load, so the CI
-  `caddyfile` job passes a dummy hash env var (see ci.yml) — without it,
-  validation fails on the missing placeholder.
-- Consumers call `https://litellm.mathewcsims.uk/v1` — never the Mac
-  IP:port (repo-wide no-hardcoded-IPs rule).
-
-**Still to do when first deployed** (deploy order): run
-`pass-create-litellm-secrets.sh` (own session, after the gcloud steps) →
-add `LITELLM_UI_HASH` to the Pi's `.env` → DNS (`dns-digitalocean.sh add
-litellm <WAN-IP>`, `dns-nextdns.sh add litellm.mathewcsims.uk
-10.0.1.19`) → copy `pi-reverse-proxy/` to the Pi, restart caddy →
-`pass-deploy-litellm.sh` → mint Marque's virtual key in the dashboard
-(scoped to `geap-transcribe` only) → wire Marque's AI provider setting
-(type OPENAI, endpoint `https://litellm.mathewcsims.uk/v1`, the virtual
-key) — **verify at that point** whether LiteLLM fronts
-`/v1/audio/transcriptions` for GEAP Gemini models or whether Marque's
-GEMINI provider type against a passthrough route is the working shape;
-this is the one integration seam not yet proven live.
 
 ## Adding another app (the general recipe)
 

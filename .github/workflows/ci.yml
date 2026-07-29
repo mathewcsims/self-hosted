@@ -78,15 +78,10 @@ jobs:
       - name: Build the Pi's Caddy image (Dockerfile pins base by digest)
         run: docker build -t caddy-ci pi-reverse-proxy/
       - name: caddy validate
-        # LITELLM_UI_HASH: basic_auth provisions its bcrypt hash at config
-        # load, so validation needs SOME valid hash — this is a dummy
-        # (hash of a throwaway string, generated for CI only); the real
-        # one lives in the Pi's gitignored .env.
         run: |
           docker run --rm \
             -e ACME_EMAIL=ci@example.com \
             -e MAC_IP=10.0.1.14 \
             -e CP_DOMAIN=cp.example.com \
-            -e 'LITELLM_UI_HASH=$2a$14$CTftQONlaXpsn271ZqlbS.wP6SMb5JOFTAQVuZdX6shGrGGXXxxyu' \
             -v "$PWD/pi-reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy-ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

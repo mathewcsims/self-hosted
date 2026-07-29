@@ -547,44 +547,6 @@ status.mathewcsims.uk {
 # (no anonymous read OR write), so this exposes a login wall, not an open
 # relay; the general per-IP rate limit covers brute-force. Caddy upgrades
 # WebSocket automatically (subscriber connections) — nothing extra needed.
-# ── LiteLLM AI gateway (running on the Mac, LAN-ONLY) ────────────────────
-# Clean public URL https://litellm.mathewcsims.uk, but only for LAN/tailnet
-# clients — same @lan/abort shape as Apprise/Speedtest Tracker above. This
-# is the single point every app's AI calls route through (holds provider
-# credentials, can spend money), so it gets every layer available:
-#   1. the LAN gate below — internet clients get a closed connection;
-#   2. Caddy basic_auth on the dashboard UI paths ONLY (/ui/*, /sso/*) —
-#      deliberately NOT on /v1/* or the management API, where it would
-#      collide with LiteLLM's own Bearer-token auth over the same
-#      Authorization header;
-#   3. LiteLLM's own auth on every API call — master key for admin,
-#      per-app scoped virtual keys for consumers (Marque etc.), so a
-#      leaked app key can only reach the models that app was granted;
-#   4. the general per-IP rate limit.
-# The bcrypt hash lives in the Pi's gitignored .env (LITELLM_UI_HASH), not
-# here — this file is tracked in a public repo, and offline-cracking a
-# published bcrypt hash is only as hard as the password behind it.
-# Generate with: docker exec caddy caddy hash-password
-# Consumers call https://litellm.mathewcsims.uk/v1 — never the Mac
-# IP:port directly (see the repo-wide no-hardcoded-IPs rule).
-litellm.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit litellm
-
-	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
-	handle @lan {
-		@dashboard path /ui/* /sso/*
-		basic_auth @dashboard {
-			mat {$LITELLM_UI_HASH}
-		}
-		reverse_proxy http://{$MAC_IP}:4000
-	}
-	# non-LAN (internet) clients: closed connection, nothing revealed
-	handle {
-		abort
-	}
-}
-
 ntfy.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit ntfy
