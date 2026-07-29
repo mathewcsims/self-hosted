@@ -1,0 +1,38 @@
+# LiteLLM proxy config — tracked in the repo: contains NO secrets, only
+# env-var references and model routing. See compose.yaml's header for the
+# full design rationale.
+#
+# NOTE ON NAMING: the "vertex_ai/" model prefix and "vertex_*" parameter
+# keys below are LiteLLM's own required schema identifiers for Google's
+# Gemini Enterprise Agent Platform (GEAP) — third-party machine
+# identifiers, not a naming choice; renaming them breaks routing. Current
+# branding is used everywhere we pick the words (model_name aliases,
+# comments, docs).
+
+model_list:
+  # Org-provisioned GEAP access (project prj-d-ada-vtxai-svpc-13kf),
+  # authenticated via Application Default Credentials — the
+  # GOOGLE_APPLICATION_CREDENTIALS file mounted by compose.yaml; no api_key
+  # anywhere, which is the entire reason this gateway exists (Memos can
+  # only send a static key; GEAP only takes ADC-minted OAuth2 tokens).
+  - model_name: geap-transcribe
+    litellm_params:
+      # PLACEHOLDER model id — gemini-2.5-flash is GEAP's multimodal
+      # default and what Memos' own GEMINI provider type defaults to, but
+      # the final choice of which org-provisioned model to use is
+      # deliberately still open. Swap this one line when decided.
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: prj-d-ada-vtxai-svpc-13kf
+      # PLACEHOLDER region — confirm which region(s) the org has
+      # provisioned model access in before first use; europe-west2
+      # (London) is the guess for a UK org, not a verified fact.
+      vertex_location: europe-west2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  # Providers don't all accept the same OpenAI params — drop unsupported
+  # ones instead of erroring, so one consumer config works across models.
+  drop_params: true
