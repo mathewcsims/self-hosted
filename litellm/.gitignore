@@ -1,0 +1,5 @@
+# Written at deploy time by scripts/pass-deploy-litellm.sh from the Pass
+# item's GCP_CREDENTIALS_B64 field — must never be committed.
+gcp-credentials.json
+# Postgres datadir (virtual keys, spend tracking).
+pgdata/
