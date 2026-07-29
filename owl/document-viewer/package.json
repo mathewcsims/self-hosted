@@ -8,16 +8,16 @@
     "build": "node esbuild.config.mjs"
   },
   "dependencies": {
-    "@univerjs/core": "^0.4.2",
-    "@univerjs/design": "^0.4.2",
-    "@univerjs/engine-formula": "^0.4.2",
-    "@univerjs/engine-render": "^0.4.2",
-    "@univerjs/sheets": "^0.4.2",
-    "@univerjs/sheets-ui": "^0.4.2",
-    "@univerjs/ui": "^0.4.2",
+    "@univerjs/core": "^0.25.1",
+    "@univerjs/design": "^0.25.1",
+    "@univerjs/engine-formula": "^0.25.1",
+    "@univerjs/engine-render": "^0.25.1",
+    "@univerjs/sheets": "^0.25.1",
+    "@univerjs/sheets-ui": "^0.25.1",
+    "@univerjs/ui": "^0.25.1",
     "docx-preview": "^0.3.2",
     "dompurify": "^3.1.6",
-    "epubjs": "^0.3.93",
+    "epubjs": "^0.4.2",
     "fflate": "^0.8.2",
     "highlight.js": "^11.9.0",
     "marked": "^12.0.2",
@@ -26,7 +26,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "esbuild": "^0.23.1",
+    "esbuild": "^0.28.1",
     "typescript": "^5.5.4"
   }
 }
