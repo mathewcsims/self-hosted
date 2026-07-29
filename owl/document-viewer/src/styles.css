@@ -1,0 +1,119 @@
+.dv-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dv-modal {
+  background: var(--background, #fff);
+  color: var(--foreground, #111);
+  width: min(90vw, 1100px);
+  height: min(85vh, 900px);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+.dv-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+  font-weight: 600;
+}
+.dv-filename {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-experimental-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #d97706;
+  border: 1px solid #d97706;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.dv-preview-badge {
+  /* Positioned relative to the row (set position:relative in JS only if
+     not already positioned) — floats just left of Memos' own download
+     icon without being a normal flex participant, so it can't disturb
+     the row's existing two-child justify-between layout. Empirically
+     tuned offset against the pinned Memos version's DocumentItem markup
+     (h-4 w-4 download icon + gap-3 + px-3 row padding). */
+  position: absolute;
+  top: 50%;
+  right: 34px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #2563eb;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.dv-preview-badge:hover {
+  opacity: 1;
+}
+.dv-preview-badge[data-dv-tier="experimental"] {
+  color: #d97706;
+}
+.dv-close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: inherit;
+  padding: 2px 6px;
+}
+.dv-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+  position: relative;
+}
+.dv-loading,
+.dv-error {
+  padding: 24px;
+  text-align: center;
+}
+.dv-pdf-frame,
+.dv-html-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+.dv-text-pre {
+  margin: 0;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+.dv-markdown {
+  padding: 16px 24px;
+}
+.dv-archive-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.dv-archive-table th,
+.dv-archive-table td {
+  text-align: left;
+  padding: 4px 12px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}

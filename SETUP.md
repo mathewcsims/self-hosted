@@ -94,6 +94,8 @@ below says which.
 | `owl/compose.yaml` | **Mac** | Memos, container `owl` — a separate personal instance, closed registration, migrated from a ScaleTail Tailscale-sidecar deployment |
 | `owl/data/` | **Mac** | **your notes live here** (sqlite DB + attachments) |
 | `owl/owl-logo.svg` | **Mac** | source asset for the instance logo (tracked; the deployed logo itself is a data URI in Memos' own DB) |
+| `owl/owl-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
+| `owl/document-viewer/` | **Mac** | client-side attachment preview feature — source (`src/`), esbuild config, and a separate Caddy sidecar (`compose.yaml`, own `Caddyfile`) serving the built bundle; deployed via `scripts/pass-deploy-owl-document-viewer.sh`, see the Owl section below |
 | `marque/compose.yaml` | **Mac** | Memos, container `marque` — a third, unrelated instance (private work notes), closed registration, Infomaniak SSO only, fresh install (no migration) |
 | `marque/data/` | **Mac** | this instance's notes (sqlite DB + attachments) |
 | `marque/marque-logo.svg` | **Mac** | source asset for the instance logo (tracked; deployed as a data URI in Memos' own DB) |
@@ -815,6 +817,123 @@ fetching the full current `GENERAL` setting first, changing only
 `additionalStyle` in the parsed JSON, and PATCHing the complete object back
 (`raw PATCH ... --body-file`) — the safe pattern this doc already
 recommends elsewhere for this endpoint.
+
+### Document viewer (client-side, no conversion pipeline)
+
+Memos' own frontend force-downloads every non-image/video/audio attachment
+(`web/src/components/MemoMetadata/Attachment/AttachmentListView.tsx`'s
+`DocsList`, confirmed by reading Memos' actual source at the pinned
+version: `<a href=... download>` unconditionally wraps every document
+attachment). `owl/document-viewer/` adds a client-side preview feature for
+PDF/HTML/DOCX/XLSX and a "text family" (Markdown/CSV/JSON/XML/source code)
+at high confidence, plus PPTX/EPUB/RTF/OpenDocument/ZIP-TAR-listing at a
+deliberately lower-confidence "experimental" tier — with iWork
+(.pages/.numbers/.key) and legacy binary Office (.doc/.xls/.ppt) staying
+untouched download-only, since no viable client-side renderer exists for
+either.
+
+**Why not a conversion pipeline (e.g. LibreOffice/Gotenberg converting
+DOCX→PDF before display):** explicitly rejected — every format renders
+via its own native, format-preserving client-side library
+(`docx-preview`, `Univer.js` fed by SheetJS-CE-parsed cell data,
+`pptx-preview`, `epubjs`, a minimal RTF parser, custom ODF XML extraction),
+never through an intermediate file-format conversion step.
+
+**Build/deploy shape**, the first JS build tooling in this repo:
+- `owl/document-viewer/src/` — hand-authored TypeScript (orchestration,
+  per-format viewers), bundled by esbuild (`npm run build` →
+  `dist/`, gitignored) with `splitting: true` so the always-loaded entry
+  chunk (`main.js`, ~7KB) stays tiny — each heavy per-format library only
+  loads via dynamic `import()` when a user actually opens that file type.
+- **Static serving**: no existing pattern fit (Memos has no
+  mounted-static-directory feature; Caddy has never served a repo-tracked
+  bundle as a primary route elsewhere in this repo). A small Caddy sidecar
+  (`owl/document-viewer/compose.yaml`, plain `file_server` mode,
+  `10.0.1.14:5233`) serves `dist/` — reusing Caddy rather than introducing
+  a new technology purely for static files. `pi-reverse-proxy/Caddyfile`
+  adds one `handle_path /document-viewer/*` route inside Owl's block.
+- **Deployment vehicle**: Memos' own native `additionalScript` hook (same
+  mechanism as `additionalStyle` above, its first real use) — but it only
+  ever holds a two-line bootstrap (`<script src="/document-viewer/main.js">`),
+  not the whole bundle, so iterating on viewer internals only ever touches
+  the static sidecar, never the settings API. `scripts/pass-deploy-owl-document-viewer.sh`
+  runs the build, brings up the sidecar, and (given `OWL_MEMOS_PAT`, a
+  token generated in Owl's own Settings ▸ My Account ▸ Access Tokens)
+  PATCHes `additionalScript` via `owl/document-viewer/deploy_additional_script.py`
+  — which fetches the full `GENERAL` settings object first and diffs every
+  *other* field before/after, failing loudly if the non-merging-PATCH
+  gotcha above ever recurs.
+
+**Click interception, deliberately narrow**: the injected script targets
+the `a[download]` selector and its `download`/`title` attributes — plain,
+semantic HTML, far more stable across Memos releases than any internal
+React component/class name. A `MutationObserver` re-scans on every DOM
+change (Memos is an SPA; attachments load without full page navigation).
+Unrecognized types (iWork, legacy binary, anything else) are never
+touched — no listener, no attribute, byte-identical to stock Memos.
+
+**Gotchas hit live while wiring this up, worth knowing if this file ever
+needs revisiting:**
+- **A visible "preview" badge can't just be appended after the row's own
+  content.** Memos' `DocumentItem` row is a two-child flex row
+  (`justify-between`: an icon+text group, then a `DownloadIcon`) — adding
+  a badge as a normal third flex child breaks that distribution
+  unpredictably per filename length. The badge is instead
+  `position: absolute` *within* the row (which stays completely untouched
+  otherwise), floating just left of the download icon without being a
+  flex participant or touching Memos' own DOM nodes — verified against
+  live rendered coordinates, not guessed from source alone.
+- **Reverse-proxied headers don't simply "override."** Memos' own backend
+  sets `X-Frame-Options: DENY` on every response, including attachment
+  files (`server/router/fileserver/fileserver.go`) — this blocks even
+  same-origin framing (PDF preview needs an `<iframe>`). Two Caddy-side
+  attempts failed before the fix held: (1) Caddyfile's adapter reorders
+  top-level directives by its own fixed precedence, not source order,
+  regardless of where an override is written — fixed by wrapping the
+  whole block in an explicit `route { }`, which preserves literal
+  execution order; (2) even with mutually-exclusive path matchers, a
+  plain `header` directive still produced a broken doubled value
+  (`SAMEORIGIN, DENY`) — because `reverse_proxy` copies the upstream's
+  headers onto the response with `Add`, not `Set`, appending Memos' own
+  DENY on top of anything a prior `header` directive pre-set. The fix had
+  to move *into* `reverse_proxy` itself via its `header_down`
+  sub-directive, which runs after the upstream response is already copied
+  in and genuinely replaces the value. All three stages were confirmed via
+  `caddy adapt`'s JSON output and a real authenticated browser `fetch()`
+  with `cache: 'no-store'` — curl-without-auth alone was misleading here
+  (Memos requires auth to serve attachments; an unauthenticated curl just
+  404s).
+- **HTML attachments need `srcdoc`, not `iframe.src`.** Even with framing
+  allowed, Memos serves `.html` attachments with
+  `Content-Disposition: attachment` and `Content-Type: application/octet-stream`
+  — confirmed live — a deliberate anti-XSS measure (only images/PDF are
+  exempted from Memos' own forced-download handling). Pointing an
+  iframe's `src` straight at that URL makes the browser attempt a
+  download instead of rendering it, leaving the frame blank. `html.ts`'s
+  `renderHtml` instead `fetch()`s the body and injects it via
+  `iframe.srcdoc` — this sidesteps `Content-Disposition`/`Content-Type`
+  entirely (neither governs `fetch()` reads or `srcdoc` interpretation),
+  and the `sandbox="allow-popups"` attribute (deliberately *without*
+  `allow-scripts` or `allow-same-origin`, so untrusted uploaded HTML can't
+  execute script or reach Owl's session) still applies identically.
+- **The Mac's podman-machine bind mount can serve a stale view of
+  `dist/`.** More than once during iteration, the sidecar container kept
+  serving an old build after a fresh `npm run build` even with the
+  `./dist:/srv:ro` bind mount unchanged — confirmed by diffing the
+  container's own `/srv/main.js` against the host file, different
+  `Last-Modified` timestamps for supposedly the same path. A full
+  `podman compose down && podman compose up -d` (not just `restart`)
+  reliably picks up the fresh files; a plain `restart` did not. Also
+  cache-bust the PDF/HTML iframe's own request (`?_dv=<timestamp>`) so a
+  browser that cached an earlier broken response for that exact
+  attachment URL — from before any of the fixes above — can't keep
+  serving it back silently.
+
+**Fragility surface for future Memos version bumps**: the only real
+coupling to Memos internals is the `a[download]` selector and its
+`download`/`title` attributes, plus reading `X-Frame-Options`/
+`Content-Disposition` behavior off the live server (not assumed) —
+smoke-test one attachment per format after any future Memos upgrade.
 
 ---
 

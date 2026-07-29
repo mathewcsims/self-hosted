@@ -1,0 +1,11 @@
+# Sidecar's own tiny Caddyfile — plain file_server, nothing else. This is
+# NOT the internet-facing Caddy (that's pi-reverse-proxy/Caddyfile, which
+# reverse-proxies to this container over the LAN, adding security headers
+# and TLS termination there). Short cache lifetime since there's no
+# content-hash-based cache-busting on the built filenames yet.
+:8080 {
+	root * /srv
+	file_server
+	respond /healthz 200
+	header Cache-Control "public, max-age=300"
+}

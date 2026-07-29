@@ -1,0 +1,34 @@
+# Static-file sidecar for the Owl document-viewer bundle (built by
+# `npm run build`, output in ./dist). A separate compose project from
+# owl/compose.yaml (the actual Memos container) — Memos has no
+# mounted-static-directory feature, so this bundle needs its own tiny
+# server rather than trying to shoehorn it into Owl's own container.
+# Reuses Caddy (already vetted throughout this repo) in plain file_server
+# mode rather than introducing a new technology (e.g. nginx) purely for
+# static serving. pi-reverse-proxy/Caddyfile reverse-proxies
+# owl.mathewcsims.uk/document-viewer/* to this container over the LAN.
+name: owl-document-viewer
+
+services:
+  owl-document-viewer-static:
+    image: docker.io/library/caddy@sha256:1172d4213087d3fc30bafc7ff2c2896180eb0c41ff7f75f315568fb36cabdcba
+    container_name: owl-document-viewer-static
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./dist:/srv:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      # Same podman-machine bind-to-LAN-IP quirk as every other Mac app —
+      # podman-machine can't bind 0.0.0.0 to the real interface. 5232 was
+      # already taken (Marque's Memos instance), so this continues the
+      # block at 5233 instead.
+      - "10.0.1.14:5233:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    mem_limit: 128m

@@ -144,25 +144,92 @@ prospect-ukri-tus.mathewcsims.uk {
 # Nimbus precedent), so only one rate-limit zone is needed — no signup zone,
 # unlike prospect-ukri-tus.mathewcsims.uk above.
 owl.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit owl
+	# Wrapped in an explicit route{} block: without it, Caddyfile's adapter
+	# reorders top-level directives by its own fixed precedence rather than
+	# source order (confirmed live via `caddy adapt`).
+	route {
+		import general_ratelimit owl
 
-	rate_limit {
-		# Matches both the REST-gateway and Connect-RPC forms of the same
-		# two endpoints — see the comment on the equivalent Memos zone
-		# above for why both are needed (the web app actually uses the
-		# Connect-RPC path, not the REST one this used to match alone).
-		zone rl_owl_auth {
-			match {
-				path /api/v1/auth/signin /api/v1/auth/refresh /memos.api.v1.AuthService/SignIn /memos.api.v1.AuthService/RefreshToken
+		# Memos' own Go backend ALSO sets X-Frame-Options: DENY on every
+		# response, including attachment files (confirmed by reading
+		# server/router/fileserver/fileserver.go at the pinned version) —
+		# that blocks ANY framing of an attachment, even same-origin, so
+		# the document-viewer's PDF/HTML <iframe> (loaded from this same
+		# page) got refused outright.
+		#
+		# Two earlier attempts at overriding this both failed, confirmed
+		# live via a real browser fetch(): (1) a single unconditional
+		# `header X-Frame-Options DENY` plus a later path-matched
+		# `header ... SAMEORIGIN` override got reordered by Caddyfile's
+		# adapter regardless of source position; (2) even with two fully
+		# mutually-exclusive matchers (one always DENY, one always
+		# SAMEORIGIN, only one ever able to match a given request) the
+		# response STILL came back as the broken, doubled
+		# `SAMEORIGIN, DENY`. Root cause: the `header` directive is
+		# middleware that pre-sets a value on the response BEFORE
+		# reverse_proxy runs — but reverse_proxy then copies the
+		# upstream's own headers onto the response using Add, not Set, so
+		# Memos' own DENY gets appended on top regardless of what a prior
+		# `header` directive set. The fix has to happen AFTER the
+		# upstream response is copied in, which is exactly what
+		# reverse_proxy's own `header_down` sub-directive is for — see
+		# the reverse_proxy block below.
+		rate_limit {
+			# Matches both the REST-gateway and Connect-RPC forms of the
+			# same two endpoints — see the comment on the equivalent
+			# Memos zone above for why both are needed (the web app
+			# actually uses the Connect-RPC path, not the REST one this
+			# used to match alone).
+			zone rl_owl_auth {
+				match {
+					path /api/v1/auth/signin /api/v1/auth/refresh /memos.api.v1.AuthService/SignIn /memos.api.v1.AuthService/RefreshToken
+				}
+				key {remote_host}
+				events 20
+				window 1m
 			}
-			key {remote_host}
-			events 20
-			window 1m
+		}
+
+		# Document-viewer static bundle (owl/document-viewer/) — a
+		# client-side script (injected via Memos' own additionalScript
+		# hook) that lets attachments preview in-browser instead of
+		# force-downloading. Served by a separate minimal Caddy sidecar
+		# on the Mac, not by Memos itself (Memos has no mounted-static-
+		# directory feature). handle_path strips the prefix before
+		# proxying, so the sidecar's own Caddyfile stays a plain
+		# `root * /srv; file_server` with no knowledge of this prefix.
+		# Must come before the bare reverse_proxy below so it's matched
+		# first.
+		handle_path /document-viewer/* {
+			reverse_proxy http://{$MAC_IP}:5233
+		}
+
+		# Attachment files: same security_headers set as everywhere else,
+		# EXCEPT X-Frame-Options — that one is deliberately handled only
+		# by header_down below (see the comment above), never by a plain
+		# `header` directive, so there's no pre-set value for
+		# reverse_proxy's upstream-header copy to double up with.
+		@attachments path /file/*
+		handle @attachments {
+			header {
+				Strict-Transport-Security "max-age=31536000; includeSubDomains"
+				X-Content-Type-Options "nosniff"
+				Referrer-Policy "strict-origin-when-cross-origin"
+			}
+			reverse_proxy http://{$MAC_IP}:5231 {
+				# Runs after Memos' own response (including its DENY) is
+				# already copied in, so this reliably replaces it —
+				# confirmed live, unlike the `header` directive attempts
+				# above.
+				header_down X-Frame-Options "SAMEORIGIN"
+			}
+		}
+
+		handle {
+			import security_headers
+			reverse_proxy http://{$MAC_IP}:5231
 		}
 	}
-
-	reverse_proxy http://{$MAC_IP}:5231
 }
 
 # ── Marque (running on the Mac) ────────────────────────────────────────────
