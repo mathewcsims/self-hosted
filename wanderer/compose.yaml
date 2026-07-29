@@ -198,11 +198,16 @@ services:
       # not the same as the login email's local part). Used to build the
       # real trail viewer URL, /trail/view/@{username}@{host}/{id}.
       WANDERER_USERNAME: mathewcsims
-      # Owl (Memos) — LAN IP + published port, same as every other
-      # Mac-app-to-Mac-app reference in this repo (podman-machine
-      # networking, not reachable via a container-name hostname since
-      # they're separate compose projects).
-      OWL_URL: http://10.0.1.14:5231
+      # Owl (Memos) — reached via its public Caddy hostname, not a raw Mac
+      # LAN IP. Container-name DNS doesn't cross separate compose projects
+      # (true), but that doesn't mean a raw IP is the only alternative:
+      # owl.mathewcsims.uk already resolves to the Pi's LAN IP for LAN
+      # clients via the existing NextDNS rewrite (no WAN round-trip), same
+      # mechanism already used by contact-sync/trivy-scan reaching Apprise
+      # via apprise.mathewcsims.uk. This way, if Owl ever moves to a
+      # different machine, only Caddy's reverse_proxy target needs to
+      # change — nothing here does.
+      OWL_URL: https://owl.mathewcsims.uk
       MEMOS_TOKEN: ${MEMOS_TOKEN}
     # No `ports:` — outbound-only (holds an SSE connection to `db`, posts
     # to Owl), nothing needs to reach this container at all.

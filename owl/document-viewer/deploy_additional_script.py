@@ -24,7 +24,11 @@ import sys
 import urllib.request
 import urllib.error
 
-OWL_BASE_URL = os.environ.get("OWL_BASE_URL", "http://10.0.1.14:5231")
+# Reached via its public Caddy hostname, not a raw Mac LAN IP — resolves
+# to the Pi's LAN IP for LAN clients via the existing NextDNS rewrite (no
+# WAN round-trip), same mechanism already used elsewhere in this repo
+# (e.g. contact-sync/trivy-scan reaching Apprise via apprise.mathewcsims.uk).
+OWL_BASE_URL = os.environ.get("OWL_BASE_URL", "https://owl.mathewcsims.uk")
 SETTINGS_PATH = "/api/v1/instance/settings/GENERAL"
 
 

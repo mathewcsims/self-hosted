@@ -53,7 +53,7 @@ SUPERUSER_PASSWORD = os.environ["WANDERER_SUPERUSER_PASSWORD"]
 WANDERER_PUBLIC_URL = os.environ.get("WANDERER_PUBLIC_URL", "https://wanderer.mathewcsims.uk")
 WANDERER_USERNAME = os.environ.get("WANDERER_USERNAME", "mathewcsims")
 
-OWL_URL = os.environ.get("OWL_URL", "http://10.0.1.14:5231")
+OWL_URL = os.environ.get("OWL_URL", "https://owl.mathewcsims.uk")
 MEMOS_TOKEN = os.environ["MEMOS_TOKEN"]
 
 RECONNECT_DELAY_SECONDS = 15
