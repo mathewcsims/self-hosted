@@ -126,6 +126,7 @@ below says which.
 | `msims-link/data/` | **Pi** | **your short links (SQLite, WAL mode) live here** |
 | `msims-link/landing/` | **Pi** | static fallback for the bare domain (Caddy's own redirect normally intercepts before this is ever served — see the msims.link section) |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
+| `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
@@ -4440,3 +4441,55 @@ this image (only `latest`/`18`), so bumping to a newer PostgreSQL point
 release means checking Docker Hub for a new digest by hand, same as
 before — the difference is just that a stale pin now stays stale
 until someone deliberately updates it, rather than drifting silently.
+
+### Branch protection + required CI (GitHub)
+
+Nothing lands on `main` — not even from the repo owner, not even from an
+agent operating with the owner's credentials — without going through a PR
+whose required checks all pass. Two pieces, added 2026-07-29:
+
+**The checks** (`.github/workflows/ci.yml` — see that file's own comments
+for detail). Four required status checks:
+
+- `dependency-review` — fails any PR whose dependency-graph diff
+  introduces a package version with a known advisory, at *any* severity.
+  This is the PR-gating counterpart to Dependabot alerts, which only scan
+  the default branch after a vulnerable dependency has already landed
+  (which is exactly how the 15 alerts fixed in PR #4 got in unnoticed).
+- `document-viewer` — `npm ci` + full `npm audit --audit-level=low` +
+  `tsc --noEmit` + esbuild build for `owl/document-viewer/`. The audit
+  step is deliberately stricter than dependency-review: it fails a PR when
+  a new advisory has been published against *anything already in* the
+  dependency tree, not just when the PR's own diff makes things worse —
+  enforcing "the tree is clean", not "no regressions".
+- `caddyfile` — builds the Pi's actual custom Caddy image from
+  `pi-reverse-proxy/Dockerfile` and runs `caddy validate` against the real
+  Caddyfile. The stock caddy image rejects this config outright (no
+  `rate_limit` module), so validating against the real image is the only
+  meaningful check — and a broken Caddyfile takes down every public
+  hostname at once, making it the most dangerous single file in the repo.
+- `CodeQL` — GitHub's default-setup code scanning, which was already
+  running but previously gated nothing. Its PR check only fails on *new*
+  alerts introduced by the PR, so the known pre-existing code-scanning
+  findings (deliberately accepted, see the repo's Security tab) don't
+  block anything.
+
+**The enforcement**: a repository ruleset ("main protection", visible
+under Settings ▸ Rules ▸ Rulesets, created via the API). It requires a PR
+before merging (zero required approvals — a solo repo can't self-approve,
+so review count would deadlock; the *checks* are the gate, not a
+reviewer), requires all four checks above plus an up-to-date branch, and
+blocks force-pushes and branch deletion. The bypass list is deliberately
+empty: rulesets bind repo admins unless explicitly exempted, which is what
+makes "even by me" hold — classic branch protection needed a separate
+"include administrators" toggle that was easy to leave off.
+
+**Gotcha to remember**: the ruleset references CI jobs by their `name:`.
+Renaming a job in `ci.yml` without updating the ruleset leaves PRs
+blocked forever waiting on a check that never reports. The reverse also
+holds — the ruleset had to be created *after* the workflow landed on
+`main`, since requiring checks that don't exist yet deadlocks every PR
+including the one adding them.
+
+Dependabot's own security-update PRs flow through the same gate: they're
+ordinary PRs, so they must pass the same four checks before merging.
