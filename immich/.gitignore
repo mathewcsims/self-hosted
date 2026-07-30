@@ -1,0 +1,9 @@
+# Immich's media library — originals, thumbnails, transcodes, and its own
+# DB dumps. Lives on slartibartfast, backed up to B2 via Kopia (see
+# SETUP.md). Never committed.
+data/
+# Postgres datadir (VectorChord/pgvecto.rs). Note: this is deliberately NOT
+# what gets backed up — Immich's built-in DB dump (written into
+# data/backups/) is, because upstream warns a file-copy of a live Postgres
+# datadir won't reliably restore.
+pgdata/

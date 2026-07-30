@@ -1,0 +1,184 @@
+# Immich (https://immich.app) — self-hosted photo/video library with
+# CLIP semantic search and face recognition. Added 2026-07-30.
+#
+# ── FIRST APP ON A THIRD HOST ─────────────────────────────────────────────
+# Runs on `slartibartfast` (Ubuntu 26.04, LAN 10.0.1.11), not the Mac or the
+# Pi. Deploy is the same two-step as Pi apps — copy the folder over, then
+# run the deploy script from the Mac (which pipes secrets over stdin so they
+# never reach argv):
+#   scp -r immich mathewcsims@100.68.10.65:~/immich
+#   ./scripts/pass-deploy-remote.sh immich mathewcsims@100.68.10.65 '~/immich'
+#
+# Unlike Pi-resident apps, this CANNOT be proxied by container name — the
+# `pi-shared` docker network doesn't span hosts. So it publishes a port and
+# Caddy reaches it by IP via a new {$SLARTI_IP} env var, the same shape as
+# {$MAC_IP} (see pi-reverse-proxy/Caddyfile + compose.yaml).
+#
+# ── Security review before deploying ──────────────────────────────────────
+# Checked GitHub's advisory database for immich-app/immich, not just release
+# notes. The history is substantial: a CRITICAL one-click account takeover
+# via XSS in the login continue-redirect (GHSA-8244-8vpr-vp9c), API key
+# privilege escalation (GHSA-237r-x578-h5mv), stored XSS via OCR text in the
+# panorama viewer (GHSA-9qx4-67jm-cc66), account hijacking via oauth2
+# (GHSA-3832-6r8h-9cfm), plus a cluster of five published 2026-07-06 around
+# OIDC TLS verification, shared-link authorisation and open redirects.
+# EVERY published advisory is patched by v3.0.0 at the latest; v3.1.0
+# (pinned below by digest) clears all of them.
+#
+# Worth noting WHERE those bugs cluster: OAuth/OIDC and public shared-link
+# code paths. This instance deliberately uses local accounts only (no OIDC,
+# unlike Owl/Marque/TimeTagger) and does no public sharing, so it doesn't
+# execute most of that surface. That was a factor in choosing local auth.
+#
+# Exposure: LAN/tailnet-gated behind Caddy (immich.mathewcsims.uk), never
+# internet-reachable. Registration must be closed once the one real account
+# exists — same first-registrant-becomes-admin race as HealthLog/Wanderer.
+#
+# v3.1.0's only breaking change is dropping iOS 14 support — irrelevant for
+# a fresh install. Immich ships breaking changes regularly, so read the
+# release notes before bumping; note pass-deploy-remote.sh runs a bare
+# `up -d` with no `pull`, so a version change here must be a deliberate
+# digest edit (which is protective, not a limitation).
+#
+# ── Hardware reality on this box (measured, drives the tuning below) ───────
+# Intel i5-4590T (Haswell, 4c/4t @2.0GHz), 7.1 GiB RAM, Intel HD 4600
+# iGPU, 238 GB SSD.
+#   * ML runs on CPU. Immich's OpenVINO backend targets "Iris Xe and Arc"
+#     (Gen 12+/discrete); HD 4600 is Gen 7.5 — ~6 generations older — and
+#     the docs warn old iGPUs + low RAM are the failure cases while
+#     OpenVINO *increases* RAM use. Bad trade here, so no -openvino tag.
+#   * Transcoding DOES accelerate: /dev/dri is passed through for Quick
+#     Sync H.264 encode. Haswell predates HEVC *encode*, and Immich only
+#     hardware-accelerates encoding (decode stays on CPU), so iPhone HEVC
+#     means CPU decode + QSV H.264 encode. Slow for 4K, fine as a
+#     background job.
+#   * RAM is the binding constraint, hence the mem_limits below. They are
+#     the guardrail stopping the ML container from OOM-killing Postgres.
+#     Keep to the default (small) CLIP model — Immich's own model guidance
+#     spans ~900 MiB to 6,500+ MiB and the big ones don't fit here.
+#
+# Secrets (DB_PASSWORD) come from the "Immich" Proton Pass item via
+# scripts/pass-deploy-remote.sh — created by
+# scripts/pass-create-immich-secrets.sh (run under your own pass-cli
+# session, not the agent's; agent PATs are read-only by design).
+#
+# NOTE on cap_drop: msims-link (the newest Pi app) drops ALL capabilities,
+# but that is deliberately NOT copied here — Immich's Postgres needs
+# chown/setuid/setgid at startup and the server shells out to ffmpeg, so
+# dropping ALL breaks them. `no-new-privileges` is applied throughout
+# instead.
+name: immich
+
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb # v3.1.0
+    container_name: immich_server
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Reached by SERVICE name over the project's default network, same as
+      # HealthLog's postgres sidecar — not container name, not IP.
+      DB_HOSTNAME: database
+      DB_USERNAME: immich
+      DB_DATABASE_NAME: immich
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOSTNAME: redis
+      TZ: Europe/London
+    volumes:
+      # Immich always uses /data internally; this is the host side. Holds
+      # library/ (originals — irreplaceable), upload/, profile/, plus the
+      # regenerable thumbs/ and encoded-video/, and backups/ (Immich's own
+      # DB dumps — see SETUP.md's backup notes).
+      - ./data:/data
+      - /etc/localtime:/etc/localtime:ro
+    devices:
+      # Quick Sync passthrough for hardware H.264 encode. Equivalent to
+      # upstream's hwaccel.transcoding.yml `quicksync` service, inlined
+      # rather than using their extends/second-file pattern (this repo
+      # keeps one compose file per app).
+      - /dev/dri:/dev/dri
+    ports:
+      # Bound to the LAN IP specifically, not 0.0.0.0 — Caddy on the Pi is
+      # the only thing that should reach this. A listen address, not a
+      # cross-service reference.
+      - "10.0.1.11:2283:2283"
+    # No explicit healthcheck: the image ships its own (upstream's compose
+    # just sets `disable: false`), so inheriting it beats inventing one
+    # that could drift from what Immich actually considers healthy.
+    mem_limit: 1500m
+    pids_limit: 512
+
+  immich-machine-learning:
+    # Plain CPU tag deliberately — see the hardware notes in the header for
+    # why -openvino is wrong on Haswell.
+    image: ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e # v3.1.0
+    container_name: immich_machine_learning
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: Europe/London
+    volumes:
+      # Named volume, NOT a bind mount: downloaded CLIP/face models are
+      # large and must survive recreation or every restart re-downloads
+      # them.
+      - model-cache:/cache
+    # Largest limit in the stack — this is the container that would
+    # otherwise grow until something else died. 3g leaves room to try a
+    # slightly better CLIP model later without immediately OOMing.
+    mem_limit: 3g
+    pids_limit: 512
+
+  redis:
+    # Valkey, not Redis, since Immich switched — digest is upstream's own
+    # pin from the v3.1.0 compose (note: main's compose pins a DIFFERENT
+    # digest, so take it from the release, not from main).
+    image: docker.io/valkey/valkey:9@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
+    container_name: immich_redis
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    mem_limit: 256m
+    pids_limit: 64
+
+  database:
+    # Immich's OWN Postgres image, not stock postgres — it carries
+    # VectorChord + pgvecto.rs, the vector extensions smart search depends
+    # on. Deliberately NOT aligned with HealthLog's postgres:16-alpine;
+    # substituting stock Postgres breaks Immich outright. Digest is
+    # upstream's own pin.
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    container_name: immich_postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: immich
+      POSTGRES_DB: immich
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # DB_STORAGE_TYPE: 'HDD' is deliberately NOT set — the box's disk is
+      # an SSD (confirmed: lsblk ROTA=0), which is what Immich assumes by
+      # default.
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    shm_size: 128mb
+    # No published port — internal only, same as every other DB sidecar
+    # in this repo. Healthcheck comes from the image's own.
+    mem_limit: 1500m
+    pids_limit: 256
+
+volumes:
+  model-cache:

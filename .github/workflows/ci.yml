@@ -82,6 +82,7 @@ jobs:
           docker run --rm \
             -e ACME_EMAIL=ci@example.com \
             -e MAC_IP=10.0.1.14 \
+            -e SLARTI_IP=10.0.1.11 \
             -e CP_DOMAIN=cp.example.com \
             -v "$PWD/pi-reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy-ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

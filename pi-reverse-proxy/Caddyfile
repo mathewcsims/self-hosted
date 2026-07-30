@@ -805,6 +805,57 @@ wanderer.mathewcsims.uk {
 	reverse_proxy http://{$MAC_IP}:3400
 }
 
+# ── Immich (running on slartibartfast — the THIRD host, LAN-ONLY) ────────
+# Clean public URL https://immich.mathewcsims.uk, but only for LAN/tailnet
+# clients — same @lan/abort shape as BookStack/Forgejo/Speedtest above. A
+# real public A-record lets Caddy obtain a Let's Encrypt cert; only
+# private-range or Tailscale-CGNAT source IPs are ever proxied through.
+#
+# This is the first app on a host that is NEITHER the Mac NOR the Pi, hence
+# {$SLARTI_IP} (wired in via compose.yaml's environment: block, same as
+# {$MAC_IP}). Pi-resident apps are proxied by container name over the
+# `pi-shared` docker network — that can't work across hosts, so a
+# published port + IP is the only option, exactly as for Mac apps.
+#
+# Photo library = the most sensitive data in this stack, and Immich's
+# advisory history is substantial (see immich/compose.yaml's header), so it
+# is deliberately never internet-reachable. Friends who need access get
+# tailnet access instead of this being opened up. `photos.mathewcsims.uk`
+# is deliberately NOT used here — it's reserved for a possible future
+# public gallery-sharing tool, which would need the opposite posture.
+immich.mathewcsims.uk {
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		rate_limit {
+			zone rl_immich {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+			# Immich has no documented brute-force protection of its own on
+			# the login endpoint — same defense-in-depth reasoning as every
+			# other app's auth endpoint in this repo. Method-scoped so it
+			# can't touch the many authenticated GETs the mobile app makes.
+			zone rl_immich_auth {
+				match {
+					method POST
+					path /api/auth/login /api/auth/admin-sign-up
+				}
+				key {remote_host}
+				events 10
+				window 1m
+			}
+		}
+		reverse_proxy http://{$SLARTI_IP}:2283
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── msims.link (running HERE on the Pi) ──────────────────────────────────
 # Self-hosted URL shortener (chhoto-url). Bare root redirects to the real
 # landing page (mathewcsims.uk) rather than showing the shortener's own

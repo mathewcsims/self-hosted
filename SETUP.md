@@ -1,8 +1,9 @@
-# Self-hosted apps — Mac + Raspberry Pi + DrayTek
+# Self-hosted apps — Mac + Raspberry Pi + slartibartfast + DrayTek
 
-One Raspberry Pi (Caddy) is the shared internet front door for every app below;
-each app is just a podman-compose stack on the Mac. New apps follow the same
-recipe — see "Adding another app" near the end.
+One Raspberry Pi (Caddy) is the shared internet front door for every app below.
+Most apps are a podman-compose stack on the Mac; several run on the Pi itself;
+one (Immich) runs on a third host, `slartibartfast`, an Ubuntu box. New apps
+follow the same recipe — see "Adding another app" near the end.
 
 | App | URL | Runs on | Login |
 |-----|-----|---------|-------|
@@ -18,6 +19,7 @@ recipe — see "Adding another app" near the end.
 | Uptime Kuma | `https://status.mathewcsims.uk` | **Pi** | set up on first visit; 2FA recommended |
 | Vikunja webhook relay | `https://vikunja-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — HMAC-signed requests only |
 | Kopia backups | `https://backup.mathewcsims.uk` | **Pi**, LAN-only (Mac also backs up, no daemon) | username + password, see its section below |
+| Immich | `https://immich.mathewcsims.uk` | **slartibartfast** `:2283`, LAN/tailnet-only | local account, no SSO (deliberate — see its section below) |
 
 ## Architecture
 
@@ -43,6 +45,7 @@ recipe — see "Adding another app" near the end.
        │     Pi:     dashboard (Nimbus), status (Kuma),    │
        │             speedtest*, apprise*, vikunja-relay*, │
        │             backup* (Kopia)                       │
+       │     slarti: immich*  (third host, 10.0.1.11)      │
        │     router: mc37* (its own admin UI)              │
        │             (* = LAN clients only, WAN aborted)   │
        │ • Refuses any other hostname / bare IP            │
@@ -60,6 +63,11 @@ recipe — see "Adding another app" near the end.
                        timetagger's oauth2-proxy  :4180  (TimeTagger
                          itself has NO published port — internal-network
                          only, see the TimeTagger section below)
+
+                     slartibartfast 10.0.1.11 — Ubuntu box,
+                     docker-compose (NOT podman):
+                       immich  :2283  (own vector-Postgres +
+                         Valkey + ML sidecars; LAN/tailnet only)
 ```
 
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
@@ -72,14 +80,22 @@ the Mac being up) or because they're pure machine-to-machine plumbing with no
 reason to cross hosts — see each app's own section below for the (tighter)
 networking pattern that comes from Caddy and the app being on the same host.
 
+**Three hosts, two proxy patterns.** Apps on the **Pi itself** are proxied by
+container name over the `pi-shared` docker network and publish no ports. Apps
+on **any other host** (the Mac, or slartibartfast) must publish a port and be
+proxied by IP, via `{$MAC_IP}` / `{$SLARTI_IP}` in the Caddyfile — the
+`pi-shared` network doesn't span machines. Adding a fourth host means adding a
+third such env var, not a new mechanism.
+
 ### File map
 
 `self-hosted/` holds one subfolder per app. Shared, cross-app bits
 (`autostart/`, `pi-reverse-proxy/`, `scripts/`, `pf-lockdown/`, this doc) live
 at the root. Apps deploy to the **Mac** (`podman compose`) by default; several
 deploy to the **Pi** instead (copied over and run with `docker compose`, not
-`podman compose` — the Pi runs Docker, not podman) — each app's own section
-below says which.
+`podman compose` — the Pi runs Docker, not podman); one (Immich) deploys to
+**slartibartfast**, a third host, also with `docker compose`. Each app's own
+section below says which.
 
 | Path | Runs on | Purpose |
 |------|---------|---------|
@@ -125,6 +141,9 @@ below says which.
 | `msims-link/compose.yaml` | **Pi** | chhoto-url — self-hosted URL shortener (`msims.link`); reads secrets from Proton Pass |
 | `msims-link/data/` | **Pi** | **your short links (SQLite, WAL mode) live here** |
 | `msims-link/landing/` | **Pi** | static fallback for the bare domain (Caddy's own redirect normally intercepts before this is ever served — see the msims.link section) |
+| `immich/compose.yaml` | **slartibartfast** | Immich photo library — server + ML sidecar + Valkey + Immich's own vector-Postgres; LAN/tailnet-only; reads secrets from Proton Pass |
+| `immich/data/` | **slartibartfast** | **your photos and videos live here** (gitignored) — `library/` originals, `upload/`, `profile/`, regenerable `thumbs/`+`encoded-video/`, and `backups/` (Immich's own DB dumps) |
+| `immich/pgdata/` | **slartibartfast** | Immich's Postgres datadir (gitignored) — deliberately NOT what gets backed up, see its section |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
 | `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
@@ -162,11 +181,12 @@ below says which.
 |-------|-------|
 | Mac LAN IP | `10.0.1.14` |
 | Pi LAN IP | `10.0.1.19` |
+| slartibartfast LAN IP | `10.0.1.11` (tailnet `100.68.10.65`, SSH user `mathewcsims`) |
 | Public/WAN IP | `curl -4 ifconfig.me` (static) |
 | NAS ("Eddie") | `eddie.nas` / `10.0.1.12`, SMB — see the Kopia section for the `AppleBackups` share |
 
-Give **both the Pi and the Mac a fixed LAN IP** via a DrayTek DHCP reservation
-(Part 4) so the forward and proxy config never break.
+Give **the Pi, the Mac, and slartibartfast each a fixed LAN IP** via a DrayTek
+DHCP reservation (Part 4) so the forward and proxy config never break.
 
 ---
 
@@ -229,9 +249,11 @@ pass-cli login   # your normal Proton Pass login
 # Mac-hosted apps (vikunja, blog, karakeep, copyparty, landing-page)
 ./scripts/pass-deploy.sh <app-dir>
 
-# Pi-hosted apps (nimbus, speedtest-tracker) — fetches locally, pipes the
-# export + `docker compose up -d` over SSH via stdin, so secret values
-# never appear in the SSH command line itself
+# Apps on ANY remote host — the Pi (nimbus, speedtest-tracker) or
+# slartibartfast (immich). Fetches locally, pipes the export +
+# `docker compose up -d` over SSH via stdin, so secret values never appear
+# in the SSH command line itself. NOTE: it does NOT copy the app folder —
+# `scp -r <app-dir> <ssh-host>:<remote-path>` is a separate first step.
 ./scripts/pass-deploy-remote.sh <app-dir> <ssh-host> <remote-path>
 
 # copyparty specifically: its secret is a whole config file
@@ -3781,9 +3803,165 @@ for this too.
 
 ---
 
+## Immich (https://immich.mathewcsims.uk) — LAN/tailnet-only, runs on slartibartfast
+
+Self-hosted photo/video library. **The first app in this repo on a third
+host** — `slartibartfast`, an Ubuntu 26.04 box (LAN `10.0.1.11`, tailnet
+`100.68.10.65`, SSH user `mathewcsims`) — chosen because the photo library
+and its CPU-bound ML work don't belong on either existing machine.
+
+The draw is Immich's AI: CLIP-based semantic search ("dog on a beach") and
+face detection/clustering, both of which run locally with no third-party
+service involved.
+
+**Hostname is `immich.`, not `photos.`** — deliberately reserving
+`photos.mathewcsims.uk` for a possible future *public* gallery-sharing tool,
+which would need the opposite exposure posture to this LAN/tailnet-gated
+instance.
+
+### Hardware reality — measured, and it drives every AI decision
+
+The box is an Intel i5-4590T (Haswell, 4c/4t @2.0GHz, 35W), 7.1 GiB RAM,
+Intel HD 4600 iGPU, 238 GB SSD. Three consequences, each checked against
+Immich's own docs rather than assumed:
+
+- **ML runs on CPU — no OpenVINO.** Immich's OpenVINO backend targets
+  "Iris Xe and Arc" (Gen 12+/discrete). HD 4600 is Gen 7.5, roughly six
+  generations older, and the docs warn that older iGPUs and low-RAM servers
+  are the likely failure cases *and* that OpenVINO increases RAM use. On
+  7.1 GiB that's a clearly bad trade, so the plain CPU image tag is used.
+- **Transcoding DOES accelerate, partially.** `/dev/dri` is passed through
+  for Quick Sync H.264 **encode**. Haswell predates HEVC encode, and Immich
+  hardware-accelerates only encoding (decode stays on CPU), so iPhone HEVC
+  video means CPU decode + QSV H.264 encode — fine as a background job,
+  slow for 4K. This is the hardware's weakest point.
+- **RAM is the binding constraint**, which is why `immich/compose.yaml` sets
+  a `mem_limit` on every service: they're the guardrail stopping the ML
+  container from OOM-killing Postgres. Immich's own CLIP model guidance
+  spans ~900 MiB to 6,500+ MiB — the large multilingual models simply don't
+  fit here, so it stays on the default fast model.
+
+The box shipped as Ubuntu **Desktop**; GNOME was costing ~1 GiB at idle, so
+it's set to boot headless (`systemctl set-default multi-user.target`) to
+give that RAM to ML. One command to reverse if a desktop is ever wanted.
+
+### Networking — why this needed a new Caddy env var
+
+Pi-resident apps are proxied by *container name* over the `pi-shared` docker
+network. That cannot work across hosts, so Immich follows the **Mac**
+pattern instead: publish a port, proxy by IP. The Caddyfile previously only
+knew `{$MAC_IP}`, so this added `{$SLARTI_IP}` — wired through
+`pi-reverse-proxy/compose.yaml`'s `environment:` block and the Pi's
+(gitignored) `.env`, exactly the same shape, not a new mechanism. A fourth
+host would add a third such var.
+
+The port is bound to `10.0.1.11:2283` specifically rather than `0.0.0.0` —
+Caddy is the only thing that should reach it, including for tailnet clients
+(who go through the hostname like everyone else).
+
+### Security posture
+
+Immich's advisory history is substantial and worth reading before exposing
+it anywhere: a **critical** one-click account takeover via XSS in the login
+continue-redirect, API-key privilege escalation, stored XSS via OCR text in
+the panorama viewer, account hijacking via oauth2, plus a cluster of five
+published 2026-07-06 covering OIDC TLS verification, shared-link
+authorisation and open redirects. **Every published advisory is patched by
+v3.0.0**; the pinned v3.1.0 clears all of them.
+
+Note *where* those bugs cluster: OAuth/OIDC and public shared-link code
+paths. Two deliberate choices avoid most of that surface —
+**local accounts only** (no Infomaniak SSO, unlike Owl/Marque/TimeTagger)
+and **no public sharing**. Friends who want access get tailnet access
+instead of this being opened to the internet.
+
+Registration must be closed once the one real account exists — the same
+first-registrant-becomes-admin race as HealthLog and Wanderer.
+
+### AI configuration (Admin ▸ Settings)
+
+- Enable **Smart Search** and **Facial Recognition**.
+- Keep the **default CLIP model** — see the RAM note above.
+- **Turn job concurrency DOWN** (1–2) for Smart Search, Face Detection and
+  Transcoding. On 4 slow cores with a tight RAM budget the defaults will
+  thrash; this is the single most important tuning knob on this hardware and
+  most guides skip it entirely.
+- Set the external domain to `https://immich.mathewcsims.uk` — it bakes into
+  share links and emails, the same class of gotcha as `MEMOS_INSTANCE_URL`.
+- Gradual import is an advantage here: ML work spreads out instead of
+  becoming a multi-day first pass.
+
+### Backups — the important part
+
+This is the most irreplaceable data in the stack, and **Immich is not itself
+a backup**.
+
+- **Immich's own DB backup is enabled** (Admin ▸ Settings ▸ Backup — daily
+  02:00, 14 retained), writing dumps to `data/backups/`. Upstream is
+  explicit that a file-copy of a live Postgres datadir will not reliably
+  restore, which is why `pgdata/` is deliberately *excluded* from backup and
+  the dump is what gets kept.
+- **Kopia runs as a third client** on slartibartfast, connecting directly to
+  the same B2 repository as the Mac and Pi (with
+  `--override-hostname=slartibartfast` so its snapshots are identifiable).
+  It is deliberately **not** maintenance owner — the Pi holds that, being
+  always-on.
+- Snapshots cover `data/library/`, `data/upload/`, `data/profile/` and
+  `data/backups/`. `data/thumbs/` and `data/encoded-video/` are **excluded**
+  — regenerable per upstream, and excluding them saves real B2 cost. The
+  trade-off: regeneration on this CPU is slow, so a full recovery takes
+  longer in exchange for cheaper ongoing storage.
+- Scheduled at **03:00 via a systemd timer** — deliberately after Immich's
+  02:00 dump so every snapshot contains a fresh one. A systemd timer is a
+  **new pattern** for this repo (the Mac uses launchd; the Pi has no
+  scheduled jobs beyond Docker's restart policy).
+
+**Wider gap found while building this, NOT specific to Immich:** every other
+database in this repo — HealthLog's Postgres, Ghost's MySQL, BookStack's
+MariaDB, Nimbus's Postgres — is backed up as a **live, un-quiesced data
+directory** with no dump step anywhere (confirmed: zero `pg_dump`/
+`mysqldump` calls in the repo). That is a real restore risk and deserves
+separate work. Immich avoids inheriting it only because it ships its own
+dump mechanism.
+
+### Deploy
+
+Two steps, same as Pi apps — the deploy script does **not** copy the folder:
+
+```sh
+scp -r immich mathewcsims@100.68.10.65:~/immich
+./scripts/pass-deploy-remote.sh immich mathewcsims@100.68.10.65 '~/immich'
+```
+
+Secrets (`DB_PASSWORD`) come from the "Immich" Pass item, created once by
+`scripts/pass-create-immich-secrets.sh` under your own pass-cli session
+(agent PATs are read-only). The item title must stay exactly `Immich` — the
+deploy script derives it from the app-dir name.
+
+**Gotchas:**
+- `pass-deploy-remote.sh` runs a bare `up -d` with **no `pull`**, so a
+  version bump has to be a deliberate digest edit in `compose.yaml`. That's
+  protective given Immich ships breaking changes regularly — read the
+  release notes before bumping.
+- Immich's Postgres image is **its own** (`ghcr.io/immich-app/postgres`,
+  carrying VectorChord + pgvecto.rs). Substituting stock Postgres breaks
+  smart search outright, so it deliberately does not match HealthLog's
+  `postgres:16-alpine`.
+- `cap_drop: ALL` is deliberately **not** copied from `msims-link` here —
+  Immich's Postgres needs chown/setuid/setgid at startup and the server
+  shells out to ffmpeg. `no-new-privileges` is applied throughout instead.
+- `DB_PASSWORD` is baked into the Postgres cluster on first `up`. Changing
+  it in Pass later won't change the database's actual password — that needs
+  an `ALTER USER` inside the running DB too.
+- Ubuntu's `docker.io` package does **not** include Compose v2 — that's a
+  separate `docker-compose-v2` install (available in Ubuntu's universe
+  repo, so Docker's own apt repo isn't needed).
+
+---
+
 ## Adding another app (the general recipe)
 
-Two patterns, depending on where the app runs:
+Three patterns, depending on where the app runs:
 
 ### Mac-resident app (copyparty, Memos — the default)
 
@@ -3868,6 +4046,29 @@ A real public `A` record is still needed for cert issuance even though only
 LAN clients can ever use the site — the NextDNS rewrite is what makes
 LAN devices actually resolve to the Pi's LAN IP instead of round-tripping out
 to the WAN IP and back in.
+
+### App on a third host (Immich on slartibartfast — when it belongs on neither existing machine)
+
+Same as the Pi-resident recipe **except the networking**, which follows the
+*Mac* pattern instead:
+
+1. `mkdir self-hosted/<app>` on the Mac (still the source of truth), deploy
+   with `scp -r` + `./scripts/pass-deploy-remote.sh <app> <ssh-host>
+   '<remote-path>'` — that script works against any SSH host, not just the Pi.
+2. **Publish a port**, bound to that host's LAN IP (not `0.0.0.0`), and proxy
+   to it by IP from the Caddyfile. `pi-shared` and container-name proxying are
+   **not available** — that docker network only reaches containers on the Pi
+   itself. This is the one real difference from the Pi recipe and it's easy to
+   get wrong.
+3. Add the host's IP as a **new env var** in `pi-reverse-proxy/compose.yaml`'s
+   `environment:` block plus the Pi's `.env` and `.env.example`, following
+   `MAC_IP`/`SLARTI_IP`. Also add it to the `caddyfile` CI job's `docker run`
+   env flags in `.github/workflows/ci.yml`, or validation fails on the
+   unset placeholder.
+4. Give the host a **DrayTek DHCP reservation** so the IP never moves.
+5. Scheduled jobs on a Linux host: systemd timer (see Immich's Kopia
+   backup). The Mac's `autostart/` launchd agents are Mac-only, and the Pi
+   has no precedent for scheduled work.
 
 **If the app is our own code, not a pulled image** (the Vikunja webhook
 relay): use `build: {context: ., dockerfile: Dockerfile}` in place of
