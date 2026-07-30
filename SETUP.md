@@ -2178,6 +2178,79 @@ pointing the Landing Page monitor at a nonexistent path, confirmed both a
 correctly red-colored DOWN embed and a green UP embed (with downtime
 duration) arrived in Discord.
 
+### Adding/managing monitors programmatically (Socket.IO)
+
+Kuma **has no REST API for monitor CRUD** — `/api/monitors` just returns the
+SPA's HTML, and `getStatusPageList` etc. are Socket.IO events, not routes.
+Everything below therefore drives Kuma's own Socket.IO interface, which is
+exactly what its web UI uses. **Do not write to `kuma.db` directly** — see
+the SQLite incident in the Kopia section for why touching a live SQLite
+database a running app has open is a bad idea.
+
+Credentials live in the **"Uptime Kuma"** Proton Pass item:
+`ADMIN_USERNAME`, `ADMIN_PASSWORD`, `TOTP_SECRET` (2FA is enabled, so the
+secret is required to log in non-interactively) and `UPTIMEKUMA_APIKEY`.
+
+Needs `python-socketio[client]` and `pyotp` — install into a throwaway venv
+rather than polluting the system Python. The shape is:
+
+```python
+sio = socketio.Client()
+sio.connect("https://status.mathewcsims.uk", transports=["websocket"])
+sio.call("login", {"username": ..., "password": ...,
+                   "token": pyotp.TOTP(TOTP_SECRET).now()})
+# monitors arrive asynchronously on the "monitorList" event — you must
+# sleep a few seconds after login before it's populated, it is NOT a
+# return value.
+sio.call("add", monitor_dict)                       # create a monitor
+sio.call("saveStatusPage", (slug, cfg, icon, groups))  # update status page
+```
+
+**Build new monitors by cloning an existing one** of the same type and
+overriding `name`/`url`/`keyword`/`hostname`. That inherits the established
+conventions (60s interval, 60s retry, 3 retries, `notificationIDList`
+pointing at the Discord notification) instead of guessing at ~100 fields.
+
+**Two gotchas, both hit live on 2026-07-30 when adding Immich:**
+- A cloned monitor carries a **`maintenance`** key, which is a *runtime*
+  field and not a database column. Kuma passes the object straight into an
+  INSERT, so it fails with `table monitor has no column named maintenance`.
+  Strip it (along with `id`, `childrenIDs`, `includeSensitiveData`,
+  `forceInactive`, `dns_last_result`, `tags`).
+- **`saveStatusPage`'s third argument (the icon) must not be `null`** —
+  Kuma calls `.startsWith()` on it and throws
+  `Cannot read properties of null (reading 'startsWith')`. Pass the page's
+  existing `config.icon` (currently `/icon.svg`).
+
+Both failures were **atomic** — nothing partial was created either time —
+so iterating on the error message is safe.
+
+**Tag conventions.** Every monitor carries `Homelab` plus **one tag naming
+the machine it runs on** — `Heart of Gold` (Mac), `Babel` (Pi),
+`Slartibartfast` (the third host, added 2026-07-30 with Immich; emerald
+`#059669`). Adding a fourth host means adding a fourth tag. Tag events are
+`getTags`, `addTag` (payload `{name, color, new: True}`) and
+`addMonitorTag` (positional tuple: `(tagId, monitorId, value)`). Note the
+tag goes with the machine the *monitored process* runs on — e.g.
+`Owl document-viewer` is tagged `Heart of Gold` because the sidecar
+container is on the Mac, even though Owl's own data lives there too.
+
+**Status page conventions:** the `all` page ("All Services") has three
+groups — `Services`, `Monitoring & infrastructure`, `Tailnet apps` — and
+each is sorted **case-insensitively alphabetical** (which is why
+`msims.link` sits between `Marque` and `Owl`, and `ntfy` after `Nimbus`).
+Keep it that way: sort with `key=lambda m: m["name"].lower()` after
+inserting. `saveStatusPage` replaces the whole group structure, so build it
+from the current public endpoint
+(`/api/status-page/all` → `publicGroupList`) and insert into that, rather
+than constructing groups from scratch.
+
+Verify afterwards against the **public** page, not the save's return value:
+
+```sh
+curl -s https://status.mathewcsims.uk/api/status-page/all | python3 -m json.tool
+```
+
 **No env-var-based admin bootstrap exists for this app** (confirmed —
 unlike Nimbus's `INITIAL_ADMIN_EMAIL`/`PASSWORD`), so the very first visit
 to `https://status.mathewcsims.uk` runs Kuma's own setup wizard: choose an
