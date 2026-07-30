@@ -2749,6 +2749,24 @@ a dump that fails silently is the whole problem restated.
   and adding it needs root). Both are the *supported* online-copy APIs and
   are safe against a live WAL database; `cp` is not.
 
+**Incident, 2026-07-30 — the SQLite dump broke Forgejo.** The first version
+of the Mac script opened each SQLite source with a plain path
+(`sqlite3 "$src" "VACUUM INTO ..."`). The `sqlite3` CLI opens **read-write**
+by default, which takes write locks, checkpoints the WAL and rewrites the
+`-shm` of a database another process already has open. About 20 minutes
+later Forgejo began failing every query with `file is not a database` and
+serving HTTP 500 — while the file itself was completely valid
+(`integrity_check` ok, row counts matching the dump exactly). It was the
+running application's *connection state* that broke, not the data; a
+container restart cleared it.
+
+The fix is one URI parameter: open the source `file:$src?mode=ro`. A
+read-only handle takes no write lock and cannot checkpoint, so the running
+app is untouched — verified by confirming the source file's mtime is
+identical before and after a dump run. The Pi script always did this
+correctly (Python's read-only URI); the two are now consistent. **Do not
+remove `mode=ro`** — it is the difference between a backup and an outage.
+
 **Deliberately not dumped:** copyparty's `up2k.db`/`shares.db`/
 `sessions.db` (regenerable dedup index and session state — its actual
 files are backed up), karakeep's `queue.db` (transient job queue),
@@ -2787,6 +2805,29 @@ produces portable output that restores into any target. If you ever change
 this, keep that property — it's what makes a restore test safe to run at
 all. Trade-off accepted: users/grants are no longer captured, but they're
 reproducible from Pass and the compose files, and aren't app data.
+
+**Post-dump health check.** Both scripts now verify, immediately after
+dumping, that every app whose database they touched is still serving —
+checked via the public hostname (the path that actually matters, and no
+port list to drift). 2xx/3xx/4xx all count as healthy, since 401/403 are
+auth gates working and 30x are normal redirects; only **5xx or no response**
+is treated as broken, which is exactly how the incident above presented. A
+failure fires an Apprise alert naming the affected hosts and makes the
+script exit non-zero.
+
+This exists because the incident was caught by Mathew hitting an error
+page, not by any automation: the script checked only that *its own* work
+succeeded, and cheerfully reported success while the apps it had just
+touched were returning HTTP 500.
+
+Worth knowing if you edit that block — its two failure paths each had a bug
+that only a deliberate failure test caught. `curl -w '%{http_code}'` already
+prints `000` on a connection failure, so an extra `|| echo 000` produced
+`000000`, which matched neither `5*` nor `000` and silently passed. And
+because `set -e` is on, curl's non-zero exit on an unreachable host killed
+the script before it could report, so the guard is `|| true` — which keeps
+curl's own `000` while neutralising the exit status. **Test the failure
+path, not just the happy path**, if you change it.
 
 **Still to do (phase 2):** once these dumps have a few weeks of history,
 drop the raw datadir paths (`healthlog/pgdata`, `blog/db`,

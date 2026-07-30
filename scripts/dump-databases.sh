@@ -121,10 +121,25 @@ dump_sqlite() {
     if [ ! -f "$_src" ]; then echo "skip (not present)"; return; fi
     _tmp="$OUT/.$_l-$STAMP.tmp.db"
     rm -f "$_tmp"
-    # VACUUM INTO is safe on a live WAL database and yields a checkpointed,
-    # self-contained file (no separate -wal needed to read it).
-    if sqlite3 "$_src" "VACUUM INTO '$_tmp'" 2>/dev/null \
-       && [ "$(sqlite3 "$_tmp" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
+    # VACUUM INTO yields a checkpointed, self-contained file (no separate
+    # -wal needed to read it).
+    #
+    # `?mode=ro` IS LOAD-BEARING — do not remove it. The first version of
+    # this script opened the source with a plain path, which sqlite3 opens
+    # READ-WRITE by default. That takes write locks, checkpoints the WAL
+    # and rewrites the -shm of a database another process has open. It
+    # broke Forgejo in exactly that way: ~20 minutes after the first dump
+    # it began failing every query with "file is not a database" and served
+    # HTTP 500, despite the file itself being perfectly valid
+    # (integrity_check ok, correct row counts). Only a container restart
+    # cleared it.
+    #
+    # Opening read-only takes no write lock and cannot checkpoint, so the
+    # running application's own view is left completely untouched. This is
+    # what the Pi script does via Python's read-only URI, and the two are
+    # now consistent.
+    if sqlite3 "file:$_src?mode=ro" "VACUUM INTO '$_tmp'" 2>/dev/null \
+       && [ "$(sqlite3 "file:$_tmp?mode=ro" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
         gzip -c "$_tmp" > "$OUT/$_l-$STAMP.db.gz" && rm -f "$_tmp"
         echo "ok  $(du -h "$OUT/$_l-$STAMP.db.gz" | cut -f1)"
     else
@@ -158,6 +173,58 @@ done
 for _label in $(ls "$OUT" 2>/dev/null | sed -E 's/-[0-9]{8}T[0-9]{6}\.(sql|db)\.gz$//' | sort -u); do
     ls -t "$OUT/$_label"-*.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r _old; do rm -f "$_old"; done
 done
+
+# ── Post-dump health check ────────────────────────────────────────────────
+# WHY THIS EXISTS: on 2026-07-30 an earlier version of this script opened
+# live SQLite databases read-write, which corrupted the *connection state*
+# of every SQLite-backed app (see the mode=ro note above). The data was
+# fine, but Forgejo, Owl and Marque all began returning HTTP 500. The
+# script itself reported complete success throughout, because it only ever
+# checked that ITS OWN work succeeded — nothing verified that the
+# applications it had just touched were still alive. Mathew found the
+# outage, roughly an hour later, by hitting an error page.
+#
+# So: after dumping, confirm every app whose database we touched still
+# serves. Checked through the public hostname rather than a raw port,
+# because that's the path that actually matters and there's no port list
+# to drift out of date.
+#
+# Rule: 2xx/3xx/4xx all mean the app is serving (401/403 are auth gates
+# working correctly, 30x are normal redirects). Only 5xx — or no response
+# at all — counts as broken, which is exactly how that incident presented.
+UNHEALTHY=""
+echo "=== post-dump health check ==="
+for _host in owl marque prospect-ukri-tus vikunja karakeep wanderer fj time healthlog blog author; do
+    _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$_host.mathewcsims.uk/" 2>/dev/null || true)
+    [ -z "$_code" ] && _code=000
+    case "$_code" in
+        5*|000) printf '  %-20s %s  <-- UNHEALTHY\n' "$_host" "$_code"
+                UNHEALTHY="$UNHEALTHY
+  - $_host (HTTP $_code)" ;;
+        *)      printf '  %-20s %s\n' "$_host" "$_code" ;;
+    esac
+done
+
+if [ -n "$UNHEALTHY" ]; then
+    echo "=== APPS UNHEALTHY AFTER DUMP:$UNHEALTHY ==="
+    curl -fsS --max-time 10 \
+        --data-urlencode "title=🚨 Apps unhealthy immediately after database dump" \
+        --data-urlencode "type=failure" \
+        --data-urlencode "format=markdown" \
+        --data-urlencode "body=These apps stopped serving right after the nightly database dump ran:
+$UNHEALTHY
+
+This is the signature of the 2026-07-30 incident: the dump corrupting a
+running app's DB *connection* (data intact, integrity_check fine). The fix
+then was simply restarting the affected containers.
+
+Host: the Mac. Script: scripts/dump-databases.sh" \
+        "$APPRISE_URL" >/dev/null 2>&1 || true
+    # Deliberately not exiting here — fall through so a dump failure is
+    # also reported, and so backup.sh still takes its file snapshots.
+    FAILED="$FAILED
+  - POST-DUMP HEALTH: apps unhealthy:$UNHEALTHY"
+fi
 
 if [ -n "$FAILED" ]; then
     echo "=== database dumps FAILED for:$FAILED ==="
