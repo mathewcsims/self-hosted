@@ -121,10 +121,25 @@ dump_sqlite() {
     if [ ! -f "$_src" ]; then echo "skip (not present)"; return; fi
     _tmp="$OUT/.$_l-$STAMP.tmp.db"
     rm -f "$_tmp"
-    # VACUUM INTO is safe on a live WAL database and yields a checkpointed,
-    # self-contained file (no separate -wal needed to read it).
-    if sqlite3 "$_src" "VACUUM INTO '$_tmp'" 2>/dev/null \
-       && [ "$(sqlite3 "$_tmp" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
+    # VACUUM INTO yields a checkpointed, self-contained file (no separate
+    # -wal needed to read it).
+    #
+    # `?mode=ro` IS LOAD-BEARING — do not remove it. The first version of
+    # this script opened the source with a plain path, which sqlite3 opens
+    # READ-WRITE by default. That takes write locks, checkpoints the WAL
+    # and rewrites the -shm of a database another process has open. It
+    # broke Forgejo in exactly that way: ~20 minutes after the first dump
+    # it began failing every query with "file is not a database" and served
+    # HTTP 500, despite the file itself being perfectly valid
+    # (integrity_check ok, correct row counts). Only a container restart
+    # cleared it.
+    #
+    # Opening read-only takes no write lock and cannot checkpoint, so the
+    # running application's own view is left completely untouched. This is
+    # what the Pi script does via Python's read-only URI, and the two are
+    # now consistent.
+    if sqlite3 "file:$_src?mode=ro" "VACUUM INTO '$_tmp'" 2>/dev/null \
+       && [ "$(sqlite3 "file:$_tmp?mode=ro" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
         gzip -c "$_tmp" > "$OUT/$_l-$STAMP.db.gz" && rm -f "$_tmp"
         echo "ok  $(du -h "$OUT/$_l-$STAMP.db.gz" | cut -f1)"
     else

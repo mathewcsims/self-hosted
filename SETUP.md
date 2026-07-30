@@ -2749,6 +2749,24 @@ a dump that fails silently is the whole problem restated.
   and adding it needs root). Both are the *supported* online-copy APIs and
   are safe against a live WAL database; `cp` is not.
 
+**Incident, 2026-07-30 — the SQLite dump broke Forgejo.** The first version
+of the Mac script opened each SQLite source with a plain path
+(`sqlite3 "$src" "VACUUM INTO ..."`). The `sqlite3` CLI opens **read-write**
+by default, which takes write locks, checkpoints the WAL and rewrites the
+`-shm` of a database another process already has open. About 20 minutes
+later Forgejo began failing every query with `file is not a database` and
+serving HTTP 500 — while the file itself was completely valid
+(`integrity_check` ok, row counts matching the dump exactly). It was the
+running application's *connection state* that broke, not the data; a
+container restart cleared it.
+
+The fix is one URI parameter: open the source `file:$src?mode=ro`. A
+read-only handle takes no write lock and cannot checkpoint, so the running
+app is untouched — verified by confirming the source file's mtime is
+identical before and after a dump run. The Pi script always did this
+correctly (Python's read-only URI); the two are now consistent. **Do not
+remove `mode=ro`** — it is the difference between a backup and an outage.
+
 **Deliberately not dumped:** copyparty's `up2k.db`/`shares.db`/
 `sessions.db` (regenerable dedup index and session state — its actual
 files are backed up), karakeep's `queue.db` (transient job queue),
