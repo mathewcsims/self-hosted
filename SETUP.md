@@ -144,6 +144,8 @@ section below says which.
 | `immich/compose.yaml` | **slartibartfast** | Immich photo library — server + ML sidecar + Valkey + Immich's own vector-Postgres; LAN/tailnet-only; reads secrets from Proton Pass |
 | `immich/data/` | **slartibartfast** | **your photos and videos live here** (gitignored) — `library/` originals, `upload/`, `profile/`, regenerable `thumbs/`+`encoded-video/`, and `backups/` (Immich's own DB dumps) |
 | `immich/pgdata/` | **slartibartfast** | Immich's Postgres datadir (gitignored) — deliberately NOT what gets backed up, see its section |
+| `immich/kopia-backup.sh` | **slartibartfast** | daily Kopia snapshot of the photo library to B2; alerts via Apprise on failure |
+| `immich/kopia-immich.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:00 (installed to `~/.config/systemd/user/`) |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
 | `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
@@ -3859,6 +3861,53 @@ The port is bound to `10.0.1.11:2283` specifically rather than `0.0.0.0` —
 Caddy is the only thing that should reach it, including for tailnet clients
 (who go through the hostname like everyone else).
 
+### Gotcha that cost the most time: Tailscale `--accept-routes` broke all LAN ingress
+
+Immich deployed fine and answered on `http://10.0.1.11:2283` locally, but
+Caddy returned **502** and the Pi could not reach the box *at all* — not
+port 2283, not SSH, not even `ping` — while ARP resolved correctly and no
+firewall was active anywhere.
+
+Cause: **babel advertises `10.0.1.0/24` as a Tailscale subnet route** (so
+remote tailnet clients can reach LAN services), and slartibartfast had
+`--accept-routes` **enabled**. So it installed a route for its own local
+subnet pointing at `tailscale0`, in Tailscale's routing table 52 — which
+`ip rule` consults at priority 5270, *ahead of* `main` (32766). The
+tell-tale:
+
+```console
+$ ip route get 10.0.1.19          # a host on the SAME physical LAN
+10.0.1.19 dev tailscale0 table 52 src 100.68.10.65   # ← wrong
+$ ip route get 1.1.1.1            # genuinely remote, correctly via eno1
+1.1.1.1 via 10.0.1.1 dev eno1 src 10.0.1.11
+```
+
+That produced a confusing **asymmetry**: outbound LAN connections appeared
+to work (they were quietly tunnelling out via babel and back), while
+anything *inbound* died, because the reply to a packet received on `eno1`
+was routed back through the tunnel and discarded as a mismatched return
+path.
+
+Fix, on the affected box:
+
+```sh
+sudo tailscale set --accept-routes=false
+```
+
+Safe and narrow: table 52's other entries are per-peer `/32` routes, which
+`--accept-routes` doesn't govern, so tailnet connectivity (including
+Tailscale SSH) is untouched. Immediately after, `ip route get 10.0.1.19`
+returns `dev eno1` and ping latency drops to ~0.3 ms — genuinely local.
+
+**Two lessons worth keeping.** First, this had nothing to do with Immich,
+Docker, or a firewall — plain `ping` between those two hosts was already
+broken before Immich existed, so it was a latent misconfiguration this
+deployment merely exposed. Any future host added to both the LAN *and* the
+tailnet needs `--accept-routes=false` if it sits inside an advertised
+subnet. Second, `systemctl is-active ufw` reporting **active** while
+`ufw status` says **inactive** is a genuine trap: the unit having run is not
+the same as the firewall being enabled. Check `ufw status`, not the unit.
+
 ### Security posture
 
 Immich's advisory history is substantial and worth reading before exposing
@@ -3911,10 +3960,29 @@ a backup**.
   — regenerable per upstream, and excluding them saves real B2 cost. The
   trade-off: regeneration on this CPU is slow, so a full recovery takes
   longer in exchange for cheaper ongoing storage.
-- Scheduled at **03:00 via a systemd timer** — deliberately after Immich's
-  02:00 dump so every snapshot contains a fresh one. A systemd timer is a
-  **new pattern** for this repo (the Mac uses launchd; the Pi has no
-  scheduled jobs beyond Docker's restart policy).
+- Scheduled at **03:00 via a systemd timer** (`immich/kopia-immich.timer` +
+  `.service`, installed to `~/.config/systemd/user/`) — deliberately after
+  Immich's 02:00 dump so every snapshot contains a fresh one. Moving it
+  earlier would snapshot a stale dump. Follows the existing
+  `pi-unattended-upgrades/reboot-check.timer` shape (`OnCalendar` +
+  `RandomizedDelaySec=15m` + `Persistent=true`).
+- Runs as a **`--user` unit, not a system one**, so no root is involved:
+  `loginctl enable-linger mathewcsims` (which doesn't need sudo) makes it
+  fire without an active login. This works only because Immich's
+  container-written directories are root-owned but **world-readable** — a
+  real dependency, so `kopia-backup.sh` checks each snapshot's exit status
+  and fires an Apprise alert on failure rather than reporting a cheerful
+  success. A silently-partial backup of the photo library would be worse
+  than an obviously-broken one.
+- **Kopia's password is persisted to a file, not a keyring**, on this box:
+  `~/.config/kopia/repository.config.kopia-password` (0600). That's Kopia's
+  own fallback when no keyring daemon is available, which is the normal case
+  on a headless server — and it's what lets the timer run unattended without
+  the password being supplied.
+- Verified working, not assumed: a manual
+  `systemctl --user start kopia-immich.service` produced all four snapshots,
+  visible from **both** the slartibartfast client and the Pi's — confirming
+  they really do land in the shared repository.
 
 **Wider gap found while building this, NOT specific to Immich:** every other
 database in this repo — HealthLog's Postgres, Ghost's MySQL, BookStack's
@@ -4066,9 +4134,17 @@ Same as the Pi-resident recipe **except the networking**, which follows the
    env flags in `.github/workflows/ci.yml`, or validation fails on the
    unset placeholder.
 4. Give the host a **DrayTek DHCP reservation** so the IP never moves.
-5. Scheduled jobs on a Linux host: systemd timer (see Immich's Kopia
-   backup). The Mac's `autostart/` launchd agents are Mac-only, and the Pi
-   has no precedent for scheduled work.
+5. Scheduled jobs on a Linux host: a systemd timer, following
+   `pi-unattended-upgrades/reboot-check.timer` (the existing precedent) or
+   Immich's Kopia backup for a `--user` variant. The Mac's `autostart/`
+   launchd agents are Mac-only.
+6. **If the host is on both the LAN and the tailnet**, check
+   `ip route get <another-LAN-host>` returns `dev <lan-if>` and not
+   `dev tailscale0`. If it's the latter, run
+   `sudo tailscale set --accept-routes=false` — see the Immich section for
+   the full diagnosis. This silently breaks all inbound LAN traffic while
+   leaving outbound looking fine, so it is worth checking up front rather
+   than debugging a 502 later.
 
 **If the app is our own code, not a pulled image** (the Vikunja webhook
 relay): use `build: {context: ., dockerfile: Dockerfile}` in place of

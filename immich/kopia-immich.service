@@ -1,0 +1,10 @@
+[Unit]
+Description=Kopia snapshot of Immich's photo library to B2 (see kopia-backup.sh)
+# Don't bother if the network isn't up — the timer's Persistent=true will
+# catch up on the next boot instead.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/immich/kopia-backup.sh
