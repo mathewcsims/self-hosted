@@ -28,6 +28,11 @@ services:
       CP_DOMAIN: ${CP_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
       MAC_IP: ${MAC_IP}
+      # slartibartfast — the third host (Ubuntu, runs Immich). Same shape as
+      # MAC_IP: apps on hosts other than the Pi itself can't be proxied by
+      # container name (the pi-shared network doesn't span hosts), so they
+      # get proxied by IP via an env var instead. Set in the Pi's .env.
+      SLARTI_IP: ${SLARTI_IP}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data            # issued certs + ACME account — persist this!
