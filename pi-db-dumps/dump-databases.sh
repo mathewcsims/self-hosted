@@ -114,6 +114,51 @@ else
     fail "kopia snapshot of /data/db-dumps"
 fi
 
+# ── Post-dump health check ────────────────────────────────────────────────
+# See scripts/dump-databases.sh's equivalent block for the full reasoning.
+# Short version: on 2026-07-30 the Mac script corrupted the DB *connection
+# state* of every SQLite-backed app while reporting complete success,
+# because nothing checked the apps afterwards. This Pi script always used a
+# read-only handle and so wasn't implicated — but it dumps the same class of
+# live SQLite databases, so it gets the same safety net.
+#
+# 2xx/3xx/4xx = serving (auth gates and redirects are fine); 5xx or no
+# response = broken.
+UNHEALTHY=""
+echo "=== post-dump health check ==="
+for _host in dashboard status speedtest msims.link; do
+    case "$_host" in
+        msims.link) _url="https://msims.link/" ;;
+        *)          _url="https://$_host.mathewcsims.uk/" ;;
+    esac
+    _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$_url" 2>/dev/null || true)
+    [ -z "$_code" ] && _code=000
+    case "$_code" in
+        5*|000) printf '  %-14s %s  <-- UNHEALTHY\n' "$_host" "$_code"
+                UNHEALTHY="$UNHEALTHY
+  - $_host (HTTP $_code)" ;;
+        *)      printf '  %-14s %s\n' "$_host" "$_code" ;;
+    esac
+done
+
+if [ -n "$UNHEALTHY" ]; then
+    echo "=== APPS UNHEALTHY AFTER DUMP:$UNHEALTHY ==="
+    curl -fsS --max-time 10 \
+        --data-urlencode "title=🚨 Pi apps unhealthy immediately after database dump" \
+        --data-urlencode "type=failure" \
+        --data-urlencode "format=markdown" \
+        --data-urlencode "body=These Pi apps stopped serving right after the nightly dump ran:
+$UNHEALTHY
+
+Signature of the 2026-07-30 incident (dump corrupting a running app's DB
+connection; data intact). Fix then was restarting the affected containers.
+
+Host: babel. Script: pi-db-dumps/dump-databases.sh" \
+        "$APPRISE_URL" >/dev/null 2>&1 || true
+    FAILED="$FAILED
+  - POST-DUMP HEALTH: apps unhealthy:$UNHEALTHY"
+fi
+
 if [ -n "$FAILED" ]; then
     echo "=== Pi database dumps FAILED for:$FAILED ==="
     curl -fsS --max-time 10 \
