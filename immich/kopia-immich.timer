@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily Kopia backup of Immich (see kopia-immich.service)
+
+[Timer]
+# 03:00 deliberately — Immich's own database dump runs at 02:00, so this
+# picks up that night's fresh dump. Moving this earlier would snapshot a
+# stale dump.
+OnCalendar=*-*-* 03:00:00
+# Spreads load if other jobs land at the same time; same shape as
+# pi-unattended-upgrades/reboot-check.timer.
+RandomizedDelaySec=15m
+# Runs on next boot if the machine was off at 03:00.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
