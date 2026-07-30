@@ -69,3 +69,7 @@ autostart/*.log
 # ── OS cruft ─────────────────────────────────────────────────────────────
 .DS_Store
 __pycache__/
+
+# Consistent database dumps written before each Kopia run (see
+# scripts/dump-databases.sh). Backed up to B2, never committed.
+db-dumps/
