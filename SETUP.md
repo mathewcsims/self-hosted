@@ -2235,6 +2235,23 @@ tag goes with the machine the *monitored process* runs on — e.g.
 `Owl document-viewer` is tagged `Heart of Gold` because the sidecar
 container is on the Mac, even though Owl's own data lives there too.
 
+**Every monitor must be tagged** — there should never be an untagged one.
+Verify with:
+
+```sh
+ssh mathew@babel 'python3 -c "
+import sqlite3
+c=sqlite3.connect(\"file:/home/mathew/uptime-kuma/data/kuma.db?mode=ro\",uri=True)
+print([r[0] for r in c.execute(\"SELECT m.name FROM monitor m LEFT JOIN monitor_tag mt ON mt.monitor_id=m.id GROUP BY m.id HAVING count(mt.tag_id)=0\")])"'
+```
+
+**`Memos (tailnet)` is deliberate, not stale.** It pings the OLD ScaleTail
+Memos container that `Rep's Notes` (prospect-ukri-tus) was migrated from.
+That instance is kept running on purpose, serving a link that forwards
+visitors to the new one, for anyone who hasn't yet noticed the move. Do not
+"clean it up" — it is monitored precisely because it still needs to be up.
+Retire it only once the forwarding is no longer wanted.
+
 **Status page conventions:** the `all` page ("All Services") has three
 groups — `Services`, `Monitoring & infrastructure`, `Tailnet apps` — and
 each is sorted **case-insensitively alphabetical** (which is why
