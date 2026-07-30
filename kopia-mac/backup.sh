@@ -84,7 +84,25 @@ else
     MOUNTED_NAS=0
 fi
 
+# Dump every database to a consistent, restorable file BEFORE snapshotting
+# anything. Without this, the datadir paths below (healthlog/pgdata,
+# blog/db, bookstack/db, and every SQLite file) are copied while their
+# services are running, which can capture torn pages or a .db and -wal that
+# disagree — a backup that looks valid until you try to restore it. See
+# scripts/dump-databases.sh for the per-engine reasoning.
+#
+# Deliberately non-fatal: if dumping fails, it alerts via Apprise on its own
+# and we still take the file-level snapshots rather than skipping the whole
+# backup. A partial backup beats none.
+log "dumping databases before snapshot"
+if "$REPO_ROOT/scripts/dump-databases.sh" >> "$LOG" 2>&1; then
+    log "database dumps completed"
+else
+    log "WARNING: database dumps reported failures (see Apprise alert) — continuing with file snapshots"
+fi
+
 SOURCES="
+$REPO_ROOT/db-dumps
 $REPO_ROOT/karakeep/data
 $REPO_ROOT/karakeep/meilisearch-data
 $REPO_ROOT/healthlog/data

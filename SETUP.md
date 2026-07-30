@@ -146,6 +146,8 @@ section below says which.
 | `immich/pgdata/` | **slartibartfast** | Immich's Postgres datadir (gitignored) — deliberately NOT what gets backed up, see its section |
 | `immich/kopia-backup.sh` | **slartibartfast** | daily Kopia snapshot of the photo library to B2; alerts via Apprise on failure |
 | `immich/kopia-immich.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:00 (installed to `~/.config/systemd/user/`) |
+| `scripts/dump-databases.sh` | **Mac** | consistent DB dumps (pg_dump / mysqldump / SQLite `VACUUM INTO`) written before every Kopia run; alerts via Apprise on failure |
+| `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
 | `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
@@ -2706,6 +2708,92 @@ plus a Time Machine share on the NAS, to Backblaze B2. Client-side encryption
 is on by default (not optional, unlike rclone which needs `crypt` bolted on),
 snapshots are content-defined-chunked so repeat backups only upload what
 changed, and scheduling is automatic.
+
+### Database dumps run BEFORE every snapshot (added 2026-07-30)
+
+**The problem this fixes.** Until this was added, every database in this
+repo was "backed up" by snapshotting its **live data directory while the
+service was running** — `healthlog/pgdata`, `blog/db`, `bookstack/db`,
+`nimbus/db`, plus a dozen SQLite files, most in WAL mode. That is not a
+backup. A file-level copy of a running Postgres or MySQL datadir can
+capture torn pages and a partially-written WAL; a WAL-mode SQLite copy can
+capture a `.db` and `-wal` that disagree. There was no `pg_dump`,
+`mysqldump` or equivalent anywhere in the repo. The failure mode is the
+nasty one: it looks like a valid backup right up until you need it.
+
+Immich was the only exception, because it ships its own dump — and
+restore-testing *that* is what surfaced the gap for everything else.
+
+**What happens now.** Two scripts write consistent, restorable dumps
+immediately before their host's snapshots:
+
+| Host | Script | Trigger |
+|------|--------|---------|
+| Mac | `scripts/dump-databases.sh` | called at the top of `kopia-mac/backup.sh` (02:00) |
+| Pi | `pi-db-dumps/dump-databases.sh` | `db-dumps.timer`, a systemd **user** unit, 01:30 |
+
+Both write to a gitignored `db-dumps/` (keeping the last 7 per database;
+Kopia keeps the real history), and both alert via **Apprise on failure** —
+a dump that fails silently is the whole problem restated.
+
+**Per-engine method, and why:**
+- **Postgres** — `pg_dump` run *inside* the container, so no credential
+  ever reaches the host or a command line (local socket auth is trusted
+  there).
+- **MySQL / MariaDB** — `--single-transaction` for InnoDB consistency
+  without locking the app out; the root password comes from the
+  container's own environment via `MYSQL_PWD`, so it never appears in
+  argv.
+- **SQLite** — `VACUUM INTO` on the Mac, and Python's
+  `sqlite3.Connection.backup()` on the Pi (where `sqlite3` isn't installed
+  and adding it needs root). Both are the *supported* online-copy APIs and
+  are safe against a live WAL database; `cp` is not.
+
+**Deliberately not dumped:** copyparty's `up2k.db`/`shares.db`/
+`sessions.db` (regenerable dedup index and session state — its actual
+files are backed up), karakeep's `queue.db` (transient job queue),
+wanderer's `pb_data/auxiliary.db` (PocketBase's 35 MB log database; the
+real `data.db` IS dumped), and `msims-link/data/backups/*` (chhoto-url's
+own rotating backups of the database we already dump properly).
+
+**Pi wrinkle worth knowing:** the Pi's Kopia is a *server* with its own
+internal scheduler, so there's no host-side "before snapshot" hook like
+the Mac's `backup.sh`. Worse, `kopia-server/entrypoint.sh`'s source-config
+loop only runs on the very first bootstrap against an empty repository —
+so simply adding a new mount would be **silently ignored forever**. The Pi
+dump script therefore runs `kopia snapshot create /data/db-dumps` itself
+at the end.
+
+**Restore-tested, not assumed** — every engine, into a throwaway target,
+with the live database verified unchanged afterwards:
+
+| Engine | Result |
+|---|---|
+| Postgres (healthlog) | 117 tables, 0 errors |
+| Postgres (nimbus, Pi) | 12 tables, 0 errors |
+| MySQL (ghost) | 92 tables, 6 posts; live unchanged |
+| MariaDB (bookstackapp) | users 2=2, settings 34=34, roles 4=4 vs live |
+| SQLite (owl/forgejo/vikunja) | `integrity_check` ok; 12/131/38 tables |
+| SQLite (uptime-kuma, Pi) | ok; 30 tables, 40,035 heartbeat rows |
+
+**A dangerous trap, hit while building this.** The MySQL dump originally
+used `--all-databases`. Such a dump embeds `USE <db>;` and
+`CREATE DATABASE` statements that **override whatever target you restore
+into** — so piping it into a scratch database silently restored over the
+*live* Ghost and `mysql` system databases instead. No data was lost (the
+dump was minutes old and identical), but it easily could have been. The
+script now dumps each app's own database **without** `--databases`, which
+produces portable output that restores into any target. If you ever change
+this, keep that property — it's what makes a restore test safe to run at
+all. Trade-off accepted: users/grants are no longer captured, but they're
+reproducible from Pass and the compose files, and aren't app data.
+
+**Still to do (phase 2):** once these dumps have a few weeks of history,
+drop the raw datadir paths (`healthlog/pgdata`, `blog/db`,
+`bookstack/db`, and the SQLite files) from the snapshot sources. They're
+the larger B2 cost and, being un-quiesced copies, actively misleading —
+but they're worth keeping as a belt-and-braces overlap until the dumps
+have proven themselves in anger.
 
 **Architecture — two independent Kopia instances sharing one B2 repository:**
 - **`kopia-server/` (Pi, always-on)** — runs `kopia server start` in a

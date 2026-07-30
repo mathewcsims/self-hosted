@@ -58,6 +58,12 @@ services:
       - ../speedtest-tracker/config:/data/speedtest-tracker:ro
       - ../apprise/config:/data/apprise:ro
       - ../msims-link/data:/data/msims-link:ro
+      # Consistent database dumps written by pi-db-dumps/dump-databases.sh
+      # at 01:30. NOTE: entrypoint.sh's bootstrap loop only configures
+      # sources on the very first run against an empty repository, so this
+      # mount would never be snapshotted on its own — the dump script
+      # explicitly runs `kopia snapshot create /data/db-dumps` itself.
+      - ../db-dumps:/data/db-dumps:ro
     # No `ports:` — reached only by Caddy (backup.mathewcsims.uk, LAN-gated),
     # over `pi-shared`, by container name. Same no-published-port pattern as
     # every other Pi-resident app in this repo.

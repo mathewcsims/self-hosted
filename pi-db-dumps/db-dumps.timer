@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly database dumps on the Pi (see db-dumps.service)
+
+[Timer]
+# 01:30 — deliberately ahead of kopia-server's own daily snapshot cycle and
+# ahead of the Mac's 02:00 Kopia run, so dumps are always fresher than the
+# snapshots that capture them.
+OnCalendar=*-*-* 01:30:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

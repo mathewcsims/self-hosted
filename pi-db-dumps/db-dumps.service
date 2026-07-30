@@ -1,0 +1,8 @@
+[Unit]
+Description=Dump Pi databases to consistent files and snapshot them with Kopia
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/pi-db-dumps/dump-databases.sh
