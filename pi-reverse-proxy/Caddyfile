@@ -829,9 +829,18 @@ immich.mathewcsims.uk {
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		rate_limit {
+			# 3000/min, NOT the 300/min every other app here uses — that
+			# figure suits text apps and is far too tight for a photo
+			# library. Hit immediately in real use (HTTP 429 in the web
+			# UI): one timeline view fetches hundreds of thumbnails, and
+			# scrolling or a mobile background upload fetches hundreds
+			# more, so 300/min is exceeded by entirely normal browsing.
+			# Still a real cap on a runaway client, and this host is
+			# LAN/tailnet-gated anyway, so the general zone was never the
+			# meaningful control here — the auth zone below is.
 			zone rl_immich {
 				key {remote_host}
-				events 300
+				events 3000
 				window 1m
 			}
 			# Immich has no documented brute-force protection of its own on
