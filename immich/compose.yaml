@@ -111,7 +111,26 @@ services:
     # No explicit healthcheck: the image ships its own (upstream's compose
     # just sets `disable: false`), so inheriting it beats inventing one
     # that could drift from what Immich actually considers healthy.
-    mem_limit: 1500m
+    #
+    # 2g, rebalanced from 1500m by taking 500m off the ML container (which
+    # measured only ~45% of its 3g during a full bulk import, so the
+    # original split guessed wrong about which service was hungry).
+    #
+    # IMPORTANT, learned by doing it: raising this ceiling did NOT reduce
+    # utilisation. At 1500m the container sat at 89%; given 2g it promptly
+    # grew to 99%, then settled around 94% — i.e. it expands to fill
+    # whatever it is given and garbage-collects, classic Node/V8 heap
+    # behaviour rather than genuine memory pressure. So **a high percentage
+    # here is not a problem signal and chasing it by raising the limit is
+    # pointless.** The thing that actually matters is
+    # `docker inspect ... {{.State.OOMKilled}}`, which has stayed false at
+    # both 1500m and 2g, through bulk imports of thousands of assets.
+    #
+    # Net effect of the change: a little more absolute headroom for bursts
+    # before a hard OOM, at no cost elsewhere (total stack ceiling is
+    # actually 24 MiB lower than before). Worth keeping, but it fixed a
+    # problem that the measurements say never existed.
+    mem_limit: 2g
     pids_limit: 512
 
   immich-machine-learning:
@@ -129,10 +148,12 @@ services:
       # large and must survive recreation or every restart re-downloads
       # them.
       - model-cache:/cache
-    # Largest limit in the stack — this is the container that would
-    # otherwise grow until something else died. 3g leaves room to try a
-    # slightly better CLIP model later without immediately OOMing.
-    mem_limit: 3g
+    # Lowered 3g -> 2.5g, giving the 500m to immich-server (see its note).
+    # Measured at 1.35 GiB during a full bulk import with the default
+    # ViT-B-32 model, so 2.5g still leaves ~1.1 GiB of headroom. Revisit
+    # before switching to a larger CLIP model — Immich's model guidance
+    # runs to 6,500+ MiB, which this box can't accommodate regardless.
+    mem_limit: 2500m
     pids_limit: 512
 
   redis:
