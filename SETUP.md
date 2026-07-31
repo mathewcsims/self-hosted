@@ -3825,7 +3825,22 @@ names the wrong layer costs more time than no message at all.
 the **OAuth token endpoint**, not the People API — no contact call ever
 happened. The real body was `{"error": "invalid_grant",
 "error_description": "Token has been expired or revoked."}`, which urllib
-discards unless you explicitly read it. The likeliest cause is the OAuth
+discards unless you explicitly read it.
+
+**Re-authorising: `contact-sync/get_google_refresh_token.py`.** The Google
+credential is an OAuth **Desktop app** client, which authenticates via a
+**loopback redirect** (`http://127.0.0.1:<port>`, any port, nothing to
+register). Google's OAuth Playground **cannot** be used with it — it fails
+with `Error 400: redirect_uri_mismatch`, and no setting changes that. That
+dead end was walked into on 2026-07-31 because the original loopback flow
+had been run ad-hoc in July 2026 and never committed, so the method had to
+be rediscovered under pressure. It is now a committed script: run it, sign
+in, copy the printed token into the `GOOGLE_REFRESH_TOKEN` field of the
+`Contact Sync Google` Pass item. It deliberately does **not** write to Pass
+itself — the agent's Pass token is read-only, and a credential of this
+sensitivity belongs in by hand. *Any ad-hoc procedure that mints a
+credential should be committed at the time; the cost of not doing so is
+paid later, in the middle of an outage.* The likeliest cause is the OAuth
 app sitting in **"Testing"** publishing status, where Google expires
 refresh tokens after **7 days** (last success 25 July, failing since 27
 July, 12 consecutive runs). `spoke_google.access_token()` now reads the
