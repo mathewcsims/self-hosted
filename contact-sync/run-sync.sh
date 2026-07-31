@@ -105,7 +105,22 @@ export MS_CLIENT_ID MS_REFRESH_TOKEN FORGEJO_BOT_TOKEN
 # Graph rotates refresh tokens: capture fd 3 and cache the new one locally
 # (see MS_TOKEN_CACHE note above — Pass itself is never written here).
 ROTATED=$(mktemp)
-python3 "$REPO_ROOT/contact-sync/sync.py" >> "$LOG" 2>&1 3> "$ROTATED" || log "SYNC FAILED (see above)"
+# "$@" is passed through so a dry run can be taken through the EXACT same
+# credential path as the real thing:
+#     contact-sync/run-sync.sh --dry-run
+# Dry-run output goes to the terminal as well as the log, since it exists
+# to be read by a person rather than filed away.
+#
+# NOTE the fd-3 capture is kept for dry runs too, deliberately. Microsoft
+# ROTATES the refresh token as a side effect of authenticating, server-side
+# — that rotation has already happened by the time we see it, so discarding
+# the new token would leave the cache holding a dead one and break the next
+# REAL run. Caching it is the correct behaviour, not a dry-run violation.
+if [ "${1:-}" = "--dry-run" ]; then
+    python3 "$REPO_ROOT/contact-sync/sync.py" "$@" 3> "$ROTATED" 2>&1 | tee -a "$LOG"
+else
+    python3 "$REPO_ROOT/contact-sync/sync.py" "$@" >> "$LOG" 2>&1 3> "$ROTATED" || log "SYNC FAILED (see above)"
+fi
 if [ -s "$ROTATED" ]; then
     install -m 600 /dev/null "$MS_TOKEN_CACHE" 2>/dev/null || true
     cat "$ROTATED" > "$MS_TOKEN_CACHE"

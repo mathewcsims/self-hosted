@@ -3909,6 +3909,31 @@ all). Anything the extension rejects, and any enumeration failure, is
 still a real, warning-level failure. The risk of soft-skipping is masking
 genuine faults, and that boundary is where it's held.
 
+**Dry run — `contact-sync/run-sync.sh --dry-run`.** Pulls every provider
+and reports exactly what *would* change, writing nothing: no provider
+writes, no `canonical.json`/`state.json` update, no vcard regeneration, no
+git commit/push, no Apprise notification. Use it before any run you're
+unsure about — after a spoke has been broken for a while, after editing
+merge logic, or when a large change is plausible.
+
+Writes are **redirected into a scratch directory**, not merely skipped.
+That matters: the outbound spokes' `make_plan()` reads canonical **from
+disk**, so without writing the inbound fold somewhere the reported plans
+would be computed against a stale file and the numbers would be fiction.
+The scratch directory is removed at the end.
+
+Two deliberate exceptions, both correct rather than leaks:
+- **The MS refresh-token cache still updates.** Microsoft rotates the
+  refresh token server-side as a side effect of authenticating — that has
+  already happened by the time the run sees it, so discarding the new
+  token would leave a dead one cached and break the next *real* run.
+- **`.pull-<provider>.json` files** are still written into `~/contact-sync`
+  (they're the raw pull, rewritten every run either way).
+
+Run it via `run-sync.sh` rather than calling `sync.py` directly, so the
+credentials come through the identical Pass path as the scheduled job —
+otherwise you're testing a different thing from the one that runs at 07:30.
+
 **Recovery:** restore a provider from `~/contact-sync/snapshots/` (or
 any Kopia snapshot of `~/contact-sync`) by replaying it through the
 relevant spoke's plan/apply; the store's git history on Forgejo shows

@@ -26,11 +26,14 @@ Simplified but honest implementation of that contract:
 Secrets all arrive via environment, sourced from Pass by run-sync.sh.
 """
 
+import argparse
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 
@@ -131,11 +134,33 @@ def provider_differs(prov, canon, pc):
 
 
 def main():
+    ap_ = argparse.ArgumentParser(description=__doc__)
+    ap_.add_argument(
+        "--dry-run", action="store_true",
+        help="pull from every provider and report exactly what WOULD change, "
+             "without writing anything anywhere — no provider writes, no "
+             "canonical/state update, no vcard regeneration, no git "
+             "commit/push, and no Apprise notification")
+    args = ap_.parse_args()
+    dry = args.dry_run
+
     canonical_path = os.path.join(DATA, "canonical.json")
     state_path = os.path.join(DATA, "state.json")
     canonical = json.load(open(canonical_path))
     state = json.load(open(state_path))
     by_provider = index_canonical(canonical)
+
+    # In a dry run every write is redirected into a scratch directory that
+    # is thrown away at the end. This is not just belt-and-braces: the
+    # outbound spokes' make_plan() reads canonical from DISK, so the plans
+    # would be computed against a stale file if the inbound fold weren't
+    # written somewhere first. Redirecting rather than skipping is what
+    # makes the reported plan sizes real rather than approximate.
+    scratch = tempfile.mkdtemp(prefix="contact-sync-dryrun-") if dry else None
+    if dry:
+        canonical_path = os.path.join(scratch, "canonical.json")
+        state_path = os.path.join(scratch, "state.json")
+        print(f"DRY RUN — no writes will occur (scratch: {scratch})\n")
 
     summary = []
     # Expected, benign skips — reported but they do NOT colour the run as a
@@ -182,10 +207,16 @@ def main():
     # safety: any provider seeing too many inbound changes aborts the run
     for prov, contacts in pulls.items():
         if contacts and inbound[prov] > max(20, MAX_CHANGE_FRACTION * len(contacts)):
-            notify("🛑 contact-sync aborted",
-                   f"{prov} showed {inbound[prov]} inbound changes "
+            msg = (f"{prov} showed {inbound[prov]} inbound changes "
                    f"(>{int(MAX_CHANGE_FRACTION*100)}% of {len(contacts)}) — "
-                   "no writes performed. Inspect manually.", "failure")
+                   "no writes performed. Inspect manually.")
+            # A dry run must not page anyone: finding out that the guard
+            # WOULD trip is the whole point of running one.
+            if dry:
+                shutil.rmtree(scratch, ignore_errors=True)
+                print(f"DRY RUN — would ABORT: {msg}")
+            else:
+                notify("🛑 contact-sync aborted", msg, "failure")
             sys.exit(1)
 
     json.dump(canonical, open(canonical_path, "w"), indent=1)
@@ -202,7 +233,9 @@ def main():
     for prov, (mk, ap) in plans.items():
         if pulls[prov] is None:
             continue
-        plan_path = os.path.join(DATA, f".plan-{prov}.json")
+        # Dry-run plans go to scratch so they cannot clobber the
+        # real run's transient plan files.
+        plan_path = os.path.join(scratch if dry else DATA, f".plan-{prov}.json")
         try:
             if prov == "proton":
                 mk(canonical_path, plan_path, os.path.join(DATA, ".pull-proton-2.json"))
@@ -214,25 +247,39 @@ def main():
             if n_changes > max(20, MAX_CHANGE_FRACTION * total):
                 summary.append(f"🛑 {prov}: outbound plan too large ({n_changes}) — skipped")
                 continue
-            ap(plan_path, canonical_path, state_path)
+            if not dry:
+                ap(plan_path, canonical_path, state_path)
             outbound[prov] = n_changes
         except Exception as e:
             summary.append(f"⚠️ {prov}: outbound failed ({e})")
     # ms_work: asymmetric updates-only
     if pulls["ms_work"] is not None:
-        plan_path = os.path.join(DATA, ".plan-ms-work.json")
+        plan_path = os.path.join(scratch if dry else DATA, ".plan-ms-work.json")
         try:
             spoke_thunderbird.make_plan(canonical_path, plan_path)
             plan = json.load(open(plan_path))
-            if plan["update"]:
+            if plan["update"] and not dry:
                 spoke_thunderbird.apply_plan(plan_path, canonical_path)
             outbound["ms_work"] = len(plan["update"])
         except Exception as e:
             summary.append(f"⚠️ ms_work: outbound failed ({e})")
 
     # store: regenerate vcards + commit + push to Forgejo
+    # Skipped wholesale on a dry run — this rewrites the real vcard store
+    # and pushes to Forgejo, neither of which can be redirected to scratch
+    # in any meaningful way.
     store = os.path.join(DATA, "store")
     canonical = json.load(open(canonical_path))
+    if dry:
+        shutil.rmtree(scratch, ignore_errors=True)
+        lines = ["DRY RUN — nothing was written",
+                 f"would be: in {sum(inbound.values())} / out {sum(outbound.values())}"]
+        lines += [f"- {p}: in {inbound.get(p, 0)}, out {outbound.get(p, '—')}"
+                  for p in providers]
+        lines += summary
+        lines += soft_skips
+        print("\n".join(lines))
+        return
     for c in canonical:
         with open(os.path.join(store, c["uid"] + ".vcf"), "w") as f:
             f.write(initial_merge.to_vcard(c))
