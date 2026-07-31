@@ -43,6 +43,7 @@ import spoke_icloud  # noqa: E402
 import spoke_thunderbird  # noqa: E402
 import spoke_ms  # noqa: E402
 import spoke_proton  # noqa: E402
+import thunderbird_client  # noqa: E402  (for the ThunderbirdUnavailable soft skip)
 
 DATA = os.path.expanduser("~/contact-sync")
 APPRISE_URL = "https://apprise.mathewcsims.uk/notify/self-hosted"
@@ -137,11 +138,24 @@ def main():
     by_provider = index_canonical(canonical)
 
     summary = []
+    # Expected, benign skips — reported but they do NOT colour the run as a
+    # warning. Kept separate from `summary` for exactly that reason.
+    soft_skips = []
     providers = ["google", "ms_personal", "proton", "icloud", "ms_work"]
     pulls = {}
     for prov in providers:
         try:
             pulls[prov] = pull_provider(prov)
+        except thunderbird_client.ThunderbirdUnavailable as e:
+            # Thunderbird simply not being open is not a fault — this job
+            # runs at 07:30 whether or not the app has been started, so
+            # alerting on it trains you to ignore the alerts. Deliberately
+            # narrow: ONLY the "can't reach Thunderbird at all" case is
+            # soft. Anything the extension itself rejects, or any
+            # enumeration problem (see thunderbird_client.search_all),
+            # still raises below and is reported as a real failure.
+            soft_skips.append(f"ℹ️ {prov}: skipped — {e}")
+            pulls[prov] = None
         except Exception as e:  # a dead spoke skips, never blocks the rest
             summary.append(f"⚠️ {prov}: PULL FAILED ({e}) — spoke skipped")
             pulls[prov] = None
@@ -240,6 +254,9 @@ def main():
     lines = [f"in {sum(inbound.values())} / out {sum(outbound.values())}"]
     lines += [f"- {p}: in {inbound.get(p, 0)}, out {outbound.get(p, '—')}" for p in providers]
     lines += summary
+    lines += soft_skips
+    # soft_skips deliberately excluded from this test: an expected skip
+    # (Thunderbird closed) shouldn't make a clean run look like a problem.
     ntype = "warning" if summary else "success"
     notify("🔄 contact-sync run", "\n".join(lines), ntype)
     print("\n".join(lines))

@@ -79,19 +79,91 @@ def call_tool(name, arguments=None):
     return parsed
 
 
-def search_all(max_results=200):
-    """Empty query returns every contact across every address book
-    (confirmed against the extension's source — an empty query matches
-    unconditionally) — the only bulk-enumeration path available; there's
-    no dedicated list/enumerate endpoint."""
-    result = call_tool("searchContacts", {"query": "", "maxResults": max_results})
-    contacts = result["contacts"] if isinstance(result, dict) else result
-    if isinstance(result, dict) and result.get("hasMore"):
-        raise RuntimeError(
-            f"searchContacts truncated at {max_results} — raise max_results, "
-            f"total contact count across all address books exceeds it"
+# The extension caps searchContacts at 200 results, full stop. Verified
+# empirically (asked for 50/199/201/300/1000 → got 50/199/200/200/200,
+# always with hasMore: true) and stated in its own tool schema: "Maximum
+# number of results to return (default 50, max 200)".
+SEARCH_CAP = 200
+
+# Seeds for partitioned enumeration. Letters and digits cover names and
+# email addresses; searchContacts matches on either.
+_SEED_PREFIXES = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+# How deep prefix expansion may go before giving up. Four characters means
+# a single partition would need 200+ contacts sharing a 4-char prefix to
+# defeat it — far beyond anything realistic here, and the failure is loud
+# rather than silent if it ever happens.
+_MAX_PREFIX_DEPTH = 4
+
+
+def search_all(max_results=None):
+    """Enumerate every contact across every address book.
+
+    ── WHY THIS IS NOT ONE CALL ──────────────────────────────────────────
+    An empty query does match unconditionally, so a single call is the
+    obvious approach and is what this used to do. But the extension caps
+    ANY search at 200 results, so once the library exceeded 200 contacts
+    that call silently became a partial answer — and the old code's advice
+    to "raise max_results" was simply wrong: the cap is server-side and
+    ignores anything larger.
+
+    That broke the ms_work pull on 2026-07-29 and every run after it, once
+    the total crossed 200. There is no listContacts endpoint and no
+    address-book filter (confirmed against tools/list), so searchContacts
+    is the only bulk path there is.
+
+    So: partition the search space instead. Query each letter/digit
+    prefix, and recursively extend any prefix that still comes back
+    truncated, until every partition fits under the cap. Results are
+    deduplicated by contact id.
+
+    The empty-query call is kept as an extra seed, not as the answer — it
+    contributes up to 200 contacts for free and catches anything with
+    neither a name nor an email for a prefix to match on.
+    """
+    if max_results is not None and max_results > SEARCH_CAP:
+        raise ValueError(
+            f"max_results={max_results} exceeds the extension's hard cap of "
+            f"{SEARCH_CAP}; enumeration is partitioned instead — see search_all()"
         )
-    return contacts
+
+    found = {}
+    truncated_prefixes = []
+
+    def absorb(result):
+        contacts = result["contacts"] if isinstance(result, dict) else result
+        for c in contacts:
+            found[c["id"]] = c
+        return bool(isinstance(result, dict) and result.get("hasMore"))
+
+    # Free seed: whatever the unconditional match returns before the cap.
+    absorb(call_tool("searchContacts", {"query": "", "maxResults": SEARCH_CAP}))
+
+    def walk(prefix):
+        if absorb(call_tool("searchContacts",
+                            {"query": prefix, "maxResults": SEARCH_CAP})):
+            # This partition is still full — split it finer.
+            if len(prefix) >= _MAX_PREFIX_DEPTH:
+                truncated_prefixes.append(prefix)
+                return
+            for ch in _SEED_PREFIXES:
+                walk(prefix + ch)
+
+    for ch in _SEED_PREFIXES:
+        walk(ch)
+
+    if truncated_prefixes:
+        # Loud rather than silently partial — a partial contact list would
+        # look to the sync engine like contacts had been DELETED upstream.
+        raise RuntimeError(
+            "searchContacts still truncated at depth "
+            f"{_MAX_PREFIX_DEPTH} for prefixes {truncated_prefixes!r} — "
+            "more than 200 contacts share a prefix; enumeration is "
+            "incomplete and the pull has been aborted rather than risk "
+            "treating missing contacts as deletions"
+        )
+
+    return list(found.values())
 
 
 def work_contacts():
