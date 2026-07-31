@@ -42,6 +42,7 @@ Google" Pass item itself, so there is nothing to paste in beforehand.
 """
 
 import base64
+import difflib
 import hashlib
 import http.server
 import json
@@ -83,7 +84,14 @@ def pass_field(name):
     for f in fields:
         if f["name"] == name:
             return list(f["content"].values())[0]
-    sys.exit(f"field {name} not found in Pass item {ITEM!r}")
+    # Same near-miss reporting as run-sync.sh's pass_field — see the comment
+    # there for why (a misspelled duplicate field silently shadows the real
+    # value and is invisible in the Pass UI).
+    names = [f["name"] for f in fields]
+    close = difflib.get_close_matches(name, names, n=3, cutoff=0.6)
+    hint = f"\nDid you mean: {', '.join(repr(c) for c in close)}?" if close else ""
+    sys.exit(f"field {name!r} not found in Pass item {ITEM!r}. "
+             f"Fields present: {names}{hint}")
 
 
 def free_port():
@@ -182,16 +190,50 @@ def main():
         sys.exit("no refresh_token returned — Google only issues one with "
                  "access_type=offline AND prompt=consent; check both are set")
 
-    print("=" * 68)
-    print("New refresh token (copy it into Pass now — it is not saved here):\n")
+    # Prove the token works BEFORE handing it over. A refresh round-trip is
+    # the same call the sync makes every morning, so if this passes the
+    # credential itself is known good — which means any later failure is a
+    # storage or naming problem, not an auth one. Worth the extra second:
+    # on 2026-07-31 two perfectly valid tokens were minted and the sync
+    # still failed, and untangling that took far longer than it should have.
+    verify_body = urllib.parse.urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": tok["refresh_token"],
+        "grant_type": "refresh_token",
+    }).encode()
+    try:
+        with urllib.request.urlopen(
+                urllib.request.Request(TOKEN_ENDPOINT, data=verify_body, method="POST"),
+                timeout=30) as r:
+            json.load(r)
+        verified = True
+    except urllib.error.HTTPError as e:
+        verified = False
+        print(f"\n!! The new token was REJECTED on a test refresh "
+              f"({e.code}): {e.read().decode()[:300]}\n"
+              f"!! Do not paste it into Pass — something is wrong with the "
+              f"client configuration.\n")
+
+    if not verified:
+        sys.exit(1)
+
+    print("=" * 70)
+    print("New refresh token — VERIFIED working against Google just now.")
+    print("Copy it into Pass; it is not saved anywhere by this script.\n")
     print(tok["refresh_token"])
     print()
     print(f"  Vault: {VAULT}")
     print(f"  Item:  {ITEM}")
     print("  Field: GOOGLE_REFRESH_TOKEN")
     print()
+    print("  ^^ That field name must match EXACTLY. Update the existing")
+    print("     field — do not add a second one, and check the item has no")
+    print("     similarly-named field left over (a misspelled duplicate is")
+    print("     invisible in the UI but silently shadows the real value).")
+    print()
     print(f"Granted scopes: {tok.get('scope')}")
-    print("=" * 68)
+    print("=" * 70)
 
 
 if __name__ == "__main__":

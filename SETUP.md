@@ -3827,6 +3827,31 @@ happened. The real body was `{"error": "invalid_grant",
 "error_description": "Token has been expired or revoked."}`, which urllib
 discards unless you explicitly read it.
 
+**The actual 2026-07-31 root cause was a typo in a Pass field name, not
+the token.** The `Contact Sync Google` item held **two** token fields — the
+real `GOOGLE_REFRESH_TOKEN` and a misspelled `GOGOLE_REFRESH_TOKEN` — and
+two separate freshly-minted tokens were both pasted into the misspelled
+one. The code read the correctly-spelled field, got the stale value, and
+Google truthfully reported "Token has been expired or revoked" about a
+credential nobody was looking at. Every layer was telling the truth; the
+combination was still deeply misleading, and two good tokens got blamed
+before the item's field list was actually inspected.
+
+*Check the field list before theorising about a credential.* Pass items
+can hold fields in two places (`Custom.sections` and `extra_fields`), a
+misspelled duplicate is invisible in the UI, and it silently shadows the
+real value.
+
+Both readers now **fail loudly with near-miss detection** — a missing field
+exits non-zero and names the similar fields that do exist (`difflib`,
+cutoff 0.6, which catches `GOGOLE`/`GOOGLE`), rather than the old
+behaviour of printing nothing and exiting 0 so the caller silently
+received an empty credential. An empty-but-present field is an error too.
+`get_google_refresh_token.py` additionally **verifies the token it just
+minted** with a real refresh round-trip before printing it, so a token that
+reaches you is known-good and any later failure is a storage or naming
+problem rather than an auth one.
+
 **Re-authorising: `contact-sync/get_google_refresh_token.py`.** The Google
 credential is an OAuth **Desktop app** client, which authenticates via a
 **loopback redirect** (`http://127.0.0.1:<port>`, any port, nothing to

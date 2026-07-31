@@ -33,18 +33,49 @@ fi
 # Reads BOTH Custom.sections and extra_fields — which one a field lands in
 # depends on how it was added (create --from-template vs update --field);
 # see the forgejo-api skill for where that was learned the hard way.
+# A MISSING FIELD MUST BE LOUD. This used to print nothing and exit 0 when
+# a field name didn't match, so the caller got an empty string and the
+# failure only surfaced later, disguised as whatever the provider said
+# about an empty credential.
+#
+# That is exactly how 2026-07-31 went wrong: the Pass item held
+# GOGOLE_REFRESH_TOKEN (typo) alongside the real GOOGLE_REFRESH_TOKEN, two
+# freshly-minted tokens were pasted into the typo'd one, and Google kept
+# reporting "Token has been expired or revoked" — a true statement about
+# the stale value being read, and a completely misleading one about the
+# cause. Near-miss names are now reported explicitly, because a typo'd
+# field is invisible until something names it.
 pass_field() {
     PROTON_PASS_AGENT_REASON="contact-sync scheduled run" \
         pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "$1" --output json \
         | python3 -c '
-import json, sys
+import difflib, json, sys
 d = json.load(sys.stdin)
 content = d["item"]["content"]["content"]
 fields = [f for s in content["Custom"]["sections"] for f in s["section_fields"]]
 fields += d["item"]["content"].get("extra_fields", [])
+want = sys.argv[1]
+names = [f["name"] for f in fields]
+
 for f in fields:
-    if f["name"] == sys.argv[1]:
-        print(list(f["content"].values())[0])
+    if f["name"] == want:
+        value = list(f["content"].values())[0]
+        if not value.strip():
+            sys.exit(f"pass_field: {want!r} exists but is EMPTY in this item")
+        print(value)
+        break
+else:
+    # cutoff=0.6 is difflib default territory: catches transpositions and
+    # single-character slips (GOGOLE/GOOGLE) without matching unrelated names.
+    close = difflib.get_close_matches(want, names, n=3, cutoff=0.6)
+    hint = ""
+    if close:
+        hint = ("\n  Did you mean one of these fields that DO exist? "
+                + ", ".join(repr(c) for c in close)
+                + "\n  A near-miss usually means a value was pasted into a "
+                  "misnamed field — rename it rather than duplicating it.")
+    sys.exit(f"pass_field: no field named {want!r}. "
+             f"Fields present: {names}{hint}")
 ' "$2"
 }
 
