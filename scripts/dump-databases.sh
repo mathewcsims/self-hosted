@@ -60,21 +60,61 @@ fail() {
   - $1"
 }
 
+# ── Preflight: is podman actually usable? ─────────────────────────────────
+# Every container-based dump below needs it, and a missing binary should be
+# ONE clear message rather than three identical mystery failures. This is
+# not hypothetical: on 2026-07-31 the LaunchAgent's PATH lacked
+# /opt/podman/bin, so podman was absent under launchd and all three
+# container dumps silently produced empty files. The plist is fixed (see
+# kopia-mac/uk.mathewcsims.kopia-mac-backup.plist), but the script should
+# say plainly what is wrong rather than leaving it to be deduced from
+# byte counts.
+PODMAN_OK=1
+if ! command -v podman >/dev/null 2>&1; then
+    PODMAN_OK=0
+fi
+
+# ── Running a dump command, with the exit status actually checked ─────────
+# args: <label> <engine> <output-path> <command...>
+#
+# WHY THIS ISN'T JUST `cmd | gzip > file`: in a pipeline, `if` tests the
+# status of the LAST command — gzip — which happily exits 0 after
+# compressing nothing at all. So `podman: command not found` read as
+# success, and the only thing that noticed was the size guard below. That
+# is a safety net doing a job that belongs to error handling.
+#
+# Writing the raw dump to a temp file first means the producer's OWN exit
+# status is what gets tested. The size guard stays as a second line of
+# defence against a command that fails while still returning 0.
+run_dump() {
+    _label=$1; _engine=$2; _out=$3; shift 3
+    _raw="$_out.raw"
+    rm -f "$_raw"
+    if ! "$@" > "$_raw" 2>/dev/null; then
+        rm -f "$_raw"; fail "$_label ($_engine) — dump command failed"; return
+    fi
+    if ! gzip -c "$_raw" > "$_out"; then
+        rm -f "$_raw" "$_out"; fail "$_label ($_engine) — compression failed"; return
+    fi
+    rm -f "$_raw"
+    # A dump that "succeeded" but is a few bytes is a failed dump.
+    if [ "$(wc -c < "$_out")" -lt 500 ]; then
+        rm -f "$_out"; fail "$_label ($_engine) — dump suspiciously small"
+    else
+        echo "ok  $(du -h "$_out" | cut -f1)"
+    fi
+}
+
 # ── Postgres ──────────────────────────────────────────────────────────────
 # args: <container> <user> <dbname> <label>
 dump_postgres() {
     _c=$1; _u=$2; _d=$3; _l=$4
     printf '  %-22s ' "$_l"
-    if podman exec "$_c" pg_dump -U "$_u" "$_d" 2>/dev/null | gzip > "$OUT/$_l-$STAMP.sql.gz"; then
-        # A dump that "succeeded" but is a few bytes is a failed dump.
-        if [ "$(wc -c < "$OUT/$_l-$STAMP.sql.gz")" -lt 500 ]; then
-            rm -f "$OUT/$_l-$STAMP.sql.gz"; fail "$_l (postgres) — dump suspiciously small"
-        else
-            echo "ok  $(du -h "$OUT/$_l-$STAMP.sql.gz" | cut -f1)"
-        fi
-    else
-        rm -f "$OUT/$_l-$STAMP.sql.gz"; fail "$_l (postgres)"
+    if [ "$PODMAN_OK" = 0 ]; then
+        echo ""; fail "$_l (postgres) — podman not found on PATH"; return
     fi
+    run_dump "$_l" postgres "$OUT/$_l-$STAMP.sql.gz" \
+        podman exec "$_c" pg_dump -U "$_u" "$_d"
 }
 
 # ── MySQL / MariaDB ───────────────────────────────────────────────────────
@@ -100,17 +140,12 @@ dump_postgres() {
 dump_mysql() {
     _c=$1; _bin=$2; _l=$3
     printf '  %-22s ' "$_l"
-    if podman exec "$_c" sh -c \
-        "MYSQL_PWD=\"\$MYSQL_ROOT_PASSWORD\" exec $_bin -u root \"\$MYSQL_DATABASE\" --single-transaction --quick" \
-        2>/dev/null | gzip > "$OUT/$_l-$STAMP.sql.gz"; then
-        if [ "$(wc -c < "$OUT/$_l-$STAMP.sql.gz")" -lt 500 ]; then
-            rm -f "$OUT/$_l-$STAMP.sql.gz"; fail "$_l (mysql) — dump suspiciously small"
-        else
-            echo "ok  $(du -h "$OUT/$_l-$STAMP.sql.gz" | cut -f1)"
-        fi
-    else
-        rm -f "$OUT/$_l-$STAMP.sql.gz"; fail "$_l (mysql)"
+    if [ "$PODMAN_OK" = 0 ]; then
+        echo ""; fail "$_l (mysql) — podman not found on PATH"; return
     fi
+    run_dump "$_l" mysql "$OUT/$_l-$STAMP.sql.gz" \
+        podman exec "$_c" sh -c \
+        "MYSQL_PWD=\"\$MYSQL_ROOT_PASSWORD\" exec $_bin -u root \"\$MYSQL_DATABASE\" --single-transaction --quick"
 }
 
 # ── SQLite ────────────────────────────────────────────────────────────────

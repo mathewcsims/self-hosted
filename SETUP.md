@@ -2857,6 +2857,44 @@ identical before and after a dump run. The Pi script always did this
 correctly (Python's read-only URI); the two are now consistent. **Do not
 remove `mode=ro`** — it is the difference between a backup and an outage.
 
+**Incident, 2026-07-31 — the first unattended run lost three dumps to a
+`PATH`.** The morning after the dump work went in, the Mac's 02:00 run
+reported failures for exactly the three container-based dumps (healthlog
+Postgres, Ghost MySQL, BookStack MariaDB) while all eight SQLite dumps
+succeeded. Nothing was wrong with the databases — every command worked
+perfectly when re-run by hand minutes later.
+
+The cause was the LaunchAgent's `PATH`. **launchd gives a job a minimal
+environment, not your login shell's**, and Podman Desktop installs its CLI
+to `/opt/podman/bin`, which is on no default `PATH` anywhere. Under
+launchd, `podman` simply did not exist. The SQLite dumps were unaffected
+only because macOS ships `sqlite3` in `/usr/bin` — and that asymmetry is
+what made the failure look like a database problem rather than an
+environment one. Interactive testing could never have caught it, because
+an interactive shell already has `/opt/podman/bin`.
+
+Two changes, because there were two faults:
+
+1. `/opt/podman/bin` prepended to the plist's `PATH`. **Anything a
+   launchd/systemd job invokes must be on that job's own `PATH`** — check
+   with `command -v` in the job's environment, not in your terminal.
+2. The script now tests the *dump command's* exit status. It previously
+   ran `podman exec … | gzip > file` inside an `if`, and in a pipeline
+   `if` tests the **last** command — gzip, which cheerfully exits 0 after
+   compressing nothing. A missing binary therefore read as success, and
+   the only thing that noticed was the "suspiciously small" size guard.
+   Dumps now write to a temp file first so the producer's own status is
+   what gets checked, with an explicit up-front `command -v podman`
+   preflight so a missing runtime is one clear message instead of three
+   mystery failures. The size guard stays as a second line of defence.
+
+**The safety net worked, and that is the point.** The size guard caught
+the empty dumps, the script exited non-zero, and Apprise alerted — which is
+how the problem was known about at all. But a guard catching what error
+handling should have caught is a warning, not a success: verify both the
+success *and* failure paths of any scheduled job (`env PATH=/usr/bin:/bin
+sh scripts/dump-databases.sh` reproduces this one exactly).
+
 **Deliberately not dumped:** copyparty's `up2k.db`/`shares.db`/
 `sessions.db` (regenerable dedup index and session state — its actual
 files are backed up), karakeep's `queue.db` (transient job queue),

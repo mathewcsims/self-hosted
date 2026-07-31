@@ -21,7 +21,18 @@
         <key>HOME</key>
         <string>/Users/mathewcsims</string>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- /opt/podman/bin IS LOAD-BEARING. launchd gives a job a minimal
+             PATH, not your login shell's, and Podman Desktop installs its
+             CLI to /opt/podman/bin — which is on no default PATH anywhere.
+             Without this entry every container-based dump in
+             scripts/dump-databases.sh dies with "podman: command not
+             found", while the SQLite ones carry on working because macOS
+             ships sqlite3 in /usr/bin. That asymmetry is exactly what
+             happened on the first unattended run (2026-07-31): healthlog,
+             ghost and bookstack produced nothing, everything else was
+             fine. Interactive testing had missed it because a login shell
+             already has /opt/podman/bin. -->
+        <string>/opt/podman/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
     <key>StandardOutPath</key>
     <string>/Users/mathewcsims/self-hosted/kopia-mac/launchd.log</string>
