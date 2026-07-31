@@ -46,8 +46,32 @@ def access_token():
     }).encode()
     req = urllib.request.Request("https://oauth2.googleapis.com/token",
                                  data=body, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)["access_token"]
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)["access_token"]
+    except urllib.error.HTTPError as e:
+        # WHY THIS ISN'T LEFT TO BUBBLE UP AS A BARE HTTPError: it used to,
+        # and sync.py reported it as "google: PULL FAILED (HTTP Error 400:
+        # Bad Request)". That reads like the People API rejected the query,
+        # so it invites debugging the pull — when in fact no contact call
+        # has happened yet and the credential is simply dead. It cost real
+        # time on 2026-07-31 to work out that the 400 came from the token
+        # endpoint, because the underlying error body is where the actual
+        # reason lives and urllib discards it unless you read it.
+        detail = ""
+        try:
+            detail = json.loads(e.read().decode()).get("error", "")
+        except Exception:
+            pass
+        if detail == "invalid_grant":
+            raise RuntimeError(
+                "Google refresh token is expired or revoked — this needs "
+                "re-authorisation and will NOT recover on its own. If the "
+                "OAuth app's publishing status is still 'Testing', Google "
+                "expires refresh tokens after 7 days; set it to 'In "
+                "production' in Google Cloud Console to stop this recurring"
+            ) from e
+        raise RuntimeError(f"Google token refresh failed ({e.code}): {detail or e}") from e
 
 
 def api(token, method, path, body=None, params=None):

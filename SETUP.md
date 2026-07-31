@@ -3816,6 +3816,59 @@ the whole run before any write; any outbound plan >20% is skipped; each
 run posts a per-provider in/out summary to Discord via Apprise
 (warnings and aborts likewise).
 
+**Incident, 2026-07-31 — two spokes failing daily, neither for the reason
+the log gave.** Both surfaced in the same run summary and both had
+misleading messages, which is the real lesson here: an error string that
+names the wrong layer costs more time than no message at all.
+
+*Google — `PULL FAILED (HTTP Error 400: Bad Request)`.* The 400 came from
+the **OAuth token endpoint**, not the People API — no contact call ever
+happened. The real body was `{"error": "invalid_grant",
+"error_description": "Token has been expired or revoked."}`, which urllib
+discards unless you explicitly read it. The likeliest cause is the OAuth
+app sitting in **"Testing"** publishing status, where Google expires
+refresh tokens after **7 days** (last success 25 July, failing since 27
+July, 12 consecutive runs). `spoke_google.access_token()` now reads the
+error body and says so plainly, including the fix. **This class of failure
+never self-heals** — it needs interactive re-authorisation, and if the app
+stays in Testing it will recur every week.
+
+*ms_work — the 200-result cap, and advice that could not work.* The
+Thunderbird extension's `searchContacts` is the ONLY bulk-enumeration path
+(no `listContacts`, no address-book filter — confirmed against
+`tools/list`), and it caps at 200 results. `search_all()` detected the
+truncation correctly but told you to "raise `max_results`", which does
+nothing: the cap is server-side. Measured directly —
+
+| requested | returned | `hasMore` |
+|---|---|---|
+| 50 | 50 | true |
+| 199 | 199 | true |
+| 201 | **200** | true |
+| 1000 | **200** | true |
+
+— and stated in the tool's own schema (`default 50, max 200`). Once the
+library crossed 200 contacts this stopped being intermittent: the pull
+failed **every** run where Thunderbird was up.
+
+`search_all()` now **partitions the search space** instead — one query per
+letter/digit prefix, recursively extending any prefix that still comes
+back truncated, deduplicated by contact id, with the empty-query result
+kept as a free extra seed for anything with neither name nor email to
+match on. Verified live: **674 contacts in 2.0s**, against the 200 ceiling
+it was stuck at. If a partition is still truncated at 4 characters deep it
+**raises rather than returning a partial list** — a short list would look
+to the sync engine like mass upstream *deletions*, which is far worse than
+a failed run.
+
+*Thunderbird simply being closed is now a soft skip.* The job runs at
+07:30 whether or not the app is open, so that case reports as `ℹ️ skipped`
+and no longer colours the run as a warning. Deliberately narrow — it
+catches **only** `ThunderbirdUnavailable` (can't reach the extension at
+all). Anything the extension rejects, and any enumeration failure, is
+still a real, warning-level failure. The risk of soft-skipping is masking
+genuine faults, and that boundary is where it's held.
+
 **Recovery:** restore a provider from `~/contact-sync/snapshots/` (or
 any Kopia snapshot of `~/contact-sync`) by replaying it through the
 relevant spoke's plan/apply; the store's git history on Forgejo shows
