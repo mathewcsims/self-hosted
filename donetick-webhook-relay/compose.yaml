@@ -1,0 +1,70 @@
+# Donetick -> Apprise webhook bridge. Runs HERE on the Pi (not on
+# slartibartfast with Donetick itself) because Apprise is on the Pi and this
+# reaches it by container name over `pi-shared` — exactly the same placement
+# and reasoning as ../vikunja-webhook-relay/.
+#
+# ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+# Donetick posts its own event envelope:
+#   {"type": "task.reminder", "timestamp": "...", "data": {"chore": {...}}}
+# Apprise wants title/body/type, and rejects Donetick's shape outright —
+# confirmed live before building this, not assumed:
+#   HTTP 400 {"error": "Payload lacks minimum requirements"}
+# So something has to translate, and this is the smallest thing that can.
+#
+# Without it Donetick's reminders go nowhere at all. Its own
+# NotificationPlatformWebhook case is an unimplemented TODO stub; scheduled
+# reminders reach a webhook through a different path entirely
+# (eventsProducer.NotificationEvent, driven off circles.webhook_url), which
+# is what this receives.
+#
+# ── AUTHENTICATION ────────────────────────────────────────────────────────
+# DONETICK DOES NOT SIGN ITS WEBHOOKS — no HMAC, no shared-secret header,
+# just a bare Content-Type (confirmed by reading its processEvent). Unlike
+# the Vikunja relay, which verifies an X-Vikunja-Signature, the only
+# credential available here is a secret embedded in the URL path
+# (/hook/<secret>), which Donetick stores as its circle webhook_url.
+#
+# A URL secret leaks into logs and shell history far more readily than a
+# signature does, so it is deliberately NOT trusted alone: the Caddy site in
+# front of this is LAN/tailnet-gated as well (see ../pi-reverse-proxy/).
+# Two independent controls, because one of them is weak by construction.
+#
+# WEBHOOK_SECRET comes from the "DonetickWebhookRelay" Proton Pass item via
+# scripts/pass-deploy.sh — never committed here.
+name: donetick-webhook-relay
+
+services:
+  donetick-webhook-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: donetick-webhook-relay
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      TZ: Europe/London
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+    # No `ports:` — reached only by Caddy over `pi-shared`, by container
+    # name, same as every other Pi-resident app here.
+    networks:
+      - pi-shared
+    healthcheck:
+      # The image is python:alpine with no curl/wget, so use Python itself.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5).status==200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    # A single-threaded-ish Python HTTP server handling a handful of events a
+    # day. This bounds a runaway without being remotely tight.
+    mem_limit: 96m
+    pids_limit: 32
+
+networks:
+  pi-shared:
+    external: true
+    name: pi-shared

@@ -39,6 +39,7 @@ in front of the lot.
 | [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars; posts a Memo to Owl on every new ride via a PocketBase-realtime relay) |
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
 | [Donetick](https://donetick.com) | `donetick.mathewcsims.uk` | **slartibartfast** (task and chore manager — time-of-day reminders that repeat per occurrence, nested subtasks, projects; public, registration closed) |
+| Donetick webhook relay | `donetick-relay.mathewcsims.uk` | **Pi**, LAN-only (bridges Donetick's reminder webhooks into Apprise, which fans out to ntfy and Discord) |
 
 ## Architecture, in short
 

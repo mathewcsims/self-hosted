@@ -589,6 +589,34 @@ vikunja-relay.mathewcsims.uk {
 	}
 }
 
+# ── Donetick webhook relay (running HERE on the Pi, LAN-ONLY) ────────────
+# Clean URL https://donetick-relay.mathewcsims.uk. Receives Donetick's
+# webhook events from slartibartfast and reshapes them into what Apprise
+# accepts — see ../donetick-webhook-relay/ for why the translation is
+# needed at all (Apprise rejects Donetick's payload outright).
+#
+# THE LAN GATE HERE IS LOAD-BEARING, unlike the Vikunja relay's above.
+# Vikunja signs its webhooks, so that relay's real control is HMAC
+# verification and the gate is defence in depth. DONETICK SIGNS NOTHING —
+# its only credential is a secret in the URL path (/hook/<secret>), which
+# is far easier to leak into a log or shell history than a signature. So
+# this gate is a genuine second control, not a formality. Do not remove it.
+#
+# Donetick reaches this from 10.0.1.11, which is inside private_ranges.
+donetick-relay.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit donetick_relay
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		reverse_proxy donetick-webhook-relay:8080
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Kopia backup server (running HERE on the Pi, LAN-ONLY) ───────────────
 # Clean public URL https://backup.mathewcsims.uk, but only for LAN clients —
 # same pattern as Apprise/Speedtest Tracker above, and for the same reason
