@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily Tududi database dump + Kopia backup (see tududi-backup.service)
+
+[Timer]
+# 03:45 deliberately: Immich's Kopia run starts at 03:00 and takes ~27
+# minutes for a 31 GB library, so this stays clear of it on a 4-core box
+# without leaving a long idle gap. Both are well after Immich's own 02:00
+# database dump.
+OnCalendar=*-*-* 03:45:00
+# Spreads load if other jobs land at the same time; same shape as
+# kopia-immich.timer. Note this can push the start to 04:00, which is still
+# clear of everything else on this host.
+RandomizedDelaySec=15m
+# Runs on next boot if the machine was off at 03:45.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
