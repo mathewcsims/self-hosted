@@ -10,8 +10,6 @@ follow the same recipe — see "Adding another app" near the end.
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
 | Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
-| Donetick | `https://donetick.mathewcsims.uk` | **slartibartfast** `:2021` | `mathewcsims`, see its section below — registration closed |
-| Donetick webhook relay | `https://donetick-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — URL-secret only (Donetick doesn't sign webhooks) |
 | Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
 | Speedtest Tracker | `https://speedtest.mathewcsims.uk` | **Pi**, LAN-only | admin credentials set at first boot, see its section below |
 | Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
@@ -148,14 +146,6 @@ section below says which.
 | `immich/pgdata/` | **slartibartfast** | Immich's Postgres datadir (gitignored) — deliberately NOT what gets backed up, see its section |
 | `immich/kopia-backup.sh` | **slartibartfast** | daily Kopia snapshot of the photo library to B2; alerts via Apprise on failure |
 | `immich/kopia-immich.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:00 (installed to `~/.config/systemd/user/`) |
-| `donetick/compose.yaml` | **slartibartfast** | Donetick task/chore manager (Go/SQLite), pinned by digest to `donetick:v0.1.76`; **public**, registration closed; reads secrets from Proton Pass |
-| `donetick/data/` | **slartibartfast** | **your tasks live here** (gitignored) — `donetick.db` plus `uploads/` |
-| `donetick/backup.sh` | **slartibartfast** | nightly consistent SQLite dump + Kopia snapshot; alerts via Apprise on failure |
-| `donetick/donetick-backup.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:45 |
-| `scripts/pass-create-donetick-secrets.sh` | Mac | one-time: generates Donetick's JWT secret + account password into Proton Pass |
-| `scripts/bootstrap-donetick-account.sh` | Mac | opens registration briefly, creates the single account, closes it again, and verifies the close |
-| `donetick-webhook-relay/compose.yaml` + `Dockerfile` + `relay.py` | **Pi**, LAN-only | bridges Donetick's event payload to Apprise's `/notify` shape; reads `WEBHOOK_SECRET` from Proton Pass |
-| `scripts/pass-create-donetick-relay-secret.sh` | Mac | one-time: generates the relay's URL secret into Proton Pass |
 | `scripts/dump-databases.sh` | **Mac** | consistent DB dumps (pg_dump / mysqldump / SQLite `VACUUM INTO`) written before every Kopia run; alerts via Apprise on failure |
 | `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
@@ -1232,6 +1222,99 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 
 ---
 
+## Task management: three replacements attempted, none adopted (2026-07 → 2026-08)
+
+Vikunja is still the task manager. Three attempts were made to replace it —
+Donetick in July, Tududi and Donetick again on 1 August — and all three were
+removed. **Read this before proposing a fourth.** The requirement set is
+harder to satisfy than it looks, and the same candidates keep resurfacing.
+
+### The requirements, as they were finally articulated
+
+1. Recurring "chore" tasks **and** genuinely one-off tasks, both handled well
+2. List-first, not Kanban
+3. A clean, modern interface
+4. Cross-platform — Windows, Android, macOS, iOS
+5. Free with full functionality; **no paywall-gated features**
+6. Longevity, and evidence of sustained maintenance
+7. **Privacy** — which means end-to-end encryption *or* self-hosting. Note
+   this is the actual driver; self-hosting is a means, not the goal
+8. **Reminders at a specific time of day, set in the tool, repeating on
+   every occurrence of a recurring task**
+9. Delivery via ntfy/Apprise and/or email
+10. Projects, with **multiple layers of subtasks**
+11. An API for automation
+
+### What each candidate failed on
+
+| Candidate | Fails on |
+|---|---|
+| **Vikunja** (incumbent) | Interface (3). Recurrence (1) — only three repeat modes exist (interval in seconds, monthly, from-completion), so "Wednesdays and Sundays" is **inexpressible** and needs two separate tasks. Its reminders are otherwise good: absolute and relative, and they shift correctly on repeat |
+| **Tududi** | **No time-of-day reminders at all** (8) — `reminder_at` is a database column nothing writes to; the API accepts the field and silently discards it. Subtasks capped at **one level** (10) |
+| **Donetick** | Maintenance (6) — **86 open issues, oldest Feb 2025; 26 open PRs, oldest Sep 2025**. Plus a UI defect: the home view shows only tasks with *no* project, and "all projects" has no representable value, so the filter cannot survive a refresh |
+| **Plane / Huly** | Hardware — 4–8 GB and 8–16 GB RAM respectively; slartibartfast has ~4 GB free after Immich |
+| **Nextcloud Tasks** | Requires running Nextcloud to get a task list |
+| **CalDAV + native clients** | No browser interface |
+| **Anytype / EteSync** | Bloat, and a sub-par web interface |
+| **Apple Reminders** | No Android; **Advanced Data Protection is unavailable in the UK** since Feb 2025, so not E2E here either |
+| **Todoist / TickTick** | Not end-to-end encrypted (7); Todoist paywalls reminders (5) |
+| **TaskTrove** | Licence is "Sustainable Use" — source-available, not open source; and stale since Jan 2026 |
+
+### Why Donetick was tried twice, and dropped twice
+
+**July (096132c → f0bfc1d, 34 minutes apart):** removed because avatar
+uploads needed S3, MinIO proved unmaintained, and Garage needed config that
+couldn't be verified against the pinned release. Nothing to do with task
+management. Upstream later added `storage_type: local`, which is why it was
+reconsidered.
+
+**August:** functionally it was the best fit assessed — `days_of_the_week`
+recurrence, per-occurrence reminder templates computed from each occurrence's
+due datetime, arbitrarily nested subtasks, projects, native mobile apps,
+AGPL. It was deployed, migrated to, and wired through to Apprise.
+
+It failed on **maintenance**, and that should have been caught first. The
+issue count was in the very first API response used to evaluate it, and was
+not weighed — while the same signal had been used two days earlier to
+*praise* Tududi's tidy tracker. A backlog that deep on a single-maintainer
+project is the same risk as abandonment, only slower, and it makes
+contributing a fix pointless: a patch would be a permanent fork, rebased on
+every release.
+
+### Traps found along the way, worth keeping
+
+- **Donetick's `DT_SQLITE_PATH`** is read with a plain `os.Getenv` and
+  defaults to a *relative* path, so the database lands inside the container
+  and is destroyed on `down` — while the app reports itself healthy and the
+  bind mount sits empty.
+- **Donetick's signup endpoint is `POST /api/v1/auth/`**, not
+  `/api/v1/auth/signup`. It serves its own SPA, so any unmatched path returns
+  `index.html` with **HTTP 200** — a probe against the wrong path looks
+  exactly like a wide-open signup form. *Assert on the body, not the status
+  code, when probing an app that serves a SPA.*
+- **Editing an app's SQLite database directly bypasses its sync layer.**
+  Remapping IDs by hand left every client showing zero tasks, because
+  `sync_version` was never bumped. If a direct edit is unavoidable, follow it
+  with an API write so the app updates its own versioning.
+- **Vikunja's task update replaces rather than merges.** `POST /tasks/:id`
+  with a partial body silently blanks every field you omitted — description,
+  due date and priority were all lost this way and had to be recovered from
+  the nightly dump. Always send the full object.
+- **Deleting a Donetick project cascades to its tasks**, silently clearing
+  `projectId`, including on completed tasks not visible in any current view.
+
+### Where things stand
+
+Vikunja holds everything, unchanged throughout. The two divergences created
+during the Donetick trial were merged back on 1 August: the
+"Adjust repeat prescriptions" task, and Royal Mail marked done.
+
+The unresolved question is which requirement to relax — nothing available in
+2026 satisfies all eleven. That is a decision to be taken deliberately, not
+worked around by trying a fourth candidate against the same criteria.
+
+---
+
 ## Vikunja (https://vikunja.mathewcsims.uk)
 
 [Vikunja](https://vikunja.io) task management, holding private information —
@@ -1430,7 +1513,7 @@ create it as root first and fixing ownership after is the harder path.
 ## Ghost blog (https://blog.mathewcsims.uk)
 
 [Ghost](https://ghost.org) — replaces paid Ghost(Pro) hosting. Two
-containers, Mac like copyparty/Memos/Vikunja/Donetick: `ghost` (the app) and
+containers, Mac like copyparty/Memos/Vikunja: `ghost` (the app) and
 `blog-db` (MySQL 8). Unlike every other app here, Ghost's own docs are
 explicit that **MySQL 8 is the only supported database in production** —
 sqlite works in dev but isn't QA'd for production, so this needed a real DB
@@ -4442,201 +4525,6 @@ deploy script derives it from the app-dir name.
 - Ubuntu's `docker.io` package does **not** include Compose v2 — that's a
   separate `docker-compose-v2` install (available in Ubuntu's universe
   repo, so Docker's own apt repo isn't needed).
-
----
-
-## Donetick (https://donetick.mathewcsims.uk) — public, runs on slartibartfast
-
-[Donetick](https://donetick.com) — task and chore manager. Added 2026-08-01,
-and this is its **second** time in this repo.
-
-### Why it replaced Vikunja and Tududi
-
-Three tools have held this role. The requirement that decided it was
-**time-of-day reminders that repeat on every occurrence** — "ring Mum at
-18:00 every Wednesday and Sunday".
-
-- **Vikunja** (8 years, AGPL, still running as the source of truth) cannot
-  express the schedule at all. It has exactly three repeat modes — every N
-  seconds, monthly, or from the completion date (`pkg/models/tasks.go`) —
-  so "Wednesdays and Sundays" had to be **two separate tasks**. Its
-  reminders are good (absolute and relative, and they shift correctly on
-  repeat), but the recurrence model and the cluttered UI are not fixable
-  from the front end, which is why a Vikunja-frontend rewrite was
-  considered and dropped.
-- **Tududi** (trialled and binned the same day, 2026-08-01) is
-  **fundamentally flawed for real task management: it has no time-of-day
-  reminders at all.** `reminder_at` exists as a database column but nothing
-  writes to it — the API accepts the field and silently discards it, and no
-  UI exposes it. It notifies only "due today" / "overdue" on a 15-minute
-  sweep. It also caps subtasks at one level. Upstream knows: issue #976
-  (email notifications) and PR #762 (push) are both open and unmerged.
-- **Donetick** does all of it, verified in source rather than from docs:
-  11 frequency types including `days_of_the_week`; up to 5 notification
-  templates per chore, each an offset from *that occurrence's* due
-  date-and-time and regenerated every cycle
-  (`internal/notifier/service/planner.go`); projects; subtasks that nest
-  arbitrarily (`SubTask.ParentId` points at another subtask, no depth cap);
-  and one-off tasks via `once`/`no_repeat`.
-
-### Why it was removed the first time, and why that no longer applies
-
-Deployed 3 July 2026 (`096132c`) and removed **34 minutes later**
-(`f0bfc1d`) — for nothing to do with task management. Avatar uploads needed
-S3-compatible storage, MinIO turned out to be effectively unmaintained, and
-the Garage replacement needed config that could not be verified against the
-pinned release. One cosmetic feature took the whole app down with it.
-
-Upstream has since added a plain filesystem backend
-(`storage_type: local`), so there is no object storage in this deployment at
-all. The security work from that first attempt — JWT secret handling, CORS
-and realtime-origin scoping, the auth rate-limit zone — was recovered from
-git history rather than redone.
-
-### Known risk, accepted
-
-Young and effectively single-maintainer: first commit June 2024 (~2.1
-years), `meauxt` has 481 commits against the next contributor's 36. AGPL-3.0
-so patchable. Weighed against Vikunja's eight years — but Vikunja cannot do
-the job.
-
-### Traps, all hit live on 2026-08-01
-
-- **`DT_SQLITE_PATH` is load-bearing, and is NOT a Viper `DT_<KEY>`
-  variable.** It is read with a plain `os.Getenv`
-  (`internal/database/database.go`) and defaults to a **relative**
-  `donetick.db`, which resolves to `/donetick.db` in the container root —
-  outside the volume, and destroyed on `docker compose down`. The app
-  reported itself healthy while the bind mount sat completely empty. The
-  first deployment had this same gap and never noticed.
-- **The signup endpoint is `POST /api/v1/auth/`**, a bare slash on the auth
-  group — *not* `/api/v1/auth/signup`. Donetick serves its own SPA, so any
-  unmatched path returns `index.html` with **HTTP 200**. Probing the wrong
-  path looks exactly like a successful signup on a wide-open instance. That
-  false reading caused a pointless Caddy block to be added and then removed.
-  **When testing an endpoint on an app that serves a SPA, assert on the
-  response body, not the status code.**
-- **Usernames must be 4–20 characters.** `mat` is rejected with a bare
-  `400 {"error":"Invalid request"}` naming no field.
-- **Migrations abort on the first failure and never resume.** On a database
-  created fresh at v0.1.76, two legacy data migrations reference columns
-  that never existed (`chores.labels`, `notification_meta`); the runner
-  returns on the first error, so the remaining eight — including a real
-  schema change — never ran and would never run. Unfixed on `main`, so it
-  affects every fresh install. Resolved by recording those two as applied
-  with a `skipped:` description, after which the other eight ran normally.
-  Check with:
-
-  ```sh
-  ssh mathewcsims@100.68.10.65 'docker run --rm -v /home/mathewcsims/donetick/data:/d python:3-alpine python -c "
-  import sqlite3
-  c=sqlite3.connect(\"file:/d/donetick.db?mode=ro\", uri=True)
-  print([r for r in c.execute(\"select id, description from migrations\")])"'
-  ```
-
-### Registration is CLOSED — a deliberate change
-
-The previous deployment (`eecb9cb`) left signup permanently open so the
-instance could be shared with family, mirroring Memos. This one ships
-closed (`DT_IS_USER_CREATION_DISABLED=true`, which **is** honoured —
-verified against the real endpoint: `403 {"error":"User creation is
-disabled"}`). Open it consciously if you want to share it.
-
-Because there is no CLI way to seed the first account,
-`scripts/bootstrap-donetick-account.sh` opens a window of a few seconds via
-a transient `compose.override.yaml`, creates the one account from Pass,
-closes it, and **verifies the close with a real POST**. It closes
-registration from an `EXIT`/`INT`/`TERM` trap however it exits — an earlier
-version died mid-run under `set -e` and left signup open, which is exactly
-what it exists to prevent.
-
-### Reminder precision
-
-`DT_SCHEDULER_JOBS_DUE_JOB` is set to **5m**, against upstream's default of
-30m. That job is what fires a chore's notification templates, so it bounds
-how close to its intended time a reminder can land — 30 minutes is far too
-coarse for "at 18:00". Negligible cost on a single-user instance.
-
-Delivery is Telegram / Pushover / Discord / webhook / FCM. **Nothing is
-wired up yet** — the obvious route is a webhook bridge into Apprise, the
-same shape as `vikunja-webhook-relay`.
-
-### Migration from Vikunja (2026-08-01)
-
-Vikunja was left completely intact — nothing deleted — so it remains the
-fallback and the record of the two already-completed tasks, which were
-deliberately not imported (they'd be noise in a fresh system).
-
-**Projects are areas of life; labels are CONTEXTS.** Deliberately two
-different axes so they compose, rather than labels restating projects:
-
-| Projects | Labels (contexts) |
-|---|---|
-| Household, Health & Fitness, Family & Friends, Life Admin, Tinkering | `phone`, `outdoors`, `computer`, `paperwork`, `deadline` |
-
-Vikunja's own labels (`wellbeing`, `flat`, `admin`, `dev`) became *projects*
-rather than being carried over as labels — reusing them for both would have
-made one axis redundant and labels useless for "what can I do from here?".
-
-**"☎️ Phone Mum" is the whole point**: two Vikunja tasks (Sunday and
-Wednesday, each "every 7 days") collapsed into ONE chore with
-`frequencyType: days_of_the_week`, `days: ["wednesday","sunday"]`, due 18:00
-Europe/London, and two reminder templates (−15m and 0m). Vikunja cannot
-express that schedule at all.
-
-**API traps hit during the migration:**
-- `POST /api/v1/chores` **307-redirects** — the route is registered as
-  `POST "/"` on the group, so the path needs its **trailing slash**
-  (`/api/v1/chores/`). urllib doesn't follow redirects on POST, so this
-  looks like a failure rather than a wrong path.
-- Projects and labels have **no eAPI equivalent** — `eapi/v1` covers chores
-  and things only, so a long-lived API token cannot create them. That work
-  needs a full session, which means passing MFA.
-- `PUT /api/v1/users/webhook` is guarded by `IsPlusMember()`, but the check
-  reads `CurrentUser` from **JWT claims**, whose `Expiration` is the token's
-  own 7-day expiry — so it passes on a self-hosted instance with no
-  subscription. Don't rely on that staying true; the fallback is setting
-  `circles.webhook_url` directly (one column, own instance, AGPL).
-
-### Notifications: Donetick -> relay -> Apprise -> ntfy + Discord
-
-Donetick's own `NotificationPlatformWebhook` case is an unimplemented TODO
-stub, but **scheduled reminders reach a webhook by a different path** —
-`eventsProducer.NotificationEvent`, driven off `circles.webhook_url`, with
-the sender loop running every 3 minutes (so a reminder lands within ~3
-minutes of its time).
-
-Apprise **rejects Donetick's payload outright** — verified before building
-anything: `HTTP 400 {"error": "Payload lacks minimum requirements"}`.
-Donetick sends `{type, timestamp, data}`; Apprise wants `title`/`body`/
-`type`. Hence `donetick-webhook-relay/`, which is the same job and
-deliberately the same shape as `vikunja-webhook-relay/`.
-
-**One security difference from that relay, and it matters.** Vikunja signs
-its webhooks, so its relay verifies an HMAC and the LAN gate is defence in
-depth. **DONETICK SIGNS NOTHING** — a bare JSON POST, no signature header
-(confirmed by reading `processEvent`). The only credential is a secret in
-the URL path (`/hook/<secret>`), which travels on every request and leaks
-into logs far more readily than a signature. So:
-- the secret is 64 hex characters, and
-- the Caddy site is LAN/tailnet-gated as a **genuine second control**, not a
-  formality. Do not remove that gate.
-
-Verified end to end by creating a throwaway chore and completing it: real
-`task.created` and `task.completed` events reached the relay, were
-translated, and Apprise delivered both to ntfy *and* Discord. A wrong secret
-returns 401.
-
-**Expect duplicate reminders** until Vikunja's copies of Walking and the bin
-run are retired — both systems are live and both will nag.
-
-### Backups
-
-`donetick/backup.sh` at 03:45 (systemd user timer, clear of Immich's 03:00
-Kopia run). Dumps SQLite with Python's `Connection.backup()` against a
-**read-only** URI, checks `PRAGMA integrity_check`, gzips, and hands the
-dumps plus `uploads/` to Kopia. `?mode=ro` is load-bearing — see the
-2026-07-30 Forgejo incident above.
 
 ---
 
