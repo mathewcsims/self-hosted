@@ -10,6 +10,7 @@ follow the same recipe — see "Adding another app" near the end.
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
 | Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
+| Tududi | `https://tududi.mathewcsims.uk` | **slartibartfast** `:3002` | admin created at first boot from Pass — registration disabled, see its section below |
 | Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
 | Speedtest Tracker | `https://speedtest.mathewcsims.uk` | **Pi**, LAN-only | admin credentials set at first boot, see its section below |
 | Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
@@ -146,6 +147,11 @@ section below says which.
 | `immich/pgdata/` | **slartibartfast** | Immich's Postgres datadir (gitignored) — deliberately NOT what gets backed up, see its section |
 | `immich/kopia-backup.sh` | **slartibartfast** | daily Kopia snapshot of the photo library to B2; alerts via Apprise on failure |
 | `immich/kopia-immich.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:00 (installed to `~/.config/systemd/user/`) |
+| `tududi/compose.yaml` | **slartibartfast** | Tududi task manager (Node/React/SQLite), pinned by digest to `chrisvel/tududi:1.3.1`; **public**, not LAN-gated; reads secrets from Proton Pass |
+| `tududi/data/` | **slartibartfast** | **your tasks live here** (gitignored) — `db/` SQLite and `uploads/` attachments |
+| `tududi/backup.sh` | **slartibartfast** | nightly consistent SQLite dump + Kopia snapshot of dumps and uploads; alerts via Apprise on failure |
+| `tududi/tududi-backup.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:45 (installed to `~/.config/systemd/user/`) |
+| `scripts/pass-create-tududi-secrets.sh` | Mac | one-time: generates Tududi's session secret + admin password straight into Proton Pass |
 | `scripts/dump-databases.sh` | **Mac** | consistent DB dumps (pg_dump / mysqldump / SQLite `VACUUM INTO`) written before every Kopia run; alerts via Apprise on failure |
 | `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
@@ -2211,7 +2217,7 @@ overriding `name`/`url`/`keyword`/`hostname`. That inherits the established
 conventions (60s interval, 60s retry, 3 retries, `notificationIDList`
 pointing at the Discord notification) instead of guessing at ~100 fields.
 
-**Two gotchas, both hit live on 2026-07-30 when adding Immich:**
+**Gotchas, hit live when adding monitors:**
 - A cloned monitor carries a **`maintenance`** key, which is a *runtime*
   field and not a database column. Kuma passes the object straight into an
   INSERT, so it fails with `table monitor has no column named maintenance`.
@@ -2222,8 +2228,41 @@ pointing at the Discord notification) instead of guessing at ~100 fields.
   `Cannot read properties of null (reading 'startsWith')`. Pass the page's
   existing `config.icon` (currently `/icon.svg`).
 
-Both failures were **atomic** — nothing partial was created either time —
-so iterating on the error message is safe.
+**Adding Tududi on 2026-08-01 surfaced three more**, all the same class —
+the monitor object Kuma *hands you* is not the shape it *accepts back*:
+
+- The strip-list above was incomplete: **`pathName` and `screenshot`** are
+  also runtime-only. Note `path` and `pathName` are separate keys (a list
+  and a string), and Kuma returns camelCase while the columns are
+  snake_case — so removing `path_name` does nothing.
+- Don't discover these one error at a time. **Diff the monitor object
+  against the real schema** and strip everything that isn't a column,
+  keeping only the two Kuma legitimately converts (`accepted_statuscodes`
+  → `accepted_statuscodes_json`, and `notificationIDList`, which writes to
+  its own join table and is what carries the Discord notification):
+
+  ```sh
+  ssh mathew@babel 'python3 -c "
+  import sqlite3
+  c=sqlite3.connect(\"file:/home/mathew/uptime-kuma/data/kuma.db?mode=ro\",uri=True)
+  print([r[1] for r in c.execute(\"PRAGMA table_info(monitor)\")])"'
+  ```
+
+- **`saveStatusPage`'s config must come from the authenticated
+  `getStatusPage` event, NOT from `/api/status-page/<slug>`.** The public
+  endpoint returns a trimmed, published view missing `id` and — critically
+  — `domainNameList`, and without that array the save fails with a bare,
+  unhelpful `{"ok": false, "msg": "Invalid array"}`. The *groups* still
+  come from the public endpoint (it's the only place the current
+  group→monitor structure is exposed); only the config comes from the
+  socket event.
+
+**Every one of these failures was atomic** — nothing partial was created —
+so iterating on the error message is safe, if tedious.
+
+**TOTP tokens can't be reused.** Two runs inside the same 30-second window
+fail the second login with `authInvalidToken`, which looks like a
+credentials problem and isn't. Wait for the next window before retrying.
 
 **Tag conventions.** Every monitor carries `Homelab` plus **one tag naming
 the machine it runs on** — `Heart of Gold` (Mac), `Babel` (Pi),
@@ -4399,6 +4438,141 @@ deploy script derives it from the app-dir name.
 - Ubuntu's `docker.io` package does **not** include Compose v2 — that's a
   separate `docker-compose-v2` install (available in Ubuntu's universe
   repo, so Docker's own apt repo isn't needed).
+
+---
+
+## Tududi (https://tududi.mathewcsims.uk) — public, runs on slartibartfast
+
+[Tududi](https://tududi.com) — self-hosted task manager, added 2026-08-01 to
+replace Vikunja for day-to-day use. **Second app on the third host.**
+
+### Why replace Vikunja
+
+Two distinct kinds of task were being forced through one tool that handles
+neither comfortably: **recurring "chore" tasks** and **one-off specific
+tasks**. Todoist handled both well; Vikunja handles the first badly.
+
+Worth recording precisely, because the popular version of this complaint is
+wrong: **Vikunja does support repeating from the completion date** — it has
+three repeat modes (`Default`, `Monthly`, `From current date`), and the
+third is exactly that. The genuine gaps are narrower:
+
+- **No skip.** Todoist can skip an occurrence; Vikunja can't.
+- **Completing a repeating task is awkward** — marking it done immediately
+  re-dates and un-dones it, so finishing one for good takes repeated marking.
+- **Reminders don't recur** with the task.
+- Comments don't carry to the next occurrence.
+
+None of that is fatal. The decisive problem was the **UI**, which no amount
+of repeat-mode configuration fixes. Tududi is list-first and GTD-shaped
+(tasks → projects → areas), which gives the two kinds of work separate,
+natural homes.
+
+### What was rejected, and why
+
+Researched thoroughly rather than picking the first "best of 2026" hit —
+most of those lists are unreliable:
+
+- **TaskTrove** appears on nearly every list and fails twice: its licence is
+  **"Sustainable Use"** (source-available, *not* open source — GitHub reports
+  `NOASSERTION`), and it was the only candidate that had gone stale (last
+  push 2026-01-09).
+- **Kanban tools** (Planka, WeKan, Kanboard, Focalboard) — board-first, weak
+  or absent recurrence.
+- **Super Productivity** — MIT and popular, but local-first with WebDAV/
+  Dropbox sync rather than a self-hosted server, and ~1,390 open issues.
+- **Apple Reminders** — genuinely the best product here on recurrence,
+  longevity (15 years) and mobile polish, and free with no paywall. Ruled
+  out on **cross-platform**: no Windows app (only iCloud for Windows plus a
+  classic-Outlook add-in that reportedly still doesn't surface Reminders),
+  and **no Android app at all** — iCloud.com in a browser is the ceiling.
+- **Microsoft To Do** — free, no gating, excellent cross-platform. Rejected
+  on longevity judgement: Microsoft bought Wunderlist in 2015, shut it down
+  in 2020, and refused to sell it back when its founder publicly offered.
+  Also organisationally shallow (flat lists, no projects/areas).
+- **Fizzy** (37signals) was raised as the *business-model* benchmark, not a
+  candidate — it's a kanban issue tracker with no recurring tasks, and its
+  free tier counts **every card ever created, including deleted ones**.
+
+### The risk, accepted deliberately
+
+**Tududi is young and single-maintainer.** First commit November 2023
+(~2.7 years); `chrisvel` has 923 commits against the next contributor's 23.
+91 releases and a 10-issue tracker against 3.2k stars say it is well looked
+after *today* — but that is also what one person's undivided attention looks
+like, and it hasn't yet survived its author losing interest.
+
+Compare: Vikunja has run since June 2018 (8 years), and Nextcloud Tasks
+since 2016 with a company behind it. This was chosen with that trade-off
+understood — the intent is to fix problems here directly, patching the code
+if needed, which MIT makes straightforward.
+
+**The exit path is unusually good, and is part of why the risk is
+acceptable:** Tududi implements bidirectional **CalDAV sync with full RRULE
+(RFC 5545)** recurrence, so the data is reachable by standard clients
+(tasks.org on Android, Apple Reminders on iOS/macOS, Thunderbird on
+desktop — already running here for work mail) and portable to any other
+CalDAV-capable system. Not configured yet; the core app comes first.
+
+### Why slartibartfast, not the Pi
+
+The Pi is the conventional home for small SQLite apps here, but its disk is
+at **82% (5.1 GB free)** and this is a Node app — a heavier image than the
+Go/Rust services it hosts. slartibartfast has 170 GB free and idles at 0.00
+load. Same third-host pattern as Immich: no `pi-shared` network across
+hosts, so it publishes a port and Caddy reaches it via `{$SLARTI_IP}`.
+
+### Public, not LAN-gated — and why that's justified
+
+**Unlike Immich, this is exposed publicly**, on the same terms as the
+Vikunja it replaces. A LAN/tailnet gate would defeat the entire reason for
+choosing it: cross-platform access from Windows and Android away from home.
+
+The justification is the auth posture, checked rather than assumed:
+
+- **Self-registration is disabled by default** and admin-controlled
+  (`docs/08-user-management.md`). The first user to exist becomes admin —
+  that's `TUDUDI_USER_EMAIL`, created at first boot from Pass. Nobody can
+  sign themselves up.
+- Sessions signed with a 64-byte random `TUDUDI_SESSION_SECRET` from Pass.
+- The app ships `express-rate-limit` on auth routes; Caddy adds its own on
+  top, same defence-in-depth as every other public app here.
+- The `POST /register` **route still exists** even with registration off, so
+  Caddy rate-limits it too — a future misconfiguration or upstream default
+  flip can't quietly become an open signup endpoint.
+
+### Traps worth knowing
+
+- **`TUDUDI_TRUST_PROXY=true` is required** behind Caddy. Without it Express
+  reads the proxy's IP as the client IP, which breaks the app's own rate
+  limiting and makes it log validation errors.
+- **`TUDUDI_ALLOWED_ORIGINS` must be the public origin**, not localhost —
+  the browser sends the origin it actually loaded.
+- **Volume mount paths are version-sensitive.** v1.2.0 moved them from
+  `/app/backend/db` and `/app/backend/uploads` to `/app/db` and
+  `/app/uploads`. Using the OLD paths on a NEW image silently writes to an
+  anonymous docker volume that is **discarded on container recreation** —
+  total data loss that looks like it's working. `backup.sh` treats "no
+  database file found" as a hard failure precisely to catch this.
+- **Docker tags run ahead of GitHub releases.** GitHub's "latest release"
+  was v1.2.4 while Docker Hub had 1.3.1 stable and 1.4.0-rc.1. Don't read
+  the GitHub releases page as the current version.
+
+### Backups
+
+`tududi/backup.sh` at **03:45** (systemd user timer; Immich's Kopia run
+starts 03:00 and takes ~27 minutes, so they stay clear). It dumps the
+SQLite database with Python's `Connection.backup()` against a
+**read-only** URI, verifies `PRAGMA integrity_check`, gzips it, and hands
+the dumps plus `uploads/` to Kopia. `data/db` itself is deliberately *not*
+snapshotted — the dump is the restorable artefact, and keeping both invites
+restoring the wrong one.
+
+**`?mode=ro` is load-bearing — do not remove it.** See the 2026-07-30
+Forgejo incident above: a read-write handle on a live SQLite database
+broke every SQLite-backed app's connection state while leaving the data
+perfectly valid. `sqlite3` the CLI isn't installed on this box and adding it
+needs root, so this uses Python's stdlib API, same as the Pi's dump script.
 
 ---
 

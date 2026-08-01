@@ -865,6 +865,77 @@ immich.mathewcsims.uk {
 	}
 }
 
+# ── Tududi (running on slartibartfast) ───────────────────────────────────
+# Clean public URL https://tududi.mathewcsims.uk — self-hosted task manager,
+# replacing Vikunja for day-to-day use. SECOND app on the third host, so it
+# uses the same {$SLARTI_IP} env var Immich introduced above rather than
+# container-name proxying (the pi-shared network doesn't span hosts).
+#
+# PUBLIC, NOT LAN-GATED — deliberately, and unlike Immich directly above.
+# The entire point of choosing this app was cross-platform access from
+# Windows and Android away from home, which a LAN/tailnet gate would
+# defeat. Same exposure as Vikunja, which it replaces. Justified by the
+# auth posture rather than by the network: self-registration is disabled by
+# default and admin-controlled, and the only account is the admin created
+# at first boot from Pass (see ../tududi/compose.yaml's security review).
+tududi.mathewcsims.uk {
+	import security_headers
+	import general_ratelimit tududi
+
+	rate_limit {
+		# Credential-stuffing protection on the login endpoint. Tududi ships
+		# express-rate-limit on these routes itself (`authLimiter` in
+		# backend/modules/auth/routes.js), so this is defence in depth, not
+		# the only control — same posture as every other public app here.
+		#
+		# BOTH path forms are matched on purpose: the API base path is
+		# `/api/${API_VERSION}` and falls back to bare `/api` when no
+		# version is set (backend/app.js). Pinning only one form would
+		# silently stop matching if that variable ever changes.
+		zone rl_tududi_auth {
+			match {
+				method POST
+				path /api/login /api/v1/login
+			}
+			key {remote_host}
+			events 20
+			window 1m
+		}
+		# Registration is disabled in-app, but the ROUTE still exists
+		# (POST /register). Rate-limiting it means a future misconfiguration
+		# — or an upstream default flipping — can't quietly become an open
+		# signup endpoint on the public internet. Same reasoning as
+		# rl_memos_register above.
+		zone rl_tududi_register {
+			match {
+				method POST
+				path /api/register /api/v1/register
+			}
+			key {remote_host}
+			events 5
+			window 1m
+		}
+	}
+	reverse_proxy http://{$SLARTI_IP}:3002 {
+		# Tududi sets its own security headers (helmet), and `reverse_proxy`
+		# copies upstream headers with Add rather than Set — so without
+		# this, every one of them is served TWICE with different values
+		# (x-frame-options: DENY *and* SAMEORIGIN; referrer-policy:
+		# no-referrer *and* strict-origin-when-cross-origin). Confirmed
+		# live on first deploy.
+		#
+		# Stripping the upstream copies leaves exactly one canonical set —
+		# the one `import security_headers` applies to every other app
+		# here — so behaviour is consistent across the estate instead of
+		# depending on how a given browser resolves duplicates. Same
+		# `header_down` mechanism as the Owl fix; see that section.
+		header_down -X-Frame-Options
+		header_down -X-Content-Type-Options
+		header_down -Referrer-Policy
+		header_down -Strict-Transport-Security
+	}
+}
+
 # ── msims.link (running HERE on the Pi) ──────────────────────────────────
 # Self-hosted URL shortener (chhoto-url). Bare root redirects to the real
 # landing page (mathewcsims.uk) rather than showing the shortener's own
