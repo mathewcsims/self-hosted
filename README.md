@@ -3,7 +3,7 @@
 Personal self-hosted infrastructure: a Mac running most apps via `podman
 compose`, a Raspberry Pi as the single internet-facing reverse proxy (Caddy,
 automatic HTTPS) which also hosts several apps itself, an Ubuntu box
-(`slartibartfast`) running Immich and Tududi, and a DrayTek Vigor2866 router
+(`slartibartfast`) running Immich and Donetick, and a DrayTek Vigor2866 router
 in front of the lot.
 
 **Full setup, deployment, and troubleshooting instructions live in
@@ -38,7 +38,7 @@ in front of the lot.
 | [chhoto-url](https://github.com/SinTan1729/chhoto-url) | `msims.link` | Pi (self-hosted URL shortener on its own short domain — bare root redirects to `mathewcsims.uk` rather than showing the shortener's own login screen) |
 | [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars; posts a Memo to Owl on every new ride via a PocketBase-realtime relay) |
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
-| [Tududi](https://tududi.com) | `tududi.mathewcsims.uk` | **slartibartfast** (list-first, GTD-shaped task manager replacing Vikunja for day-to-day use — public, registration disabled, CalDAV-capable) |
+| [Donetick](https://donetick.com) | `donetick.mathewcsims.uk` | **slartibartfast** (task and chore manager — time-of-day reminders that repeat per occurrence, nested subtasks, projects; public, registration closed) |
 
 ## Architecture, in short
 

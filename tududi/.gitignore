@@ -1,6 +1,0 @@
-# Tududi's SQLite database and file uploads. Lives on slartibartfast,
-# backed up to B2 via Kopia — but note the DATABASE is backed up as a
-# consistent dump (see slartibartfast's dump script), NOT as a file copy of
-# a live SQLite file, for the same reason every other database in this repo
-# is dumped rather than copied. Never committed.
-data/

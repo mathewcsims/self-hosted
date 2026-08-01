@@ -1,47 +1,39 @@
 #!/bin/sh
-# Dumps Tududi's SQLite database to a consistent file and hands it, plus the
-# uploads directory, to Kopia. Triggered daily by tududi-backup.timer at
-# 03:45 on slartibartfast.
+# Dumps Donetick's SQLite database to a consistent file and hands it, plus
+# uploads, to Kopia. Triggered daily by donetick-backup.timer at 03:45 on
+# slartibartfast.
 #
 # ── WHY A DUMP, NOT A FILE COPY ───────────────────────────────────────────
-# Same reason every database in this repo is now dumped rather than
-# snapshotted in place: a file-level copy of a live SQLite database in WAL
-# mode can capture a .db and -wal that disagree, producing a "backup" that
-# looks fine until you try to restore it. See scripts/dump-databases.sh's
-# header for the full reasoning.
+# Same reason every database in this repo is dumped rather than snapshotted
+# in place: a file-level copy of a live SQLite database in WAL mode can
+# capture a .db and -wal that disagree, producing a "backup" that looks fine
+# until you try to restore it. See scripts/dump-databases.sh's header.
 #
 # ── THE READ-ONLY HANDLE IS LOAD-BEARING ──────────────────────────────────
 # `?mode=ro` is not a nicety — DO NOT REMOVE IT. Opening a live SQLite
-# database read-write (which is the DEFAULT) takes write locks, checkpoints
-# the WAL and rewrites the -shm of a file another process has open. On
-# 2026-07-30 that broke Forgejo: it served HTTP 500 with "file is not a
-# database" roughly 20 minutes after the first dump, despite the file itself
-# being perfectly valid. It was the running app's CONNECTION STATE that
-# broke, not the data, and only a container restart cleared it.
-#
-# A read-only handle takes no write lock and cannot checkpoint, so Tududi's
-# own view is untouched. Python's Connection.backup() is the supported
-# online-copy API and is safe against a live writer.
+# database read-write (the DEFAULT) takes write locks, checkpoints the WAL
+# and rewrites the -shm of a file another process has open. On 2026-07-30
+# that broke Forgejo: HTTP 500s with "file is not a database" about twenty
+# minutes after the first dump, despite the file itself being valid. It was
+# the running app's CONNECTION STATE that broke, not the data, and only a
+# container restart cleared it.
 #
 # sqlite3 the CLI is NOT installed on this box and adding it needs root;
-# Python 3 is present, so this uses the same approach as the Pi's dump
-# script rather than installing anything.
+# Python 3 is present, so this uses Connection.backup(), the supported
+# online-copy API, same as the Pi's dump script.
 #
 # ── WHY 03:45 ─────────────────────────────────────────────────────────────
 # Immich's Kopia run starts at 03:00 and takes ~27 minutes for a 31 GB
-# library. 03:45 keeps the two clear of each other on a 4-core box without
-# leaving a long idle gap. Both are well after Immich's own 02:00 database
-# dump.
+# library. 03:45 keeps the two clear of each other on a 4-core box.
 #
 # Runs as the `mathewcsims` USER via a systemd --user unit (linger enabled),
-# so no root anywhere. That works because the container writes as PUID/PGID
-# 1000 (see compose.yaml), which is this user.
+# so no root anywhere.
 set -eu
 
-TUDUDI_DATA="$HOME/tududi/data"
-DUMP_DIR="$HOME/tududi-dumps"
+DATA="$HOME/donetick/data"
+DUMP_DIR="$HOME/donetick-dumps"
 KOPIA="$HOME/.local/bin/kopia"
-LOG="$HOME/tududi-dumps/backup.log"
+LOG="$DUMP_DIR/backup.log"
 APPRISE_URL="https://apprise.mathewcsims.uk/notify/self-hosted"
 STAMP=$(date +%Y%m%dT%H%M%S)
 KEEP=7
@@ -54,24 +46,22 @@ log() {
 
 notify_failure() {
     curl -fsS --max-time 10 \
-        --data-urlencode "title=⚠️ Tududi backup FAILED on slartibartfast" \
+        --data-urlencode "title=⚠️ Donetick backup FAILED on slartibartfast" \
         --data-urlencode "type=failure" \
         --data-urlencode "format=markdown" \
         --data-urlencode "body=$1" \
         "$APPRISE_URL" >/dev/null 2>&1 || true
 }
 
-log "=== starting Tududi backup ==="
-
+log "=== starting Donetick backup ==="
 FAILED=""
 
 # ── Dump the database ─────────────────────────────────────────────────────
-# Tududi's SQLite file lives in data/db/. Glob rather than hardcode the
-# filename: upstream has renamed/moved it between versions before (the
-# container mount path itself changed in v1.2.0), and a hardcoded name that
-# silently matches nothing would be a backup of nothing.
+# Glob rather than hardcode the filename: the SQLite file's name and location
+# are the image's business, not ours, and a hardcoded name that silently
+# matched nothing would be a backup of nothing.
 DUMPED=0
-for _src in "$TUDUDI_DATA"/db/*.sqlite3 "$TUDUDI_DATA"/db/*.sqlite "$TUDUDI_DATA"/db/*.db; do
+for _src in "$DATA"/*.db "$DATA"/*.sqlite "$DATA"/*.sqlite3; do
     [ -f "$_src" ] || continue
     _name=$(basename "$_src")
     _tmp="$DUMP_DIR/.$_name-$STAMP.tmp"
@@ -95,11 +85,11 @@ sys.exit(0 if chk == 'ok' else 1)
     fi
 done
 
-# Finding NO database at all is a failure, not a quiet success — it's the
-# signature of the v1.2.0-style mount-path change writing to an anonymous
-# volume that gets discarded on container recreation.
+# Finding NO database at all is a failure, not a quiet success — it is the
+# signature of the data directory moving inside the image, which would
+# otherwise produce cheerful empty backups indefinitely.
 if [ "$DUMPED" = 0 ] && [ -z "$FAILED" ]; then
-    log "FAIL no database file found under $TUDUDI_DATA/db"
+    log "FAIL no database file found under $DATA"
     FAILED="$FAILED no-database-found"
 fi
 
@@ -110,10 +100,10 @@ for _label in $(ls "$DUMP_DIR" 2>/dev/null | sed -E 's/-[0-9]{8}T[0-9]{6}\.gz$//
 done
 
 # ── Snapshot dumps + uploads ──────────────────────────────────────────────
-# data/db itself is deliberately NOT snapshotted — the dump above is the
-# restorable artefact, and backing up both would invite restoring the wrong
-# one. Uploads are plain files, so a direct snapshot is correct for those.
-for _src in "$DUMP_DIR" "$TUDUDI_DATA/uploads"; do
+# The live database file itself is deliberately NOT snapshotted — the dump
+# above is the restorable artefact, and keeping both invites restoring the
+# wrong one.
+for _src in "$DUMP_DIR" "$DATA/uploads"; do
     [ -d "$_src" ] || { log "SKIP $_src — does not exist"; continue; }
     if "$KOPIA" snapshot create "$_src" --log-level=error >> "$LOG" 2>&1; then
         log "OK   snapshot $_src"
@@ -125,15 +115,14 @@ done
 
 if [ -n "$FAILED" ]; then
     log "=== FAILED for:$FAILED ==="
-    notify_failure "Tududi backup failed for:$FAILED
+    notify_failure "Donetick backup failed for:$FAILED
 
 Host: slartibartfast
 Log: $LOG
 
-Note: 'no-database-found' specifically means the dump step found no SQLite
-file at all under tududi/data/db — check the container's volume mount
-paths, which upstream changed in v1.2.0 and which silently write to a
-throwaway volume when wrong."
+'no-database-found' means the dump step found no SQLite file at all under
+donetick/data — check the container's volume mount, since that produces
+empty backups that look successful."
     exit 1
 fi
 
