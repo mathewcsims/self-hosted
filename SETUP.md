@@ -11,6 +11,7 @@ follow the same recipe — see "Adding another app" near the end.
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
 | Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
 | Donetick | `https://donetick.mathewcsims.uk` | **slartibartfast** `:2021` | `mathewcsims`, see its section below — registration closed |
+| Donetick webhook relay | `https://donetick-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — URL-secret only (Donetick doesn't sign webhooks) |
 | Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
 | Speedtest Tracker | `https://speedtest.mathewcsims.uk` | **Pi**, LAN-only | admin credentials set at first boot, see its section below |
 | Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
@@ -153,6 +154,8 @@ section below says which.
 | `donetick/donetick-backup.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:45 |
 | `scripts/pass-create-donetick-secrets.sh` | Mac | one-time: generates Donetick's JWT secret + account password into Proton Pass |
 | `scripts/bootstrap-donetick-account.sh` | Mac | opens registration briefly, creates the single account, closes it again, and verifies the close |
+| `donetick-webhook-relay/compose.yaml` + `Dockerfile` + `relay.py` | **Pi**, LAN-only | bridges Donetick's event payload to Apprise's `/notify` shape; reads `WEBHOOK_SECRET` from Proton Pass |
+| `scripts/pass-create-donetick-relay-secret.sh` | Mac | one-time: generates the relay's URL secret into Proton Pass |
 | `scripts/dump-databases.sh` | **Mac** | consistent DB dumps (pg_dump / mysqldump / SQLite `VACUUM INTO`) written before every Kopia run; alerts via Apprise on failure |
 | `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
@@ -4557,6 +4560,75 @@ coarse for "at 18:00". Negligible cost on a single-user instance.
 Delivery is Telegram / Pushover / Discord / webhook / FCM. **Nothing is
 wired up yet** — the obvious route is a webhook bridge into Apprise, the
 same shape as `vikunja-webhook-relay`.
+
+### Migration from Vikunja (2026-08-01)
+
+Vikunja was left completely intact — nothing deleted — so it remains the
+fallback and the record of the two already-completed tasks, which were
+deliberately not imported (they'd be noise in a fresh system).
+
+**Projects are areas of life; labels are CONTEXTS.** Deliberately two
+different axes so they compose, rather than labels restating projects:
+
+| Projects | Labels (contexts) |
+|---|---|
+| Household, Health & Fitness, Family & Friends, Life Admin, Tinkering | `phone`, `outdoors`, `computer`, `paperwork`, `deadline` |
+
+Vikunja's own labels (`wellbeing`, `flat`, `admin`, `dev`) became *projects*
+rather than being carried over as labels — reusing them for both would have
+made one axis redundant and labels useless for "what can I do from here?".
+
+**"☎️ Phone Mum" is the whole point**: two Vikunja tasks (Sunday and
+Wednesday, each "every 7 days") collapsed into ONE chore with
+`frequencyType: days_of_the_week`, `days: ["wednesday","sunday"]`, due 18:00
+Europe/London, and two reminder templates (−15m and 0m). Vikunja cannot
+express that schedule at all.
+
+**API traps hit during the migration:**
+- `POST /api/v1/chores` **307-redirects** — the route is registered as
+  `POST "/"` on the group, so the path needs its **trailing slash**
+  (`/api/v1/chores/`). urllib doesn't follow redirects on POST, so this
+  looks like a failure rather than a wrong path.
+- Projects and labels have **no eAPI equivalent** — `eapi/v1` covers chores
+  and things only, so a long-lived API token cannot create them. That work
+  needs a full session, which means passing MFA.
+- `PUT /api/v1/users/webhook` is guarded by `IsPlusMember()`, but the check
+  reads `CurrentUser` from **JWT claims**, whose `Expiration` is the token's
+  own 7-day expiry — so it passes on a self-hosted instance with no
+  subscription. Don't rely on that staying true; the fallback is setting
+  `circles.webhook_url` directly (one column, own instance, AGPL).
+
+### Notifications: Donetick -> relay -> Apprise -> ntfy + Discord
+
+Donetick's own `NotificationPlatformWebhook` case is an unimplemented TODO
+stub, but **scheduled reminders reach a webhook by a different path** —
+`eventsProducer.NotificationEvent`, driven off `circles.webhook_url`, with
+the sender loop running every 3 minutes (so a reminder lands within ~3
+minutes of its time).
+
+Apprise **rejects Donetick's payload outright** — verified before building
+anything: `HTTP 400 {"error": "Payload lacks minimum requirements"}`.
+Donetick sends `{type, timestamp, data}`; Apprise wants `title`/`body`/
+`type`. Hence `donetick-webhook-relay/`, which is the same job and
+deliberately the same shape as `vikunja-webhook-relay/`.
+
+**One security difference from that relay, and it matters.** Vikunja signs
+its webhooks, so its relay verifies an HMAC and the LAN gate is defence in
+depth. **DONETICK SIGNS NOTHING** — a bare JSON POST, no signature header
+(confirmed by reading `processEvent`). The only credential is a secret in
+the URL path (`/hook/<secret>`), which travels on every request and leaks
+into logs far more readily than a signature. So:
+- the secret is 64 hex characters, and
+- the Caddy site is LAN/tailnet-gated as a **genuine second control**, not a
+  formality. Do not remove that gate.
+
+Verified end to end by creating a throwaway chore and completing it: real
+`task.created` and `task.completed` events reached the relay, were
+translated, and Apprise delivered both to ntfy *and* Discord. A wrong secret
+returns 401.
+
+**Expect duplicate reminders** until Vikunja's copies of Walking and the bin
+run are retired — both systems are live and both will nag.
 
 ### Backups
 
