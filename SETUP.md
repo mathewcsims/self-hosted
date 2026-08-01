@@ -1251,7 +1251,7 @@ harder to satisfy than it looks, and the same candidates keep resurfacing.
 |---|---|
 | **Vikunja** (incumbent) | Interface (3). Recurrence (1) — only three repeat modes exist (interval in seconds, monthly, from-completion), so "Wednesdays and Sundays" is **inexpressible** and needs two separate tasks. Its reminders are otherwise good: absolute and relative, and they shift correctly on repeat |
 | **Tududi** | **No time-of-day reminders at all** (8) — `reminder_at` is a database column nothing writes to; the API accepts the field and silently discards it. Subtasks capped at **one level** (10) |
-| **Donetick** | Maintenance (6) — **86 open issues, oldest Feb 2025; 26 open PRs, oldest Sep 2025**. Plus a UI defect: the home view shows only tasks with *no* project, and "all projects" has no representable value, so the filter cannot survive a refresh |
+| **Donetick** | **Basic usability (3)** — the home view shows only tasks with *no* project, and "all projects" has no representable value, so the selection cannot survive a refresh. Put your tasks in projects and the default view is permanently empty. The maintenance backlog (86 open issues, oldest Feb 2025; 26 open PRs, oldest Sep 2025) is not the failure itself — it is why the defect is **unfixable in practice**, since a patch would be a permanent fork |
 | **Plane / Huly** | Hardware — 4–8 GB and 8–16 GB RAM respectively; slartibartfast has ~4 GB free after Immich |
 | **Nextcloud Tasks** | Requires running Nextcloud to get a task list |
 | **CalDAV + native clients** | No browser interface |
@@ -1259,6 +1259,10 @@ harder to satisfy than it looks, and the same candidates keep resurfacing.
 | **Apple Reminders** | No Android; **Advanced Data Protection is unavailable in the UK** since Feb 2025, so not E2E here either |
 | **Todoist / TickTick** | Not end-to-end encrypted (7); Todoist paywalls reminders (5) |
 | **TaskTrove** | Licence is "Sustainable Use" — source-available, not open source; and stale since Jan 2026 |
+| **HamsterBase Tasks** | Recurrence — `calculateRecurringDate.ts` is interval-only (years/months/weeks/days); "1w" means *next Monday*. Weekday sets are inexpressible |
+| **Tracks** | Hierarchy and reminders — supports weekday sets, but no `parent_id` on any model and no notification code at all |
+| **Notesnook** | Reminders — recurrence supports weekday sets on paper, but the reminders do not work in practice (tested directly). Also notes-shaped: reminders attach to a note, not to an item within it |
+| **Joplin / AppFlowy** | Repeating to-do notifications are an open feature request; AppFlowy's reminders are in-app only, push still on the roadmap |
 
 ### Why Donetick was tried twice, and dropped twice
 
@@ -1273,13 +1277,22 @@ recurrence, per-occurrence reminder templates computed from each occurrence's
 due datetime, arbitrarily nested subtasks, projects, native mobile apps,
 AGPL. It was deployed, migrated to, and wired through to Apprise.
 
-It failed on **maintenance**, and that should have been caught first. The
-issue count was in the very first API response used to evaluate it, and was
-not weighed — while the same signal had been used two days earlier to
-*praise* Tududi's tidy tracker. A backlog that deep on a single-maintainer
-project is the same risk as abandonment, only slower, and it makes
-contributing a fix pointless: a patch would be a permanent fork, rebased on
-every release.
+**It failed on basic usability.** With tasks in projects, the default view
+shows nothing at all — the project selector has no representable "all"
+state, so the choice cannot survive a page reload. That is a daily,
+present-tense failure, not a theoretical one.
+
+The maintenance backlog is why that defect is **unfixable in practice**
+rather than why the app was rejected: with 26 PRs unreviewed for up to ten
+months, a fix would never land upstream, so patching means owning a
+permanent fork rebased on every release.
+
+Two process errors, recorded because both are repeatable. The backlog was in
+the very first API response used to evaluate the tool and was not weighed —
+while the same signal had been used two days earlier to *praise* Tududi's
+tidy tracker. And the change needed to fix the defect was proposed before it
+had been traced, with the uncertainty attached as a caveat rather than
+treated as a blocker.
 
 ### Traps found along the way, worth keeping
 
