@@ -589,34 +589,6 @@ vikunja-relay.mathewcsims.uk {
 	}
 }
 
-# ── Donetick webhook relay (running HERE on the Pi, LAN-ONLY) ────────────
-# Clean URL https://donetick-relay.mathewcsims.uk. Receives Donetick's
-# webhook events from slartibartfast and reshapes them into what Apprise
-# accepts — see ../donetick-webhook-relay/ for why the translation is
-# needed at all (Apprise rejects Donetick's payload outright).
-#
-# THE LAN GATE HERE IS LOAD-BEARING, unlike the Vikunja relay's above.
-# Vikunja signs its webhooks, so that relay's real control is HMAC
-# verification and the gate is defence in depth. DONETICK SIGNS NOTHING —
-# its only credential is a secret in the URL path (/hook/<secret>), which
-# is far easier to leak into a log or shell history than a signature. So
-# this gate is a genuine second control, not a formality. Do not remove it.
-#
-# Donetick reaches this from 10.0.1.11, which is inside private_ranges.
-donetick-relay.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit donetick_relay
-
-	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
-	handle @lan {
-		reverse_proxy donetick-webhook-relay:8080
-	}
-	# non-LAN (internet) clients: closed connection, nothing revealed
-	handle {
-		abort
-	}
-}
-
 # ── Kopia backup server (running HERE on the Pi, LAN-ONLY) ───────────────
 # Clean public URL https://backup.mathewcsims.uk, but only for LAN clients —
 # same pattern as Apprise/Speedtest Tracker above, and for the same reason
@@ -891,65 +863,6 @@ immich.mathewcsims.uk {
 	handle {
 		abort
 	}
-}
-
-# ── Donetick (running on slartibartfast) ─────────────────────────────────
-# Clean public URL https://donetick.mathewcsims.uk — task and chore manager,
-# and the app that actually does time-of-day recurring reminders (see
-# ../donetick/compose.yaml for why Vikunja and Tududi could not).
-#
-# SECOND app on the third host, so it uses {$SLARTI_IP} like Immich above.
-# NOTE this differs from the original 2026-07 deployment, which proxied to
-# {$MAC_IP} — the app moved hosts for availability, since a chore reminder
-# is no use if it depends on the Mac being awake and logged in.
-#
-# PUBLIC, not LAN-gated — deliberately, like Vikunja before it. A chore app
-# that only works at home is pointless; the whole reason for the reminders
-# is to be nudged wherever you are.
-donetick.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit donetick
-
-	# NOTE ON SIGNUP — the endpoint is POST /api/v1/auth/ (a bare slash on
-	# the auth group), NOT /api/v1/auth/signup. That matters when testing:
-	# Donetick serves its own frontend, so ANY unmatched path returns the
-	# SPA's index.html with HTTP 200. A probe against the wrong path
-	# therefore looks like a successful, wide-open signup when it is
-	# nothing of the sort — which is exactly the wrong conclusion drawn
-	# here on 2026-08-01 before the route was read properly.
-	#
-	# Registration is enforced by the app itself via
-	# DT_IS_USER_CREATION_DISABLED=true, and that IS honoured — verified
-	# against the real endpoint: 403 {"error":"User creation is disabled"}.
-	# No proxy-level block is used, deliberately: it would also block
-	# scripts/bootstrap-donetick-account.sh, which needs a brief legitimate
-	# window to create the one account.
-
-	# Donetick has its own built-in rate limiter, but it CANNOT see real
-	# per-client IPs behind this reverse proxy — there is no trusted-proxy /
-	# X-Forwarded-For setting anywhere in its config schema (confirmed by
-	# reading config/config.go at the pinned tag, not assumed). So its own
-	# limit only ever sees "the Caddy container" as a single client, and
-	# this zone is the real compensating control.
-	#
-	# Every sensitive action — login, signup, password reset/change, token
-	# refresh, logout, MFA verify, OAuth callback — sits under this one path
-	# prefix, confirmed from the app's own route registration rather than
-	# guessed. That matters especially given CVE-2025-47945, where a
-	# predictable default JWT secret allowed account takeover: brute-force
-	# protection on the auth surface is the belt to that braces.
-	rate_limit {
-		zone rl_donetick_auth {
-			match {
-				path /api/v1/auth/*
-			}
-			key {remote_host}
-			events 20
-			window 1m
-		}
-	}
-
-	reverse_proxy http://{$SLARTI_IP}:2021
 }
 
 # ── msims.link (running HERE on the Pi) ──────────────────────────────────
