@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Donetick database dump + Kopia backup (see donetick-backup.service)
+
+[Timer]
+# 03:45 deliberately: Immich's Kopia run starts at 03:00 and takes ~27
+# minutes for a 31 GB library, so this stays clear of it on a 4-core box.
+OnCalendar=*-*-* 03:45:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

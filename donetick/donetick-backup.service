@@ -1,5 +1,5 @@
 [Unit]
-Description=Dump Tududi's SQLite database and snapshot it to B2 (see backup.sh)
+Description=Dump Donetick's SQLite database and snapshot it to B2 (see backup.sh)
 # Don't bother if the network isn't up — the timer's Persistent=true will
 # catch up on the next boot instead. Same shape as kopia-immich.service.
 After=network-online.target
@@ -7,4 +7,4 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/tududi/backup.sh
+ExecStart=%h/donetick/backup.sh

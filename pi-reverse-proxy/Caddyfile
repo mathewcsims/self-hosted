@@ -865,75 +865,63 @@ immich.mathewcsims.uk {
 	}
 }
 
-# ── Tududi (running on slartibartfast) ───────────────────────────────────
-# Clean public URL https://tududi.mathewcsims.uk — self-hosted task manager,
-# replacing Vikunja for day-to-day use. SECOND app on the third host, so it
-# uses the same {$SLARTI_IP} env var Immich introduced above rather than
-# container-name proxying (the pi-shared network doesn't span hosts).
+# ── Donetick (running on slartibartfast) ─────────────────────────────────
+# Clean public URL https://donetick.mathewcsims.uk — task and chore manager,
+# and the app that actually does time-of-day recurring reminders (see
+# ../donetick/compose.yaml for why Vikunja and Tududi could not).
 #
-# PUBLIC, NOT LAN-GATED — deliberately, and unlike Immich directly above.
-# The entire point of choosing this app was cross-platform access from
-# Windows and Android away from home, which a LAN/tailnet gate would
-# defeat. Same exposure as Vikunja, which it replaces. Justified by the
-# auth posture rather than by the network: self-registration is disabled by
-# default and admin-controlled, and the only account is the admin created
-# at first boot from Pass (see ../tududi/compose.yaml's security review).
-tududi.mathewcsims.uk {
+# SECOND app on the third host, so it uses {$SLARTI_IP} like Immich above.
+# NOTE this differs from the original 2026-07 deployment, which proxied to
+# {$MAC_IP} — the app moved hosts for availability, since a chore reminder
+# is no use if it depends on the Mac being awake and logged in.
+#
+# PUBLIC, not LAN-gated — deliberately, like Vikunja before it. A chore app
+# that only works at home is pointless; the whole reason for the reminders
+# is to be nudged wherever you are.
+donetick.mathewcsims.uk {
 	import security_headers
-	import general_ratelimit tududi
+	import general_ratelimit donetick
 
+	# NOTE ON SIGNUP — the endpoint is POST /api/v1/auth/ (a bare slash on
+	# the auth group), NOT /api/v1/auth/signup. That matters when testing:
+	# Donetick serves its own frontend, so ANY unmatched path returns the
+	# SPA's index.html with HTTP 200. A probe against the wrong path
+	# therefore looks like a successful, wide-open signup when it is
+	# nothing of the sort — which is exactly the wrong conclusion drawn
+	# here on 2026-08-01 before the route was read properly.
+	#
+	# Registration is enforced by the app itself via
+	# DT_IS_USER_CREATION_DISABLED=true, and that IS honoured — verified
+	# against the real endpoint: 403 {"error":"User creation is disabled"}.
+	# No proxy-level block is used, deliberately: it would also block
+	# scripts/bootstrap-donetick-account.sh, which needs a brief legitimate
+	# window to create the one account.
+
+	# Donetick has its own built-in rate limiter, but it CANNOT see real
+	# per-client IPs behind this reverse proxy — there is no trusted-proxy /
+	# X-Forwarded-For setting anywhere in its config schema (confirmed by
+	# reading config/config.go at the pinned tag, not assumed). So its own
+	# limit only ever sees "the Caddy container" as a single client, and
+	# this zone is the real compensating control.
+	#
+	# Every sensitive action — login, signup, password reset/change, token
+	# refresh, logout, MFA verify, OAuth callback — sits under this one path
+	# prefix, confirmed from the app's own route registration rather than
+	# guessed. That matters especially given CVE-2025-47945, where a
+	# predictable default JWT secret allowed account takeover: brute-force
+	# protection on the auth surface is the belt to that braces.
 	rate_limit {
-		# Credential-stuffing protection on the login endpoint. Tududi ships
-		# express-rate-limit on these routes itself (`authLimiter` in
-		# backend/modules/auth/routes.js), so this is defence in depth, not
-		# the only control — same posture as every other public app here.
-		#
-		# BOTH path forms are matched on purpose: the API base path is
-		# `/api/${API_VERSION}` and falls back to bare `/api` when no
-		# version is set (backend/app.js). Pinning only one form would
-		# silently stop matching if that variable ever changes.
-		zone rl_tududi_auth {
+		zone rl_donetick_auth {
 			match {
-				method POST
-				path /api/login /api/v1/login
+				path /api/v1/auth/*
 			}
 			key {remote_host}
 			events 20
 			window 1m
 		}
-		# Registration is disabled in-app, but the ROUTE still exists
-		# (POST /register). Rate-limiting it means a future misconfiguration
-		# — or an upstream default flipping — can't quietly become an open
-		# signup endpoint on the public internet. Same reasoning as
-		# rl_memos_register above.
-		zone rl_tududi_register {
-			match {
-				method POST
-				path /api/register /api/v1/register
-			}
-			key {remote_host}
-			events 5
-			window 1m
-		}
 	}
-	reverse_proxy http://{$SLARTI_IP}:3002 {
-		# Tududi sets its own security headers (helmet), and `reverse_proxy`
-		# copies upstream headers with Add rather than Set — so without
-		# this, every one of them is served TWICE with different values
-		# (x-frame-options: DENY *and* SAMEORIGIN; referrer-policy:
-		# no-referrer *and* strict-origin-when-cross-origin). Confirmed
-		# live on first deploy.
-		#
-		# Stripping the upstream copies leaves exactly one canonical set —
-		# the one `import security_headers` applies to every other app
-		# here — so behaviour is consistent across the estate instead of
-		# depending on how a given browser resolves duplicates. Same
-		# `header_down` mechanism as the Owl fix; see that section.
-		header_down -X-Frame-Options
-		header_down -X-Content-Type-Options
-		header_down -Referrer-Policy
-		header_down -Strict-Transport-Security
-	}
+
+	reverse_proxy http://{$SLARTI_IP}:2021
 }
 
 # ── msims.link (running HERE on the Pi) ──────────────────────────────────
