@@ -5229,6 +5229,47 @@ service `goose`, account `secrets`, as a JSON blob. Inspect it with
 `security find-generic-password -s goose -a secrets -w`. Goose reads config
 at launch, so **restart it after any change**.
 
+### Audio transcription — use a chat model, not a speech model
+
+**Non-obvious and worth knowing before reaching for a dedicated ASR model:
+`gemini-flash` transcribes audio, through the normal
+`/v1/chat/completions` endpoint, with no extra configuration.** Verified
+2026-08-02 with a generated WAV — returned the sentence verbatim first
+attempt.
+
+Send the audio as an `input_audio` content part alongside the instruction:
+
+```json
+{"model": "gemini-flash",
+ "messages": [{"role": "user", "content": [
+   {"type": "text", "text": "Transcribe this audio verbatim."},
+   {"type": "input_audio", "input_audio": {"data": "<base64>", "format": "wav"}}]}]}
+```
+
+It stays **UK-resident** (`gemini-flash` is pinned to `europe-west2`), which a
+dedicated speech service would not necessarily be.
+
+**Why not Chirp 2**, which is visible in Model Garden and looks like the
+obvious choice — two independent blockers, both checked:
+
+1. **It is not on the Vertex publisher surface.** `chirp-2:predict` returns
+   404 in `europe-west2`, `us-central1` and `global`. Model Garden lists it,
+   but it is not served from `aiplatform.googleapis.com` like the Gemini and
+   Claude models.
+2. **Its real API is disabled on this project.** Chirp is served by Cloud
+   Speech-to-Text v2 (`speech.googleapis.com`), which returns *"Cloud
+   Speech-to-Text API has not been used in project ... or it is disabled"*.
+   A portal action, same shape as Mistral's Enable button.
+
+Even with the API enabled, LiteLLM lists `vertex_ai` among its transcription
+providers but documents nothing Chirp-specific, so whether it would route to
+Chirp rather than Gemini audio is **unproven** — test it before relying on it.
+
+**What Gemini does NOT give you**, and would justify enabling Chirp:
+word-level timestamps, speaker diarisation, and streaming recognition. For
+plain "turn this file into text", the chat model is sufficient and needs
+nothing enabling.
+
 ### Gotchas
 
 - **The Pass item must be titled exactly `Litellm`**, not `LiteLLM` — the
