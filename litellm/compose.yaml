@@ -98,9 +98,15 @@ services:
     mem_limit: 512m
     pids_limit: 256
 
-  litellm:
+  # Service key is `app`, NOT `litellm`, deliberately: the sidecar below
+  # sets `hostname: litellm` to get the tailnet name litellm.<tailnet>, and
+  # that hostname SHADOWS a container/service also called `litellm` in
+  # Docker's internal DNS — the sidecar's serve proxy then resolves `litellm`
+  # to itself and 502s with "connection refused" on its own address. Hit
+  # live. Keep these names distinct.
+  app:
     image: ghcr.io/berriai/litellm:v1.94.0@sha256:65d84a2282137b4dc73bbe184650a7c807177c533e4223b3bfbc87963fe3fabe
-    container_name: litellm
+    container_name: litellm-app
     restart: unless-stopped
     depends_on:
       db:
@@ -158,7 +164,7 @@ services:
     restart: unless-stopped
     hostname: litellm            # becomes litellm.<tailnet>.ts.net
     depends_on:
-      litellm:
+      app:
         condition: service_healthy
     environment:
       # Auth key is tagged `tag:personal` at creation, which is what makes
@@ -169,7 +175,11 @@ services:
       TS_AUTH_ONCE: "true"
       TS_STATE_DIR: /var/lib/tailscale
       TS_USERSPACE: "false"      # kernel networking; needs /dev/net/tun
-      TS_ACCEPT_DNS: "true"
+      # MagicDNS OFF: with it on, tailscaled rewrites the container's
+      # resolver and appends the tailnet search domain, so the serve target
+      # below stops resolving as a Docker service name. The sidecar has no
+      # need to resolve tailnet names itself.
+      TS_ACCEPT_DNS: "false"
       TS_ENABLE_HEALTH_CHECK: "true"
       # Terminates TLS with a real tailnet cert and proxies to the app.
       TS_SERVE_CONFIG: /config/serve.json

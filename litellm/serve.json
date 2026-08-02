@@ -2,7 +2,7 @@
   "TCP": {"443": {"HTTPS": true}},
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
-      "Handlers": {"/": {"Proxy": "http://litellm:4000"}}
+      "Handlers": {"/": {"Proxy": "http://app:4000"}}
     }
   }
 }

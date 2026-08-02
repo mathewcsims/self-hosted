@@ -4937,7 +4937,7 @@ deploy script derives it from the app-dir name.
 
 ---
 
-## LiteLLM (https://llm.mathewcsims.uk) — TAILNET-ONLY, runs on slartibartfast
+## LiteLLM (https://litellm.possum-prometheus.ts.net) — TAILNET-ONLY, runs on slartibartfast
 
 An OpenAI-compatible proxy in front of **employer-funded Gemini Enterprise
 Agent Platform** — the product Google renamed from "Vertex AI" on
@@ -4963,27 +4963,48 @@ must not be "corrected".
   load 0.14 — and is x86_64, LiteLLM's primary build target. The third-host
   Caddy plumbing (`{$SLARTI_IP}`) already exists from Immich.
 
-### Exposure: tailnet-only, and why DNS differs from every other app
+### Exposure: published on the tailnet by a sidecar, NOT through Caddy
 
-Every other gated app here matches `private_ranges` **plus** the Tailscale
-CGNAT range. This one matches **CGNAT alone** — it fronts employer
-credentials, and access is meant to be personal-devices-only, not
-household-wide. A device on the home LAN that isn't on the tailnet cannot
-reach it.
+This app has **no public hostname, no DNS record and no published port**. A
+`tailscale` sidecar joins the tailnet as `litellm` and proxies to the app
+over the compose network, so the only address is
+`https://litellm.possum-prometheus.ts.net` and the only route in is the
+tailnet itself — there is no non-tailnet path even from this house.
 
-That forces a DNS difference worth understanding before "fixing" it:
+**Caddy was tried first and could not do this. Do not reinstate it.**
+Gating with `remote_ip 100.64.0.0/10` (CGNAT only, no `private_ranges`)
+adapted cleanly and validated fine, but aborted every request from the Mac
+while working from the Pi. Diagnosed live rather than guessed: over the
+*identical* tailnet path, `immich.mathewcsims.uk` — which also matches
+`private_ranges` — returned 200 while this one aborted. So **Caddy sees a
+private address for tailnet traffic arriving at the containerised proxy, not
+the client's 100.x address**, and CGNAT-only matching cannot distinguish
+tailnet devices from anything else on the LAN here.
 
-| | Every other app | LiteLLM |
-|---|---|---|
-| DigitalOcean (public) | WAN IP, for cert issuance | same |
-| NextDNS (split-DNS) | `10.0.1.19` (Pi LAN) | **`100.107.231.17` (Pi tailnet)** |
+That has a wider implication worth recording: the `private_ranges
+100.64.0.0/10` gates used by BookStack, Forgejo, Apprise, Kopia and Immich
+are matching on an address that may be rewritten in transit. They still work
+because `private_ranges` is broad enough to cover whatever Caddy actually
+sees — but they are not the tailnet-identity control they look like. The
+tailnet ACL is what genuinely enforces that.
 
-If NextDNS pointed at the Pi's LAN IP like everything else, a request made
-**from this house** would arrive from `10.0.1.x`, fail the CGNAT match and be
-aborted — it would break at home and work away, which is exactly backwards.
-Routing over the tailnet in both places makes behaviour uniform. The public
-A record still exists (Caddy needs it for ACME), but `abort` means nothing
-is served to anything off-tailnet.
+The sidecar approach is stronger anyway: access is decided by tailnet policy
+at the network layer, not by IP matching in a proxy.
+
+### Access control: tag:personal, no ACL change needed
+
+The sidecar's auth key stamps the node **`tag:personal`** at registration.
+The existing tailnet grant already does exactly the right thing:
+
+```
+{"src": ["tag:personal"], "dst": ["*"], "ip": ["*"]}
+```
+
+Verified against the live policy and device list via the Tailscale API
+before building: `heartofgold`, the Z Fold7, `Arthur`, `glkvm` and
+`slartibartfast` all carry `tag:personal`; the **work Mac `SCMAC-NH2WF7` is
+untagged and therefore has no grant at all**. No policy edit was required —
+tagging the node was sufficient, as expected.
 
 Consequence: **if Tailscale is down on a device, this app is unreachable
 from it.** That is inherent to the posture, not a fault.
@@ -5057,6 +5078,16 @@ and can't be generated:
 
 - `VERTEXAI_PROJECT` — your GCP project ID (`gcloud config get-value project`)
 - `VERTEXAI_LOCATION` — the region, e.g. `europe-west2` or `us-central1`
+- `TS_AUTHKEY` — a Tailscale auth key **created with `tag:personal`**. That
+  tag is what makes the existing grant apply; an untagged key would register
+  the node with no tag and no grant. Reusable, so a container rebuild
+  re-registers cleanly.
+
+  A stray character on paste is the failure mode to expect here: the first
+  attempt stored 62 characters against a 61-character key and tailscaled
+  rejected it with `invalid key: unable to validate API key`, which reads
+  like a permissions problem rather than a typo. Copy via `pbcopy <file` on
+  **the Mac** rather than retyping.
 
 **2. Create the ADC credential** (on slartibartfast, over SSH):
 
@@ -5110,9 +5141,19 @@ version bump must be a deliberate digest change followed by an explicit
   time, not at startup — so a healthy proxy can still 404 every request.
   Verify what the project actually has before relying on `config.yaml`'s
   list.
-- **Streaming needs `flush_interval -1`** in the Caddy block, plus a long
-  `read_timeout`. Without them a token stream is buffered and a slow first
-  token gets killed mid-request.
+- **The app service is `app`, not `litellm`, and that matters.** The sidecar
+  sets `hostname: litellm` to get the tailnet name — and that hostname
+  **shadows** any container or service also called `litellm` in Docker's
+  internal DNS. With both named `litellm`, the sidecar's serve proxy resolved
+  the target to *itself* and returned 502 with "connection refused" on its
+  own address. Hit live. Keep the names distinct.
+- **`TS_ACCEPT_DNS` must be `false` on the sidecar.** With MagicDNS on,
+  tailscaled rewrites the container's resolver and appends the tailnet search
+  domain, so the serve target stops resolving as a Docker service name. The
+  sidecar has no need to resolve tailnet names itself.
+- **No Caddy, no DNS records.** Nothing to add to `pi-reverse-proxy/` and
+  nothing in DigitalOcean or NextDNS. The `llm.mathewcsims.uk` A record and
+  NextDNS rewrite created during the abandoned Caddy attempt were removed.
 
 ---
 
