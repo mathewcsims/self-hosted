@@ -5541,6 +5541,68 @@ release means checking Docker Hub for a new digest by hand, same as
 before — the difference is just that a stale pin now stays stale
 until someone deliberately updates it, rather than drifting silently.
 
+### Weekly CVE pass, 2026-08-02 (316 new findings) — and the method that matters
+
+Trivy reported 316 new findings across 20 images (206 "fixable", 27
+unfixed-critical, 83 unfixed-high). **Five images were actually patchable.**
+The gap between those two numbers is the useful part of this entry.
+
+**Newer digest ≠ patched. Verify by scanning both.** The obvious move — pull
+the current digest for every image and re-pin — was tried and mostly does
+nothing. Every candidate was scanned old-vs-new before being kept:
+
+| Image | Fixable before → after | Kept? |
+|---|---|---|
+| forgejo v16.0.1 → v16.0.2 | 3 → 0 | yes |
+| bookstack (rebuild) | 3 → 0 | yes |
+| speedtest-tracker (rebuild) | 2 → 0 | yes |
+| nimbus (rebuild) | 11 → 3 | yes |
+| karakeep (rebuild) | 100 → 82 | yes |
+| **caddy** (rebuild) | 8 → 8, CVE lists **byte-identical** | no |
+| **apprise** (rebuild) | 13 → 13 | no |
+| **valkey** (rebuild) | 0 → 0 | no |
+| **memos** → 0.30.0 | 24 → 24 | no |
+| **uptime-kuma** 2.4.0 → 2.5.0 | 93 → 93 | no |
+| **meilisearch** v1.50 → v1.51 (karakeep) | 0 → 0 | no |
+
+Six of eleven newer images fixed nothing. Deploying them would have been
+pure risk — and caddy in particular means rebuilding the Pi's reverse proxy,
+which is every app's ingress. **Do not bump on digest-freshness alone.**
+
+**"Fixable" means a patched version exists somewhere, not that it can be
+fixed here.** healthlog's `postgres:16.14-alpine` reports 15 fixable HIGHs;
+all 15 are Go stdlib CVEs in a helper binary inside the image, waiting on
+upstream to rebuild with a newer toolchain. Checked before assuming a
+version bump would help: `17-alpine` has the same 15, `18-alpine` has 16,
+and the Debian variant is far worse (17 unfixed CRITICAL, 38 unfixed HIGH).
+A major-version upgrade would have been a data migration for *negative*
+benefit. Alpine stays.
+
+**Deliberately not bumped:** wanderer's Meilisearch (10 fixable HIGHs, all
+Alpine base packages). Upstream Wanderer's own compose still ships v1.36.0
+on `main`, so a unilateral jump is untested against the app, and Meilisearch
+refuses to start against an incompatible on-disk format — 1.36 → 1.51 needs
+the dump/import migration documented above for karakeep. Mitigation already
+in place: the container publishes no port and is reachable only by
+`wanderer-web`/`wanderer-db` on the internal network. Revisit when upstream
+moves.
+
+**Three pinning gaps closed** (reproducibility, not CVEs) — the claim above
+that "every app here is digest-pinned" had drifted: `healthlog`'s postgres,
+`healthlog`'s app image (whose *comment* claimed a digest pin that was not
+actually on the image line), and `wanderer`'s meilisearch were all bare tags.
+
+**Deploy note:** `pass-deploy-remote.sh` runs `up -d` with no `pull`, so a
+digest change needs `docker compose pull` on the Pi first, otherwise the old
+image keeps running and nothing errors. Also `./scripts/pass-deploy.sh
+bookstack` fails on the derived item title — it needs the explicit
+`BookStack`.
+
+**Verified after deploying:** all six recreated containers healthy, running
+images confirmed against the intended digests (note podman reports
+`tag@digest` pins as tag-only in `.ImageName` — check `RepoDigests` on the
+image instead), and all 21 public endpoints still serving.
+
 ### Branch protection + required CI (GitHub)
 
 Nothing lands on `main` — not even from the repo owner, not even from an
