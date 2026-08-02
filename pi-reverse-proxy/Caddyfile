@@ -865,55 +865,6 @@ immich.mathewcsims.uk {
 	}
 }
 
-# ── LiteLLM (on slartibartfast) — TAILNET ONLY, stricter than the rest ────
-# OpenAI-compatible proxy in front of employer-funded GCP Vertex AI.
-#
-# NOTE THE MATCHER: `remote_ip 100.64.0.0/10` — the Tailscale CGNAT range
-# ALONE, with no `private_ranges`. Every other gated app here admits the
-# whole LAN as well; this one deliberately does not, because it fronts
-# employer credentials and access is meant to be personal-devices-only, not
-# household-wide. A device on the home LAN that is not on the tailnet cannot
-# reach it.
-#
-# That is also why NextDNS points llm.mathewcsims.uk at the Pi's TAILNET IP
-# (100.107.231.17) rather than 10.0.1.19 like every other app: a request
-# made from this house to the LAN IP arrives from 10.0.1.x, which would fail
-# the match above and be aborted — i.e. it would break at home and work
-# away, exactly backwards. Routing over the tailnet in both places makes the
-# behaviour uniform. See litellm/compose.yaml for the full reasoning.
-llm.mathewcsims.uk {
-	import security_headers
-
-	@tailnet remote_ip 100.64.0.0/10
-	handle @tailnet {
-		rate_limit {
-			# 300/min, the standard zone. LLM traffic is a handful of
-			# requests per minute even under heavy use — unlike Immich,
-			# there is no thumbnail-storm case to accommodate here.
-			zone rl_litellm {
-				key {remote_host}
-				events 300
-				window 1m
-			}
-		}
-		# Streaming responses must not be buffered or cut short: token
-		# streams are long-lived and produce no bytes while the model
-		# thinks, so the default read timeout would kill a slow first
-		# token mid-request.
-		reverse_proxy http://{$SLARTI_IP}:4000 {
-			flush_interval -1
-			transport http {
-				read_timeout 600s
-			}
-		}
-	}
-	# Anything not on the tailnet — including the rest of this LAN, and the
-	# whole internet: closed connection, nothing revealed.
-	handle {
-		abort
-	}
-}
-
 # ── msims.link (running HERE on the Pi) ──────────────────────────────────
 # Self-hosted URL shortener (chhoto-url). Bare root redirects to the real
 # landing page (mathewcsims.uk) rather than showing the shortener's own

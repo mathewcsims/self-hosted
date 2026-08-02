@@ -1,7 +1,8 @@
 # LiteLLM (https://github.com/BerriAI/litellm) — an OpenAI-compatible proxy
-# in front of employer-funded GCP Vertex AI, so every device gets one stable
-# endpoint and one key format instead of each app needing GCP SDKs and
-# credentials of its own. Added 2026-08-02.
+# in front of employer-funded **Gemini Enterprise Agent Platform** (the
+# product Google renamed from "Vertex AI" on 2026-04-22), so every device
+# gets one stable endpoint and one key format instead of each app needing
+# GCP SDKs and credentials of its own. Added 2026-08-02.
 #
 # ── SECOND APP ON slartibartfast ──────────────────────────────────────────
 # Runs on `slartibartfast` (Ubuntu 26.04, LAN 10.0.1.11), not the Mac or the
@@ -19,17 +20,42 @@
 #   scp -r litellm mathewcsims@100.68.10.65:~/litellm
 #   ./scripts/pass-deploy-remote.sh litellm mathewcsims@100.68.10.65 '~/litellm'
 #
-# ── EXPOSURE: TAILNET ONLY — stricter than everything else here ───────────
-# Every other "LAN-gated" app in this repo matches `private_ranges` PLUS the
-# Tailscale CGNAT range. This one matches **CGNAT only**, because it fronts
-# employer credentials and access is meant to be personal-devices-only, not
-# household-wide. Consequence, and the reason DNS differs: NextDNS points
-# this hostname at the Pi's **tailnet** IP (100.107.231.17), not its LAN IP.
-# If it pointed at 10.0.1.19 like every other app, a request from this house
-# would arrive from 10.0.1.x, fail the CGNAT match and be aborted — i.e. it
-# would break at home and work away, which is exactly backwards. Routing it
-# over the tailnet in both places makes behaviour uniform and genuinely
-# excludes every non-tailnet device on the LAN.
+# ── EXPOSURE: ON THE TAILNET DIRECTLY, NOT THROUGH CADDY ─────────────────
+# This app is NOT behind the Pi's reverse proxy and has no public hostname.
+# It is published straight onto the tailnet by a `tailscale` sidecar, so it
+# is reachable only at https://litellm.<tailnet>.ts.net and only by devices
+# the tailnet policy allows.
+#
+# WHY, because the obvious approach was tried first and does not work:
+# gating at Caddy with `remote_ip 100.64.0.0/10` (CGNAT only, no
+# private_ranges) looked correct and validated fine, but aborted every
+# request from the Mac while working from the Pi. Diagnosed live — over the
+# identical tailnet path, `immich.mathewcsims.uk` (which also matches
+# `private_ranges`) returned 200 while this one aborted, proving Caddy sees
+# a PRIVATE address for tailnet traffic arriving at the containerised proxy,
+# not the client's 100.x address. So CGNAT-only matching at Caddy cannot
+# distinguish tailnet devices from anything else on the LAN here, and the
+# strict gate was unachievable that way. Do not reinstate it.
+#
+# The sidecar approach is stronger anyway: access is decided by the tailnet
+# policy at the network layer, not by IP matching in a proxy.
+#
+# ── ACCESS CONTROL: tag:personal, no policy change needed ────────────────
+# The sidecar authenticates with an auth key that stamps the node
+# `tag:personal`. The existing tailnet grant is already exactly right:
+#     {"src": ["tag:personal"], "dst": ["*"], "ip": ["*"]}
+# so personal-tagged devices (heartofgold, the Z Fold7, Arthur, glkvm,
+# slartibartfast) can reach it, and anything else cannot — notably the work
+# Mac SCMAC-NH2WF7, which is untagged and therefore has no grant at all.
+# Verified against the live policy and device list via the Tailscale API
+# before building this; no ACL edit was required.
+#
+# ── NAMING ────────────────────────────────────────────────────────────────
+# Prose here says "Gemini Enterprise Agent Platform". The VERTEXAI_* env
+# vars below, the vertex_ai/ model prefixes in config.yaml and the
+# aiplatform.googleapis.com host are LITERAL identifiers that LiteLLM and
+# Google both still use — the rebrand did not change the API surface, so
+# those must not be "corrected".
 #
 # ── AUTH TO GCP: ADC, NOT A SERVICE-ACCOUNT KEY ──────────────────────────
 # Employer policy blocks downloadable service-account keys, so this uses
@@ -38,10 +64,12 @@
 # (a refresh token for a real person), which has consequences worth knowing:
 #   - it is mounted read-only and never copied into the image or Pass
 #   - it can be revoked centrally at any time, and may expire under an org
-#     session-length policy — if Vertex calls start 401ing, re-run the login
-#     (see SETUP.md), it is not a LiteLLM fault
-#   - ADC user creds need an explicit quota project, hence
-#     `gcloud auth application-default set-quota-project` in the setup steps
+#     session-length policy — if platform calls start 401ing, re-run the
+#     login (see SETUP.md), it is not a LiteLLM fault
+#   - a quota project could NOT be set: the ADC account lacks
+#     serviceusage.services.use on this project. Verified live that it does
+#     not matter — the platform puts the project in the request path, and a
+#     real generateContent call returned 200 without one. Do not chase this.
 name: litellm
 
 services:
@@ -103,11 +131,11 @@ services:
       # Read-only, and deliberately NOT in this repo or in Pass — it is a
       # user credential that must stay on the host that created it.
       - ${HOME}/.config/gcloud:/adc:ro
-    ports:
-      # Bound to the LAN IP (not 0.0.0.0) so the only route in is Caddy on
-      # the Pi; the tailnet gate is enforced there. Nothing forwards 4000 at
-      # the router, so this is never internet-facing.
-      - "10.0.1.11:4000:4000"
+    # No `ports:` — deliberately. Reached ONLY by the tailscale sidecar
+    # below, over this project's own network, by container name. Nothing is
+    # published to the LAN at all, so there is no non-tailnet route in even
+    # from this house. (It was briefly published on 10.0.1.11:4000 while
+    # Caddy fronted it; that is gone.)
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5).status==200 else 1)\""]
       interval: 30s
@@ -116,3 +144,48 @@ services:
       start_period: 60s
     mem_limit: 2g
     pids_limit: 512
+
+  tailscale:
+    # Publishes LiteLLM onto the tailnet as `litellm.<tailnet>.ts.net`,
+    # replacing the Caddy route entirely (see the EXPOSURE note at the top
+    # for why Caddy could not enforce tailnet-only here).
+    #
+    # Pinned to v1.98.10 by digest rather than :latest — same discipline as
+    # every other image in this repo. Note the ScaleTail sidecars on the Mac
+    # run :latest; those predate this convention and are outside this repo.
+    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    container_name: litellm-tailscale
+    restart: unless-stopped
+    hostname: litellm            # becomes litellm.<tailnet>.ts.net
+    depends_on:
+      litellm:
+        condition: service_healthy
+    environment:
+      # Auth key is tagged `tag:personal` at creation, which is what makes
+      # the existing tailnet grant apply. Reusable so a container rebuild
+      # re-registers cleanly; TS_AUTH_ONCE means it is only consulted when
+      # there is no existing node state.
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"      # kernel networking; needs /dev/net/tun
+      TS_ACCEPT_DNS: "true"
+      TS_ENABLE_HEALTH_CHECK: "true"
+      # Terminates TLS with a real tailnet cert and proxies to the app.
+      TS_SERVE_CONFIG: /config/serve.json
+      TZ: Europe/London
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve.json:/config/serve.json:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Only the two capabilities tailscaled actually needs for kernel
+    # networking — not a blanket privileged container. Everything else is
+    # dropped, same posture as the rest of the estate.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    mem_limit: 256m
+    pids_limit: 256

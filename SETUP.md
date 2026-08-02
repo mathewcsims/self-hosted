@@ -4939,9 +4939,17 @@ deploy script derives it from the app-dir name.
 
 ## LiteLLM (https://llm.mathewcsims.uk) — TAILNET-ONLY, runs on slartibartfast
 
-An OpenAI-compatible proxy in front of **employer-funded GCP Vertex AI**, so
-every device gets one stable endpoint and one key format instead of each app
-needing GCP SDKs and credentials of its own. Added 2026-08-02.
+An OpenAI-compatible proxy in front of **employer-funded Gemini Enterprise
+Agent Platform** — the product Google renamed from "Vertex AI" on
+2026-04-22 — so every device gets one stable endpoint and one key format
+instead of each app needing GCP SDKs and credentials of its own. Added
+2026-08-02.
+
+**Naming:** prose uses the current product name. The `VERTEXAI_*` env vars,
+the `vertex_ai/` model prefixes in `config.yaml` and the
+`aiplatform.googleapis.com` host are **literal identifiers** that LiteLLM and
+Google both still use — the rebrand did not change the API surface, so they
+must not be "corrected".
 
 ### Why slartibartfast, and not the Mac or the Pi
 
@@ -4991,15 +4999,44 @@ Employer policy blocks downloadable service-account keys, so this uses
   **not** in this repo and **not** in Pass — it stays on the host that
   created it.
 - It can be revoked centrally at any time, and may expire under an org
-  session-length policy. **If Vertex calls start returning 401, re-run the
+  session-length policy. **If platform calls start returning 401, re-run the
   login** — that is not a LiteLLM fault and no amount of restarting fixes it.
-- ADC user credentials need an explicit quota project, hence the
-  `set-quota-project` step below. Without it, Vertex calls fail with a
-  quota-project error that reads like a permissions problem.
+- **A quota project could not be set, and it does not matter.** The ADC
+  account lacks `serviceusage.services.use` on the project, so
+  `set-quota-project` fails outright. Verified live that this is harmless:
+  the platform puts the project in the request path, and a real
+  `generateContent` call returned 200 without one. Do not chase this.
 
 The Google Cloud CLI is installed **in userspace** at
 `~/google-cloud-sdk` on slartibartfast (there is no passwordless sudo on
 that host, and this needs none) — official tarball, nothing system-wide.
+
+### Model availability is regional — verified live, not assumed
+
+Probed directly against `prj-d-ada-vtxai-svpc-13kf` on 2026-08-02:
+
+| Model | europe-west2 (London) |
+|---|---|
+| `gemini-2.5-flash` | **200** |
+| `text-embedding-005` | **200** |
+| `text-multilingual-embedding-002` | **200** |
+| `gemini-embedding-001` | **200** |
+| `gemini-2.5-pro` | 404 |
+| `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `gemini-3-pro`, `gemini-3-flash` | 404 |
+| `claude-sonnet-4-5` | 404 |
+
+**The limit is the region, not the project's entitlement** —
+`gemini-2.5-pro` returns 200 in both `us-central1` and `europe-west1`.
+
+`config.yaml` therefore lists **only what works in europe-west2**. Adding Pro
+means routing employer data to Belgium or Iowa, and this project is pinned to
+London and looks deliberately UK-resident — that is a **data-residency
+decision, not a config tweak**, and it has not been taken. LiteLLM supports a
+per-model `vertex_location` if it ever is.
+
+Worth knowing for debugging: an unavailable model fails at **call** time with
+a 404, not at startup — so a perfectly healthy proxy can still reject every
+request.
 
 ### Setup (the parts only you can do)
 
