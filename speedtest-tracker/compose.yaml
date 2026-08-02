@@ -46,6 +46,31 @@ services:
     image: lscr.io/linuxserver/speedtest-tracker@sha256:1647a57e0c125eac6c3a5256c499aa8f580fa7d27d0842376277cdf93e137018
     container_name: speedtest-tracker
     restart: unless-stopped
+    # Hardening added 2026-08-02. LAN/tailnet-gated at the proxy, so this is
+    # defence in depth rather than the primary control — but it was one of
+    # four services with no cap_drop, no no-new-privileges and no limits.
+    #
+    # Capability set is dictated by the image's init system, NOT chosen: LSIO
+    # images boot s6-overlay as root, chown /config, then drop to the
+    # PUID/PGID user — so CHOWN/DAC_OVERRIDE/FOWNER/SETGID/SETUID are all
+    # required, and NET_BIND_SERVICE because nginx binds :80 and :443 inside
+    # the container (verified with netstat in the running container, not
+    # assumed). A bare `cap_drop: ALL` breaks this class of image — see the
+    # nimbus note in SETUP.md for what that failure looks like.
+    # Limits are ~4x observed steady state (117 MiB, 22 PIDs).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    mem_limit: 512m
+    pids_limit: 256
     environment:
       # Matches the Pi's own user (uid=gid=1000) so the bind-mounted ./config
       # below is writable — LSIO images run as this uid/gid internally, not
