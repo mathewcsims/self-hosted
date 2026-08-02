@@ -1,0 +1,46 @@
+# LiteLLM model routing. Mounted read-only at /app/config.yaml.
+#
+# Credentials are deliberately NOT in here. Authentication is Application
+# Default Credentials, picked up from GOOGLE_APPLICATION_CREDENTIALS (set in
+# compose.yaml, pointing at the read-only gcloud mount), and the project and
+# region come from VERTEXAI_PROJECT / VERTEXAI_LOCATION. So this file carries
+# no secrets and is safe to keep in the repo.
+#
+# `vertex_project` / `vertex_location` are left unset per-model on purpose —
+# LiteLLM falls back to the env vars, which means switching project or region
+# is a Pass field change and a redeploy, not an edit here.
+
+model_list:
+  # ── Gemini on Vertex ────────────────────────────────────────────────────
+  # Names on the left are what clients ask for; they are deliberately plain
+  # so a device config doesn't encode the provider. Verify the exact model
+  # IDs your project actually has access to before relying on them — Vertex
+  # model availability varies by project entitlement and region, and an
+  # unavailable model fails at call time, not at startup.
+  - model_name: gemini-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+
+  - model_name: gemini-pro
+    litellm_params:
+      model: vertex_ai/gemini-2.5-pro
+
+  # ── Claude on Vertex ────────────────────────────────────────────────────
+  # Anthropic models served through Vertex rather than the Anthropic API, so
+  # they bill against the same employer-funded GCP project. Only works if the
+  # project has enabled these in Model Garden — check before assuming.
+  - model_name: claude-sonnet
+    litellm_params:
+      model: vertex_ai/claude-sonnet-4-5
+
+general_settings:
+  # Every request needs a virtual key. Without this the proxy would accept
+  # unauthenticated calls from anything that reaches the port — and while the
+  # tailnet gate makes that hard, it should not be the only control.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Log request/response metadata (not payloads) so per-device spend is
+  # attributable. This is the point of running with a database.
+  success_callback: []
+  drop_params: true

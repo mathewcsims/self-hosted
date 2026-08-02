@@ -4937,6 +4937,148 @@ deploy script derives it from the app-dir name.
 
 ---
 
+## LiteLLM (https://llm.mathewcsims.uk) — TAILNET-ONLY, runs on slartibartfast
+
+An OpenAI-compatible proxy in front of **employer-funded GCP Vertex AI**, so
+every device gets one stable endpoint and one key format instead of each app
+needing GCP SDKs and credentials of its own. Added 2026-08-02.
+
+### Why slartibartfast, and not the Mac or the Pi
+
+- **The Pi is at 85% disk** (4.2 GB free on a 29 GB card). No room for
+  another image plus a Postgres volume.
+- **The Mac does not come back by itself after a power cut.** Proven twice
+  on the day this was built: the podman VM stayed down until restarted by
+  hand, taking all 13 Mac-hosted apps with it. This needs to answer a phone
+  without someone at a keyboard.
+- **slartibartfast** has 169 GB free, ~5.5 GB RAM available, four containers,
+  load 0.14 — and is x86_64, LiteLLM's primary build target. The third-host
+  Caddy plumbing (`{$SLARTI_IP}`) already exists from Immich.
+
+### Exposure: tailnet-only, and why DNS differs from every other app
+
+Every other gated app here matches `private_ranges` **plus** the Tailscale
+CGNAT range. This one matches **CGNAT alone** — it fronts employer
+credentials, and access is meant to be personal-devices-only, not
+household-wide. A device on the home LAN that isn't on the tailnet cannot
+reach it.
+
+That forces a DNS difference worth understanding before "fixing" it:
+
+| | Every other app | LiteLLM |
+|---|---|---|
+| DigitalOcean (public) | WAN IP, for cert issuance | same |
+| NextDNS (split-DNS) | `10.0.1.19` (Pi LAN) | **`100.107.231.17` (Pi tailnet)** |
+
+If NextDNS pointed at the Pi's LAN IP like everything else, a request made
+**from this house** would arrive from `10.0.1.x`, fail the CGNAT match and be
+aborted — it would break at home and work away, which is exactly backwards.
+Routing over the tailnet in both places makes behaviour uniform. The public
+A record still exists (Caddy needs it for ACME), but `abort` means nothing
+is served to anything off-tailnet.
+
+Consequence: **if Tailscale is down on a device, this app is unreachable
+from it.** That is inherent to the posture, not a fault.
+
+### Auth to GCP: ADC, not a service-account key
+
+Employer policy blocks downloadable service-account keys, so this uses
+**Application Default Credentials** created by an interactive
+`gcloud auth application-default login` on slartibartfast. Consequences:
+
+- The ADC file is a **user credential** (a refresh token for a real person),
+  not a service account. It is mounted **read-only**, and is deliberately
+  **not** in this repo and **not** in Pass — it stays on the host that
+  created it.
+- It can be revoked centrally at any time, and may expire under an org
+  session-length policy. **If Vertex calls start returning 401, re-run the
+  login** — that is not a LiteLLM fault and no amount of restarting fixes it.
+- ADC user credentials need an explicit quota project, hence the
+  `set-quota-project` step below. Without it, Vertex calls fail with a
+  quota-project error that reads like a permissions problem.
+
+The Google Cloud CLI is installed **in userspace** at
+`~/google-cloud-sdk` on slartibartfast (there is no passwordless sudo on
+that host, and this needs none) — official tarball, nothing system-wide.
+
+### Setup (the parts only you can do)
+
+Both of these are yours, not the agent's: the first because pass-cli agent
+PATs are read-only by design, the second because it authenticates as **you**
+against your employer's Google account.
+
+**1. Create the Pass item** (on the Mac):
+
+```sh
+./scripts/pass-create-litellm-secrets.sh
+```
+
+Generates `POSTGRES_PASSWORD`, `LITELLM_MASTER_KEY` and `LITELLM_SALT_KEY`
+straight into a new "Litellm" item — none printed, none via argv. Then add
+two more fields **by hand** to that same item, because they aren't secrets
+and can't be generated:
+
+- `VERTEXAI_PROJECT` — your GCP project ID (`gcloud config get-value project`)
+- `VERTEXAI_LOCATION` — the region, e.g. `europe-west2` or `us-central1`
+
+**2. Create the ADC credential** (on slartibartfast, over SSH):
+
+```sh
+~/google-cloud-sdk/bin/gcloud auth application-default login --no-launch-browser
+```
+
+Headless-friendly: it prints a URL, you authenticate in a browser on any
+device, and paste the code back. Then pin the quota project:
+
+```sh
+~/google-cloud-sdk/bin/gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+```
+
+That writes `~/.config/gcloud/application_default_credentials.json`, which
+compose mounts read-only at `/adc`.
+
+### Deploy
+
+Same two-step as Immich — the folder is **not** copied by the deploy script:
+
+```sh
+scp -r litellm mathewcsims@100.68.10.65:~/litellm
+./scripts/pass-deploy-remote.sh litellm mathewcsims@100.68.10.65 '~/litellm'
+```
+
+Note `pass-deploy-remote.sh` runs a bare `up -d` with **no `pull`**, so a
+version bump must be a deliberate digest change followed by an explicit
+`docker compose pull` on the host.
+
+### Gotchas
+
+- **The Pass item must be titled exactly `Litellm`**, not `LiteLLM` — the
+  deploy script derives the title from the app-dir name (kebab →
+  PascalCase), so `litellm` resolves to `Litellm`. Prettifying it breaks the
+  lookup silently.
+- **`LITELLM_SALT_KEY` is set once and never rotated.** It encrypts provider
+  credentials at rest in Postgres; changing it after models are stored makes
+  every stored credential undecryptable, with no recovery short of wiping
+  the database.
+- **`LITELLM_MASTER_KEY` is not the key you put on a phone.** It is the
+  admin key that *mints* per-device virtual keys. Treat it like a root
+  password; issue a separate virtual key per device so one can be revoked
+  without rotating everything.
+- **`POSTGRES_PASSWORD` is baked into the data directory on first `up`.**
+  Changing it in Pass later won't change the database's real password — that
+  needs an `ALTER USER` inside the running DB too. Same trap as Immich and
+  HealthLog.
+- **Model IDs are not guaranteed.** Vertex model availability varies by
+  project entitlement and region, and an unavailable model fails at **call**
+  time, not at startup — so a healthy proxy can still 404 every request.
+  Verify what the project actually has before relying on `config.yaml`'s
+  list.
+- **Streaming needs `flush_interval -1`** in the Caddy block, plus a long
+  `read_timeout`. Without them a token stream is buffered and a slow first
+  token gets killed mid-request.
+
+---
+
 ## Adding another app (the general recipe)
 
 Three patterns, depending on where the app runs:

@@ -1,0 +1,118 @@
+# LiteLLM (https://github.com/BerriAI/litellm) — an OpenAI-compatible proxy
+# in front of employer-funded GCP Vertex AI, so every device gets one stable
+# endpoint and one key format instead of each app needing GCP SDKs and
+# credentials of its own. Added 2026-08-02.
+#
+# ── SECOND APP ON slartibartfast ──────────────────────────────────────────
+# Runs on `slartibartfast` (Ubuntu 26.04, LAN 10.0.1.11), not the Mac or the
+# Pi. Chosen deliberately:
+#   - the Pi is at 85% disk (4.2 GB free on a 29 GB card) — no room for
+#     another image plus a Postgres volume
+#   - the Mac is the host that does NOT come back by itself after a power
+#     cut (proven the same day this was built: the podman VM stayed down
+#     until restarted by hand, taking all 13 Mac-hosted apps with it), and
+#     this needs to be reachable from a phone without someone at a keyboard
+#   - slartibartfast has 170 GB free, ~5.5 GB RAM available, four containers
+#     and load 0.14 — and is x86_64, LiteLLM's primary build target
+#
+# Deploy is the same two-step as Immich:
+#   scp -r litellm mathewcsims@100.68.10.65:~/litellm
+#   ./scripts/pass-deploy-remote.sh litellm mathewcsims@100.68.10.65 '~/litellm'
+#
+# ── EXPOSURE: TAILNET ONLY — stricter than everything else here ───────────
+# Every other "LAN-gated" app in this repo matches `private_ranges` PLUS the
+# Tailscale CGNAT range. This one matches **CGNAT only**, because it fronts
+# employer credentials and access is meant to be personal-devices-only, not
+# household-wide. Consequence, and the reason DNS differs: NextDNS points
+# this hostname at the Pi's **tailnet** IP (100.107.231.17), not its LAN IP.
+# If it pointed at 10.0.1.19 like every other app, a request from this house
+# would arrive from 10.0.1.x, fail the CGNAT match and be aborted — i.e. it
+# would break at home and work away, which is exactly backwards. Routing it
+# over the tailnet in both places makes behaviour uniform and genuinely
+# excludes every non-tailnet device on the LAN.
+#
+# ── AUTH TO GCP: ADC, NOT A SERVICE-ACCOUNT KEY ──────────────────────────
+# Employer policy blocks downloadable service-account keys, so this uses
+# Application Default Credentials created by a human `gcloud auth
+# application-default login` on the host. That file is a USER credential
+# (a refresh token for a real person), which has consequences worth knowing:
+#   - it is mounted read-only and never copied into the image or Pass
+#   - it can be revoked centrally at any time, and may expire under an org
+#     session-length policy — if Vertex calls start 401ing, re-run the login
+#     (see SETUP.md), it is not a LiteLLM fault
+#   - ADC user creds need an explicit quota project, hence
+#     `gcloud auth application-default set-quota-project` in the setup steps
+name: litellm
+
+services:
+  db:
+    # Same pin as HealthLog's Postgres — one CVE review covers both, and its
+    # position is already documented (15 fixable HIGHs, all Go stdlib in a
+    # helper binary, no better alternative — see SETUP.md).
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    container_name: litellm-db
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_DB: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    # No `ports:` — reached only by the proxy, over this project's own
+    # default network. Never exposed to the LAN, let alone the tailnet.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    pids_limit: 256
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.94.0@sha256:65d84a2282137b4dc73bbe184650a7c807177c533e4223b3bfbc87963fe3fabe
+    container_name: litellm
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      # Admin key. Used to mint the per-device virtual keys below — it is NOT
+      # the key that goes on your phone. Treat it like a root password.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Encrypts provider credentials at rest in Postgres. Upstream is explicit
+      # that this is set ONCE and never rotated — changing it makes every
+      # stored credential undecryptable.
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@db:5432/litellm
+      # Virtual keys, teams and spend tracking live in the DB — this is the
+      # whole reason Postgres is here rather than a config-only deployment.
+      STORE_MODEL_IN_DB: "True"
+      # ADC file mounted below. google-auth refreshes against
+      # oauth2.googleapis.com, so this container needs outbound HTTPS.
+      GOOGLE_APPLICATION_CREDENTIALS: /adc/application_default_credentials.json
+      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT}
+      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION}
+      TZ: Europe/London
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # Read-only, and deliberately NOT in this repo or in Pass — it is a
+      # user credential that must stay on the host that created it.
+      - ${HOME}/.config/gcloud:/adc:ro
+    ports:
+      # Bound to the LAN IP (not 0.0.0.0) so the only route in is Caddy on
+      # the Pi; the tailnet gate is enforced there. Nothing forwards 4000 at
+      # the router, so this is never internet-facing.
+      - "10.0.1.11:4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    mem_limit: 2g
+    pids_limit: 512
