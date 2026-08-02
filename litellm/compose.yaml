@@ -1,0 +1,201 @@
+# LiteLLM (https://github.com/BerriAI/litellm) — an OpenAI-compatible proxy
+# in front of employer-funded **Gemini Enterprise Agent Platform** (the
+# product Google renamed from "Vertex AI" on 2026-04-22), so every device
+# gets one stable endpoint and one key format instead of each app needing
+# GCP SDKs and credentials of its own. Added 2026-08-02.
+#
+# ── SECOND APP ON slartibartfast ──────────────────────────────────────────
+# Runs on `slartibartfast` (Ubuntu 26.04, LAN 10.0.1.11), not the Mac or the
+# Pi. Chosen deliberately:
+#   - the Pi is at 85% disk (4.2 GB free on a 29 GB card) — no room for
+#     another image plus a Postgres volume
+#   - the Mac is the host that does NOT come back by itself after a power
+#     cut (proven the same day this was built: the podman VM stayed down
+#     until restarted by hand, taking all 13 Mac-hosted apps with it), and
+#     this needs to be reachable from a phone without someone at a keyboard
+#   - slartibartfast has 170 GB free, ~5.5 GB RAM available, four containers
+#     and load 0.14 — and is x86_64, LiteLLM's primary build target
+#
+# Deploy is the same two-step as Immich:
+#   scp -r litellm mathewcsims@100.68.10.65:~/litellm
+#   ./scripts/pass-deploy-remote.sh litellm mathewcsims@100.68.10.65 '~/litellm'
+#
+# ── EXPOSURE: ON THE TAILNET DIRECTLY, NOT THROUGH CADDY ─────────────────
+# This app is NOT behind the Pi's reverse proxy and has no public hostname.
+# It is published straight onto the tailnet by a `tailscale` sidecar, so it
+# is reachable only at https://litellm.<tailnet>.ts.net and only by devices
+# the tailnet policy allows.
+#
+# WHY, because the obvious approach was tried first and does not work:
+# gating at Caddy with `remote_ip 100.64.0.0/10` (CGNAT only, no
+# private_ranges) looked correct and validated fine, but aborted every
+# request from the Mac while working from the Pi. Diagnosed live — over the
+# identical tailnet path, `immich.mathewcsims.uk` (which also matches
+# `private_ranges`) returned 200 while this one aborted, proving Caddy sees
+# a PRIVATE address for tailnet traffic arriving at the containerised proxy,
+# not the client's 100.x address. So CGNAT-only matching at Caddy cannot
+# distinguish tailnet devices from anything else on the LAN here, and the
+# strict gate was unachievable that way. Do not reinstate it.
+#
+# The sidecar approach is stronger anyway: access is decided by the tailnet
+# policy at the network layer, not by IP matching in a proxy.
+#
+# ── ACCESS CONTROL: tag:personal, no policy change needed ────────────────
+# The sidecar authenticates with an auth key that stamps the node
+# `tag:personal`. The existing tailnet grant is already exactly right:
+#     {"src": ["tag:personal"], "dst": ["*"], "ip": ["*"]}
+# so personal-tagged devices (heartofgold, the Z Fold7, Arthur, glkvm,
+# slartibartfast) can reach it, and anything else cannot — notably the work
+# Mac SCMAC-NH2WF7, which is untagged and therefore has no grant at all.
+# Verified against the live policy and device list via the Tailscale API
+# before building this; no ACL edit was required.
+#
+# ── NAMING ────────────────────────────────────────────────────────────────
+# Prose here says "Gemini Enterprise Agent Platform". The VERTEXAI_* env
+# vars below, the vertex_ai/ model prefixes in config.yaml and the
+# aiplatform.googleapis.com host are LITERAL identifiers that LiteLLM and
+# Google both still use — the rebrand did not change the API surface, so
+# those must not be "corrected".
+#
+# ── AUTH TO GCP: ADC, NOT A SERVICE-ACCOUNT KEY ──────────────────────────
+# Employer policy blocks downloadable service-account keys, so this uses
+# Application Default Credentials created by a human `gcloud auth
+# application-default login` on the host. That file is a USER credential
+# (a refresh token for a real person), which has consequences worth knowing:
+#   - it is mounted read-only and never copied into the image or Pass
+#   - it can be revoked centrally at any time, and may expire under an org
+#     session-length policy — if platform calls start 401ing, re-run the
+#     login (see SETUP.md), it is not a LiteLLM fault
+#   - a quota project could NOT be set: the ADC account lacks
+#     serviceusage.services.use on this project. Verified live that it does
+#     not matter — the platform puts the project in the request path, and a
+#     real generateContent call returned 200 without one. Do not chase this.
+name: litellm
+
+services:
+  db:
+    # Same pin as HealthLog's Postgres — one CVE review covers both, and its
+    # position is already documented (15 fixable HIGHs, all Go stdlib in a
+    # helper binary, no better alternative — see SETUP.md).
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    container_name: litellm-db
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_DB: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    # No `ports:` — reached only by the proxy, over this project's own
+    # default network. Never exposed to the LAN, let alone the tailnet.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    pids_limit: 256
+
+  # Service key is `app`, NOT `litellm`, deliberately: the sidecar below
+  # sets `hostname: litellm` to get the tailnet name litellm.<tailnet>, and
+  # that hostname SHADOWS a container/service also called `litellm` in
+  # Docker's internal DNS — the sidecar's serve proxy then resolves `litellm`
+  # to itself and 502s with "connection refused" on its own address. Hit
+  # live. Keep these names distinct.
+  app:
+    image: ghcr.io/berriai/litellm:v1.94.0@sha256:65d84a2282137b4dc73bbe184650a7c807177c533e4223b3bfbc87963fe3fabe
+    container_name: litellm-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      # Admin key. Used to mint the per-device virtual keys below — it is NOT
+      # the key that goes on your phone. Treat it like a root password.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Encrypts provider credentials at rest in Postgres. Upstream is explicit
+      # that this is set ONCE and never rotated — changing it makes every
+      # stored credential undecryptable.
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@db:5432/litellm
+      # Virtual keys, teams and spend tracking live in the DB — this is the
+      # whole reason Postgres is here rather than a config-only deployment.
+      STORE_MODEL_IN_DB: "True"
+      # ADC file mounted below. google-auth refreshes against
+      # oauth2.googleapis.com, so this container needs outbound HTTPS.
+      GOOGLE_APPLICATION_CREDENTIALS: /adc/application_default_credentials.json
+      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT}
+      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION}
+      TZ: Europe/London
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # Read-only, and deliberately NOT in this repo or in Pass — it is a
+      # user credential that must stay on the host that created it.
+      - ${HOME}/.config/gcloud:/adc:ro
+    # No `ports:` — deliberately. Reached ONLY by the tailscale sidecar
+    # below, over this project's own network, by container name. Nothing is
+    # published to the LAN at all, so there is no non-tailnet route in even
+    # from this house. (It was briefly published on 10.0.1.11:4000 while
+    # Caddy fronted it; that is gone.)
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    mem_limit: 2g
+    pids_limit: 512
+
+  tailscale:
+    # Publishes LiteLLM onto the tailnet as `litellm.<tailnet>.ts.net`,
+    # replacing the Caddy route entirely (see the EXPOSURE note at the top
+    # for why Caddy could not enforce tailnet-only here).
+    #
+    # Pinned to v1.98.10 by digest rather than :latest — same discipline as
+    # every other image in this repo. Note the ScaleTail sidecars on the Mac
+    # run :latest; those predate this convention and are outside this repo.
+    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    container_name: litellm-tailscale
+    restart: unless-stopped
+    hostname: litellm            # becomes litellm.<tailnet>.ts.net
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      # Auth key is tagged `tag:personal` at creation, which is what makes
+      # the existing tailnet grant apply. Reusable so a container rebuild
+      # re-registers cleanly; TS_AUTH_ONCE means it is only consulted when
+      # there is no existing node state.
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"      # kernel networking; needs /dev/net/tun
+      # MagicDNS OFF: with it on, tailscaled rewrites the container's
+      # resolver and appends the tailnet search domain, so the serve target
+      # below stops resolving as a Docker service name. The sidecar has no
+      # need to resolve tailnet names itself.
+      TS_ACCEPT_DNS: "false"
+      TS_ENABLE_HEALTH_CHECK: "true"
+      # Terminates TLS with a real tailnet cert and proxies to the app.
+      TS_SERVE_CONFIG: /config/serve.json
+      TZ: Europe/London
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./serve.json:/config/serve.json:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Only the two capabilities tailscaled actually needs for kernel
+    # networking — not a blanket privileged container. Everything else is
+    # dropped, same posture as the rest of the estate.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    mem_limit: 256m
+    pids_limit: 256

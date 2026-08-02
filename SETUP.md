@@ -4937,6 +4937,226 @@ deploy script derives it from the app-dir name.
 
 ---
 
+## LiteLLM (https://litellm.possum-prometheus.ts.net) — TAILNET-ONLY, runs on slartibartfast
+
+An OpenAI-compatible proxy in front of **employer-funded Gemini Enterprise
+Agent Platform** — the product Google renamed from "Vertex AI" on
+2026-04-22 — so every device gets one stable endpoint and one key format
+instead of each app needing GCP SDKs and credentials of its own. Added
+2026-08-02.
+
+**Naming:** prose uses the current product name. The `VERTEXAI_*` env vars,
+the `vertex_ai/` model prefixes in `config.yaml` and the
+`aiplatform.googleapis.com` host are **literal identifiers** that LiteLLM and
+Google both still use — the rebrand did not change the API surface, so they
+must not be "corrected".
+
+### Why slartibartfast, and not the Mac or the Pi
+
+- **The Pi is at 85% disk** (4.2 GB free on a 29 GB card). No room for
+  another image plus a Postgres volume.
+- **The Mac does not come back by itself after a power cut.** Proven twice
+  on the day this was built: the podman VM stayed down until restarted by
+  hand, taking all 13 Mac-hosted apps with it. This needs to answer a phone
+  without someone at a keyboard.
+- **slartibartfast** has 169 GB free, ~5.5 GB RAM available, four containers,
+  load 0.14 — and is x86_64, LiteLLM's primary build target. The third-host
+  Caddy plumbing (`{$SLARTI_IP}`) already exists from Immich.
+
+### Exposure: published on the tailnet by a sidecar, NOT through Caddy
+
+This app has **no public hostname, no DNS record and no published port**. A
+`tailscale` sidecar joins the tailnet as `litellm` and proxies to the app
+over the compose network, so the only address is
+`https://litellm.possum-prometheus.ts.net` and the only route in is the
+tailnet itself — there is no non-tailnet path even from this house.
+
+**Caddy was tried first and could not do this. Do not reinstate it.**
+Gating with `remote_ip 100.64.0.0/10` (CGNAT only, no `private_ranges`)
+adapted cleanly and validated fine, but aborted every request from the Mac
+while working from the Pi. Diagnosed live rather than guessed: over the
+*identical* tailnet path, `immich.mathewcsims.uk` — which also matches
+`private_ranges` — returned 200 while this one aborted. So **Caddy sees a
+private address for tailnet traffic arriving at the containerised proxy, not
+the client's 100.x address**, and CGNAT-only matching cannot distinguish
+tailnet devices from anything else on the LAN here.
+
+That has a wider implication worth recording: the `private_ranges
+100.64.0.0/10` gates used by BookStack, Forgejo, Apprise, Kopia and Immich
+are matching on an address that may be rewritten in transit. They still work
+because `private_ranges` is broad enough to cover whatever Caddy actually
+sees — but they are not the tailnet-identity control they look like. The
+tailnet ACL is what genuinely enforces that.
+
+The sidecar approach is stronger anyway: access is decided by tailnet policy
+at the network layer, not by IP matching in a proxy.
+
+### Access control: tag:personal, no ACL change needed
+
+The sidecar's auth key stamps the node **`tag:personal`** at registration.
+The existing tailnet grant already does exactly the right thing:
+
+```
+{"src": ["tag:personal"], "dst": ["*"], "ip": ["*"]}
+```
+
+Verified against the live policy and device list via the Tailscale API
+before building: `heartofgold`, the Z Fold7, `Arthur`, `glkvm` and
+`slartibartfast` all carry `tag:personal`; the **work Mac `SCMAC-NH2WF7` is
+untagged and therefore has no grant at all**. No policy edit was required —
+tagging the node was sufficient, as expected.
+
+Consequence: **if Tailscale is down on a device, this app is unreachable
+from it.** That is inherent to the posture, not a fault.
+
+### Auth to GCP: ADC, not a service-account key
+
+Employer policy blocks downloadable service-account keys, so this uses
+**Application Default Credentials** created by an interactive
+`gcloud auth application-default login` on slartibartfast. Consequences:
+
+- The ADC file is a **user credential** (a refresh token for a real person),
+  not a service account. It is mounted **read-only**, and is deliberately
+  **not** in this repo and **not** in Pass — it stays on the host that
+  created it.
+- It can be revoked centrally at any time, and may expire under an org
+  session-length policy. **If platform calls start returning 401, re-run the
+  login** — that is not a LiteLLM fault and no amount of restarting fixes it.
+- **A quota project could not be set, and it does not matter.** The ADC
+  account lacks `serviceusage.services.use` on the project, so
+  `set-quota-project` fails outright. Verified live that this is harmless:
+  the platform puts the project in the request path, and a real
+  `generateContent` call returned 200 without one. Do not chase this.
+
+The Google Cloud CLI is installed **in userspace** at
+`~/google-cloud-sdk` on slartibartfast (there is no passwordless sudo on
+that host, and this needs none) — official tarball, nothing system-wide.
+
+### Model availability is regional — verified live, not assumed
+
+Probed directly against `prj-d-ada-vtxai-svpc-13kf` on 2026-08-02:
+
+| Model | europe-west2 (London) |
+|---|---|
+| `gemini-2.5-flash` | **200** |
+| `text-embedding-005` | **200** |
+| `text-multilingual-embedding-002` | **200** |
+| `gemini-embedding-001` | **200** |
+| `gemini-2.5-pro` | 404 |
+| `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `gemini-3-pro`, `gemini-3-flash` | 404 |
+| `claude-sonnet-4-5` | 404 |
+
+**The limit is the region, not the project's entitlement** —
+`gemini-2.5-pro` returns 200 in both `us-central1` and `europe-west1`.
+
+`config.yaml` therefore lists **only what works in europe-west2**. Adding Pro
+means routing employer data to Belgium or Iowa, and this project is pinned to
+London and looks deliberately UK-resident — that is a **data-residency
+decision, not a config tweak**, and it has not been taken. LiteLLM supports a
+per-model `vertex_location` if it ever is.
+
+Worth knowing for debugging: an unavailable model fails at **call** time with
+a 404, not at startup — so a perfectly healthy proxy can still reject every
+request.
+
+### Setup (the parts only you can do)
+
+Both of these are yours, not the agent's: the first because pass-cli agent
+PATs are read-only by design, the second because it authenticates as **you**
+against your employer's Google account.
+
+**1. Create the Pass item** (on the Mac):
+
+```sh
+./scripts/pass-create-litellm-secrets.sh
+```
+
+Generates `POSTGRES_PASSWORD`, `LITELLM_MASTER_KEY` and `LITELLM_SALT_KEY`
+straight into a new "Litellm" item — none printed, none via argv. Then add
+two more fields **by hand** to that same item, because they aren't secrets
+and can't be generated:
+
+- `VERTEXAI_PROJECT` — your GCP project ID (`gcloud config get-value project`)
+- `VERTEXAI_LOCATION` — the region, e.g. `europe-west2` or `us-central1`
+- `TS_AUTHKEY` — a Tailscale auth key **created with `tag:personal`**. That
+  tag is what makes the existing grant apply; an untagged key would register
+  the node with no tag and no grant. Reusable, so a container rebuild
+  re-registers cleanly.
+
+  A stray character on paste is the failure mode to expect here: the first
+  attempt stored 62 characters against a 61-character key and tailscaled
+  rejected it with `invalid key: unable to validate API key`, which reads
+  like a permissions problem rather than a typo. Copy via `pbcopy <file` on
+  **the Mac** rather than retyping.
+
+**2. Create the ADC credential** (on slartibartfast, over SSH):
+
+```sh
+~/google-cloud-sdk/bin/gcloud auth application-default login --no-launch-browser
+```
+
+Headless-friendly: it prints a URL, you authenticate in a browser on any
+device, and paste the code back. Then pin the quota project:
+
+```sh
+~/google-cloud-sdk/bin/gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+```
+
+That writes `~/.config/gcloud/application_default_credentials.json`, which
+compose mounts read-only at `/adc`.
+
+### Deploy
+
+Same two-step as Immich — the folder is **not** copied by the deploy script:
+
+```sh
+scp -r litellm mathewcsims@100.68.10.65:~/litellm
+./scripts/pass-deploy-remote.sh litellm mathewcsims@100.68.10.65 '~/litellm'
+```
+
+Note `pass-deploy-remote.sh` runs a bare `up -d` with **no `pull`**, so a
+version bump must be a deliberate digest change followed by an explicit
+`docker compose pull` on the host.
+
+### Gotchas
+
+- **The Pass item must be titled exactly `Litellm`**, not `LiteLLM` — the
+  deploy script derives the title from the app-dir name (kebab →
+  PascalCase), so `litellm` resolves to `Litellm`. Prettifying it breaks the
+  lookup silently.
+- **`LITELLM_SALT_KEY` is set once and never rotated.** It encrypts provider
+  credentials at rest in Postgres; changing it after models are stored makes
+  every stored credential undecryptable, with no recovery short of wiping
+  the database.
+- **`LITELLM_MASTER_KEY` is not the key you put on a phone.** It is the
+  admin key that *mints* per-device virtual keys. Treat it like a root
+  password; issue a separate virtual key per device so one can be revoked
+  without rotating everything.
+- **`POSTGRES_PASSWORD` is baked into the data directory on first `up`.**
+  Changing it in Pass later won't change the database's real password — that
+  needs an `ALTER USER` inside the running DB too. Same trap as Immich and
+  HealthLog.
+- **Model IDs are not guaranteed.** Vertex model availability varies by
+  project entitlement and region, and an unavailable model fails at **call**
+  time, not at startup — so a healthy proxy can still 404 every request.
+  Verify what the project actually has before relying on `config.yaml`'s
+  list.
+- **The app service is `app`, not `litellm`, and that matters.** The sidecar
+  sets `hostname: litellm` to get the tailnet name — and that hostname
+  **shadows** any container or service also called `litellm` in Docker's
+  internal DNS. With both named `litellm`, the sidecar's serve proxy resolved
+  the target to *itself* and returned 502 with "connection refused" on its
+  own address. Hit live. Keep the names distinct.
+- **`TS_ACCEPT_DNS` must be `false` on the sidecar.** With MagicDNS on,
+  tailscaled rewrites the container's resolver and appends the tailnet search
+  domain, so the serve target stops resolving as a Docker service name. The
+  sidecar has no need to resolve tailnet names itself.
+- **No Caddy, no DNS records.** Nothing to add to `pi-reverse-proxy/` and
+  nothing in DigitalOcean or NextDNS. The `llm.mathewcsims.uk` A record and
+  NextDNS rewrite created during the abandoned Caddy attempt were removed.
+
+---
+
 ## Adding another app (the general recipe)
 
 Three patterns, depending on where the app runs:

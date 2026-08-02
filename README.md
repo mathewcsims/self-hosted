@@ -38,6 +38,7 @@ in front of the lot.
 | [chhoto-url](https://github.com/SinTan1729/chhoto-url) | `msims.link` | Pi (self-hosted URL shortener on its own short domain — bare root redirects to `mathewcsims.uk` rather than showing the shortener's own login screen) |
 | [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars; posts a Memo to Owl on every new ride via a PocketBase-realtime relay) |
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
+| [LiteLLM](https://github.com/BerriAI/litellm) | `litellm.possum-prometheus.ts.net` | **slartibartfast** (OpenAI-compatible proxy in front of employer-funded Gemini Enterprise Agent Platform (formerly Vertex AI) — **tailnet-only** via a Tailscale sidecar tagged `personal` — no public hostname, no DNS record, not behind Caddy; ADC auth, no service-account key) |
 
 ## Architecture, in short
 

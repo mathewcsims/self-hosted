@@ -1,0 +1,75 @@
+# LiteLLM model routing. Mounted read-only at /app/config.yaml.
+#
+# Credentials are deliberately NOT in here. Authentication is Application
+# Default Credentials, picked up from GOOGLE_APPLICATION_CREDENTIALS (set in
+# compose.yaml, pointing at the read-only gcloud mount), and the project and
+# region come from VERTEXAI_PROJECT / VERTEXAI_LOCATION. So this file carries
+# no secrets and is safe to keep in the repo.
+#
+# ── NAMING ────────────────────────────────────────────────────────────────
+# The product is **Gemini Enterprise Agent Platform** — Google renamed it
+# from "Vertex AI" on 2026-04-22, and their own product page now reads
+# "(formerly Vertex AI)". Prose in this repo uses the current name.
+#
+# The `vertex_ai/` prefixes below are NOT prose and must not be "corrected":
+# they are LiteLLM's literal provider identifier. The same applies to the
+# VERTEXAI_PROJECT / VERTEXAI_LOCATION env vars (LiteLLM's own documented
+# names) and to the aiplatform.googleapis.com API host. Renaming any of
+# those breaks the integration; the rebrand did not change the API surface.
+#
+# ── MODEL AVAILABILITY IS REGIONAL — verified live, 2026-08-02 ────────────
+# Probed directly against prj-d-ada-vtxai-svpc-13kf rather than assuming:
+#
+#   europe-west2 (London)   gemini-2.5-flash          200
+#                           text-embedding-005        200
+#                           text-multilingual-embedding-002  200
+#                           gemini-embedding-001      200
+#                           gemini-2.5-pro            404
+#                           gemini-2.5-flash-lite     404
+#                           gemini-2.0-flash          404
+#                           gemini-3-pro / -flash     404
+#                           claude-sonnet-4-5         404
+#
+#   gemini-2.5-pro DOES work in us-central1 and europe-west1 — so the limit
+#   is the REGION, not the project's entitlement.
+#
+# Only europe-west2 models are configured, deliberately. The project is
+# pinned to London and looks intentionally UK-resident; routing employer
+# data to Belgium (europe-west1) or Iowa (us-central1) to get Pro is a
+# data-residency decision, not a config tweak. See SETUP.md — add it only
+# if that has been consciously agreed.
+
+model_list:
+  # ── Chat ────────────────────────────────────────────────────────────────
+  # The only generative model available in europe-west2 on this project.
+  # Name on the left is deliberately plain so a device config doesn't encode
+  # the provider or the region.
+  - model_name: gemini-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+
+  # ── Embeddings ──────────────────────────────────────────────────────────
+  # All three verified working in europe-west2. Useful for anything that
+  # wants local semantic search without shipping text to a third party.
+  - model_name: text-embedding
+    litellm_params:
+      model: vertex_ai/text-embedding-005
+
+  - model_name: text-embedding-multilingual
+    litellm_params:
+      model: vertex_ai/text-multilingual-embedding-002
+
+  - model_name: gemini-embedding
+    litellm_params:
+      model: vertex_ai/gemini-embedding-001
+
+general_settings:
+  # Every request needs a virtual key. Without this the proxy would accept
+  # unauthenticated calls from anything that reaches the port — and while the
+  # tailnet gate makes that hard, it should not be the only control.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Silently drop provider-unsupported params rather than erroring, so a
+  # generic OpenAI client sending e.g. `frequency_penalty` still works.
+  drop_params: true
