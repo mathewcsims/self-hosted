@@ -5603,6 +5603,63 @@ images confirmed against the intended digests (note podman reports
 `tag@digest` pins as tag-only in `.ImageName` — check `RepoDigests` on the
 image instead), and all 21 public endpoints still serving.
 
+### Unfixed CVEs: what is left, and why the mitigations are sufficient
+
+Where a CVE can't be patched, the standing requirement is to say what is
+mitigating it and justify that. Done 2026-08-02, by inspecting the running
+containers rather than trusting Trivy's package list.
+
+**First: the counts are inflated, in two specific ways.**
+
+1. **The same CVE is counted once per package.** Apprise's "17 unfixed
+   CRITICAL" is **5 distinct CVEs** — four Perl ones counted across
+   `perl`, `perl-base`, `libperl5.40` and `perl-modules-5.40`, plus one
+   OpenSSH client use-after-free.
+2. **"Fixable" means a patched version exists upstream, not that it can be
+   fixed here.** Nearly all of these need the image maintainer to rebuild.
+
+**Second: one cluster dominates the estate.** CVE-2026-13221, -42496,
+-57433 and -8376 are all `perl-base`, and appear in karakeep, uptime-kuma,
+apprise, valkey and the Immich images. Perl is in no app's request path in
+any of them — it is inherited Debian base furniture. That single cluster
+accounts for a large share of the total "unfixed critical" headline.
+
+**Reachability, checked in the running containers:**
+
+| Finding | Verdict | Evidence |
+|---|---|---|
+| **uptime-kuma** CVE-2026-42010, gnutls auth bypass (CRITICAL, fix published) — *public* | **Not reachable** | `libgnutls30` is linked only by `/usr/bin/curl`, which the app never invokes. Uptime Kuma's monitors run on Node, which uses **OpenSSL 3.5.6**. Confirmed with `ldd` and `apt-cache rdepends` inside the container. Upstream 2.5.0 ships the same unpatched base, so a bump does not help |
+| **karakeep** libaom3 / libxml2 / node-tar — *public* | **Reachable** | ffmpeg and librsvg2 decode attacker-supplied media from bookmarked pages. Mitigated, not patched: `cap_drop: ALL`, `mem_limit: 2g`, `pids_limit: 512`, `MAX_ASSET_SIZE_MB=50`, signups disabled, app-level rate limiting plus a Caddy rate-limit zone on the NextAuth callback path |
+| **karakeep** mbedtls (CVE-2026-34873/34875) | **Correction to the July note** | July recorded mbedtls as "NOT reachable". It is in fact linked by `/usr/bin/ffmpeg` (via `librist4`), which *is* reachable. The CVEs are in TLS 1.3 handshake paths, and karakeep only ever runs ffmpeg against local files — never RIST/TLS network streams — so the practical verdict is unchanged, but "not present" was the wrong reason |
+| **perl-base** cluster, everywhere | **Not reachable** | No app's request path invokes Perl; present as base-image furniture |
+| **healthlog** postgres, 15 fixable HIGH | **Not fixable, not worth chasing** | All Go stdlib CVEs in a helper binary. `17-alpine` has the same 15, `18-alpine` 16, Debian far worse. A major upgrade is a data migration for negative benefit |
+| **wanderer** meilisearch, 10 fixable HIGH | **Contained** | No published port; reachable only by `wanderer-web`/`wanderer-db` on the internal network. Bump deferred — upstream still ships v1.36.0 and the jump needs a dump/import migration |
+| **Immich** (3 images, highest raw counts) | **Contained** | `immich.mathewcsims.uk` is LAN/tailnet-only (`@lan` + `abort` in the Caddyfile), local accounts, no public sharing. Already the most hardened app here — `no-new-privileges` ×5, `mem_limit` ×5, `pids_limit` ×4 |
+| **apprise**, **speedtest-tracker**, **bookstack**, **forgejo** | **Contained** | All LAN/tailnet-only at the proxy |
+
+**Hardening gap found and closed.** Auditing the above surfaced something
+worse than any single CVE: **uptime-kuma and nimbus are both public and had
+no `cap_drop`, no `no-new-privileges` and no resource limits at all** — the
+two least-hardened public services in the estate, both on the Pi, which also
+runs Caddy and therefore every app's ingress. Both now have
+`no-new-privileges`, `cap_drop: ALL` with only the capabilities they need,
+and memory/PID limits at roughly 3× observed steady state. This patches
+nothing; it caps the blast radius so a crash or resource-exhaustion attempt
+stays a contained restart instead of taking the ingress host with it.
+
+**Still unhardened, LAN-only, worth doing when convenient** (not urgent —
+the proxy gate is the real control): `apprise`, `speedtest-tracker`,
+`bookstack`, `forgejo`.
+
+**Cost of that change, recorded honestly:** `cap_drop: ALL` on nimbus caused
+~4 minutes of downtime on `dashboard.mathewcsims.uk`. Its image runs nginx
+under supervisord, which starts as root, chowns `/var/lib/nginx`, then drops
+privileges — so it needs CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID and
+NET_BIND_SERVICE. The failure mode is nasty: **Next.js keeps serving on
+:3001 so the container looks alive while nginx crash-loops and the app
+502s.** Same entrypoint pattern that bit Donetick and Tududi. Add the caps
+from the start on any image using supervisord + nginx.
+
 ### Branch protection + required CI (GitHub)
 
 Nothing lands on `main` — not even from the repo owner, not even from an
