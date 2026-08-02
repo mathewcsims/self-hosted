@@ -148,7 +148,7 @@ section below says which.
 | `immich/kopia-immich.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:00 (installed to `~/.config/systemd/user/`) |
 | `scripts/dump-databases.sh` | **Mac** | consistent DB dumps (pg_dump / mysqldump / SQLite `VACUUM INTO`) written before every Kopia run; alerts via Apprise on failure |
 | `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
-| `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/` |
+| `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/`, keyed by repository+tag so a digest re-pin does not re-report as new |
 | `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
 | `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
@@ -3131,7 +3131,9 @@ watched for newly-disclosed CVEs on already-pinned digests in between.
 every `compose.yaml` and `FROM` in every `Dockerfile` in the repo — not a
 maintained list that could drift from what's actually pinned. Runs
 `trivy image --severity HIGH,CRITICAL` against each. State (which CVE IDs
-have already been seen, per image) lives outside the repo at
+have already been seen, keyed by **repository + tag** — see the 2026-08-02
+subsection below for why not the full reference, and why not the bare
+repository either) lives outside the repo at
 `~/trivy-scan-state/state.json`, same tracked-script/untracked-data split
 as `contact-sync/`. Only **newly-seen** CVEs trigger a notification — a
 CVE already known and accepted doesn't re-alert every week.
@@ -3235,6 +3237,92 @@ immediately after) even though the *following* serve-forever phase got
 killed by a tool timeout; restarted normally via `pass-deploy.sh` and
 confirmed genuinely healthy — clean startup, no crash loop, Karakeep's
 `/api/health` and the app itself both verified live afterward.
+
+### State is keyed by repository + tag, not the full reference (2026-08-02)
+
+**The bug this fixes.** State used to be keyed by the *full* image
+reference, digest included. Every pin bump therefore created a brand-new key
+with no history, and that image's entire existing finding set re-reported as
+"new". A CVE pass is precisely the thing that bumps digests — so **fixing
+CVEs guaranteed a false alarm on the next scan.** Seen live: the 2026-08-02
+pass eliminated 25 findings and introduced none, and the very next run
+reported **"155 new findings"** across the four re-pinned images. Nothing had
+regressed; the scanner had simply lost their history.
+
+**Why not key on the bare repository.** That was the obvious fix, was tried
+first, and is wrong. This repo pins several *distinct* images from a single
+repository:
+
+| | |
+|---|---|
+| `caddy:2.11.4-alpine` | vs `caddy:2.11.4-builder-alpine` |
+| `python:3.13-alpine` | vs `python:3.14-slim` |
+| `getmeili/meilisearch:v1.36.0` (wanderer) | vs `:v1.50.0` (karakeep) |
+
+Collapsing those means whichever scans last overwrites the others, so their
+findings vanish from state and re-alert on the next run — **alternating
+forever, which is worse than the bug being fixed.**
+
+**So: repository + tag, dropping only the digest** (`repo_key()`). Verified
+after the change: 37 images, 37 distinct keys, no collisions. All five of
+the 2026-08-02 re-pins now map to a stable key.
+
+Consequence worth knowing: bumping a version *tag* (uptime-kuma 2.4.0 →
+2.5.0) still creates a new key and re-reports. That is defensible — a
+different upstream version deserves re-review — and it is not what caused
+the false alarm, which was digest churn on unchanged tags.
+
+**Three related behaviours added at the same time:**
+
+- **Re-pins are surfaced, not hidden.** The digest is recorded as `ref`, and
+  a change is reported as *"N image(s) re-pinned, clearing N finding(s)"* in
+  the notification and per-image in the report. A rebuild reads as "same
+  findings, new build" rather than silence.
+- **Old state migrates on load**, unioning the history of keys that collapse
+  together — deliberate, since those CVE IDs have all been seen and reported
+  already, and the state file exists to stop them re-alerting.
+- **Stale keys are pruned** when an image is no longer pinned anywhere in the
+  repo. Guarded on an error-free run: if any image failed to scan its key
+  would look absent, and pruning would silently discard real history, so a
+  transient registry error must never cost the suppression list. This
+  immediately removed a genuine orphan — `ghcr.io/mbombeck/healthlog:latest`,
+  left behind when that image went from `:latest` to a digest pin.
+
+Verified against the live state file: 46 keys migrated to 38, the orphan
+pruned, and two consecutive full runs both reporting **no new findings**.
+
+### Confirmed baseline (2026-08-02, after that day's CVE + hardening passes)
+
+**809 HIGH/CRITICAL across 37 images** — 537 fixable-upstream, 65 unfixed
+CRITICAL, 207 unfixed HIGH. Remember what "fixable" means here: *a patched
+version exists somewhere upstream*, *not* that it can be fixed from this
+repo. Nearly all of these need the image maintainer to rebuild.
+
+**Eleven images carry zero HIGH/CRITICAL findings**, including all three
+patched that day: `codeberg.org/forgejo/forgejo`,
+`lscr.io/linuxserver/bookstack`, `lscr.io/linuxserver/speedtest-tracker`,
+plus `ghcr.io/go-vikunja/vikunja`, `copyparty/ac`, `ghcr.io/sintan1729/
+chhoto-url`, `ghcr.io/mbombeck/healthlog`, `nginx:1.31.3-alpine`,
+`python:3.13-alpine`, `getmeili/meilisearch:v1.50.0` and
+`getmeili/meilisearch` in karakeep.
+
+Where the volume actually sits — all accounted for above under *Unfixed
+CVEs: what is left, and why the mitigations are sufficient*:
+
+| Image | Total | Fixable | uCRIT | uHIGH | Exposure |
+|---|---|---|---|---|---|
+| karakeep | 127 | 48 | 11 | 68 | public, mitigated, reachability documented |
+| uptime-kuma | 108 | 73 | 6 | 29 | public; gnutls CRITICALs verified unreachable |
+| immich postgres | 86 | 70 | 7 | 9 | LAN/tailnet-only |
+| immich-server | 67 | 23 | 8 | 36 | LAN/tailnet-only |
+| immich-machine-learning | 49 | 23 | 8 | 18 | LAN/tailnet-only |
+| kopia | 37 | 37 | 0 | 0 | LAN/tailnet-only |
+| ghost | 37 | 23 | 6 | 8 | public |
+| timetagger | 30 | 16 | 6 | 8 | public, behind oauth2-proxy |
+| apprise | 29 | 9 | 5 | 15 | LAN/tailnet-only; the 5 CRIT are really 4 distinct Perl CVEs + 1 OpenSSH |
+
+Use this table as the comparison point for the next scan, since the
+notification only ever reports the *delta*.
 
 ---
 
