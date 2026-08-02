@@ -36,6 +36,35 @@ services:
     # No `ports:` — reached only by Caddy (status.mathewcsims.uk), over
     # `pi-shared`, by container name. Same no-published-port pattern as
     # Nimbus/Speedtest Tracker.
+    #
+    # Hardening added 2026-08-02. This is a **public** hostname carrying 14
+    # unfixed CRITICAL findings, and it had no cap_drop, no
+    # no-new-privileges and no resource limits at all — the least-hardened
+    # public service in the estate. None of this patches a CVE; it caps the
+    # blast radius so a crash or resource-exhaustion attempt stays a
+    # contained restart rather than taking the Pi down with it (the Pi also
+    # hosts Caddy, i.e. every app's ingress).
+    #
+    # The headline CVE here is CVE-2026-42010 (gnutls, authentication bypass
+    # via NUL character, CRITICAL, fix published). It is **not reachable**:
+    # libgnutls30 is linked only by /usr/bin/curl in this image, which the
+    # app never invokes — Uptime Kuma's monitors run on Node, which uses
+    # OpenSSL 3.5.6. Verified inside the running container with ldd and
+    # apt-cache rdepends, not inferred from Trivy's package list. Upstream
+    # 2.5.0 ships the same unpatched Debian base, so a version bump does not
+    # help.
+    #
+    # NET_RAW is kept because ICMP ("Ping") monitors need it; everything
+    # else is dropped. Limits are ~3x observed steady state (278 MiB, 19
+    # PIDs) so a normal working set can't trip them.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    mem_limit: 1g
+    pids_limit: 256
     networks:
       - pi-shared
 

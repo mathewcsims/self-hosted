@@ -60,6 +60,33 @@ services:
     image: turboot/nimbus@sha256:23c9909638a5c94725a6c54ca6ca758ea7032fbcf71d64d79cb1cd1d824dcc78
     container_name: nimbus
     restart: unless-stopped
+    # Hardening added 2026-08-02, same reasoning as uptime-kuma's: a public
+    # hostname on the Pi (which also hosts Caddy, every app's ingress) that
+    # had no cap_drop, no no-new-privileges and no resource limits. Caps the
+    # blast radius of the 3 fixable findings still open here — upstream's to
+    # rebuild — rather than patching them. Limits are ~3x observed steady
+    # state (82 MiB, 39 PIDs).
+    #
+    # NOTE: a bare `cap_drop: ALL` breaks this image — it runs nginx under
+    # supervisord, which starts as root, chowns /var/lib/nginx and then
+    # drops privileges. Without these caps nginx dies with "could not open
+    # error log file (13: Permission denied)" and retries until supervisord
+    # gives up; Next.js keeps serving on :3001 so the container looks alive
+    # while the app 502s. Tried and reverted the same day — this is the same
+    # entrypoint pattern that bit Donetick and Tududi (see SETUP.md).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    mem_limit: 512m
+    pids_limit: 256
     environment:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_HOST: db
