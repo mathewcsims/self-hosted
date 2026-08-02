@@ -5032,32 +5032,60 @@ The Google Cloud CLI is installed **in userspace** at
 `~/google-cloud-sdk` on slartibartfast (there is no passwordless sudo on
 that host, and this needs none) — official tarball, nothing system-wide.
 
-### Model availability is regional — verified live, not assumed
+### What this project actually has — probed, not assumed
 
-Probed directly against `prj-d-ada-vtxai-svpc-13kf` on 2026-08-02:
+**The publisher-model LIST endpoints are unavailable to this credential.**
+They require a quota project, and the ADC account lacks
+`serviceusage.services.use` to set one — so `gcloud ai model-garden models
+list` and the `/publishers/google/models` REST endpoints all fail, even
+though *inference* works fine. Availability therefore had to be established
+by probing: 31 model IDs × 6 regions, with a real call to the correct
+endpoint per family (`generateContent`, `predict`, `rawPredict`).
 
-| Model | europe-west2 (London) |
+**Result: 9 available, all Google.**
+
+| Model | Available in |
 |---|---|
-| `gemini-2.5-flash` | **200** |
-| `text-embedding-005` | **200** |
-| `text-multilingual-embedding-002` | **200** |
-| `gemini-embedding-001` | **200** |
-| `gemini-2.5-pro` | 404 |
-| `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `gemini-3-pro`, `gemini-3-flash` | 404 |
-| `claude-sonnet-4-5` | 404 |
+| `gemini-2.5-flash` | all 6 regions **including europe-west2** |
+| `gemini-2.5-pro` | eu-west1/4/9, us-central1, global — **not** west2 |
+| `gemini-2.5-flash-lite` | eu-west1/4/9, us-central1, global — **not** west2 |
+| `gemini-2.5-flash-image` | eu-west1/4, us-central1, global — **not** west2 |
+| `gemini-3-flash-preview` | **global only** |
+| `text-embedding-005` / `-004` | all 6 regions |
+| `text-multilingual-embedding-002` | all 6 regions |
+| `gemini-embedding-001` | all 6 regions |
 
-**The limit is the region, not the project's entitlement** —
-`gemini-2.5-pro` returns 200 in both `us-central1` and `europe-west1`.
+**There is no Anthropic, Meta, Mistral or Imagen access on this project** —
+every Claude, Llama, Mistral and Imagen ID returned 404 in every region, as
+did `gemini-3-pro`, non-preview `gemini-3-flash`, all `gemini-2.0-*` and all
+`gemini-1.5-*`. If Model Garden access is granted later, re-probe rather than
+assuming.
 
-`config.yaml` therefore lists **only what works in europe-west2**. Adding Pro
-means routing employer data to Belgium or Iowa, and this project is pinned to
-London and looks deliberately UK-resident — that is a **data-residency
-decision, not a config tweak**, and it has not been taken. LiteLLM supports a
-per-model `vertex_location` if it ever is.
+**Two traps worth recording:**
 
-Worth knowing for debugging: an unavailable model fails at **call** time with
-a 404, not at startup — so a perfectly healthy proxy can still reject every
-request.
+- **The `global` location's host is `aiplatform.googleapis.com`**, NOT
+  `global-aiplatform.googleapis.com`. Getting that wrong produces a 404 that
+  looks exactly like "model not available" — which is precisely the wrong
+  conclusion drawn on the first pass here. `global` actually has the widest
+  coverage of any location.
+- **An unavailable model fails at *call* time with a 404, not at startup**,
+  so a perfectly healthy proxy can still reject every request.
+
+### Data residency — deliberate, and visible at the point of use
+
+`vertex_location` is set **explicitly per model** in `config.yaml` so the
+region is never inherited silently:
+
+- `europe-west2` (London) — UK. The project's default.
+- `europe-west1` (Belgium) — EU, not UK.
+- `global` — may be served from **any** region, including outside the EU/UK.
+
+UK-resident models get the plainest names (`gemini-flash`,
+`text-embedding`); anything leaving the UK is named for it
+(`gemini-pro-eu`, `gemini-3-flash-preview-global`), so the trade-off is
+visible when you pick a model rather than buried in config. Where a model
+exists in several regions the closest/most-resident one was chosen —
+`europe-west1` over `us-central1` in every case.
 
 ### Setup (the parts only you can do)
 
