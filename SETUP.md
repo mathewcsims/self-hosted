@@ -1520,6 +1520,37 @@ they are not re-proposed as though new:
    an enormous bus factor. Rejected on 2 August: an oversized workaround, and
    its recurrence lives in automation config rather than in the item.
 
+**Mindwtr** ([dongdongbh/Mindwtr](https://github.com/dongdongbh/Mindwtr)) —
+recorded in detail because it will look extremely promising to anyone who
+finds it, and because two of the three findings took real digging.
+
+- **Recurrence is right.** `packages/core/src/task-recurrence-fields.ts`
+  carries `rrule`, `byDay`, `weekStart`, `until`, `count` and a `strategy`
+  field for fixed-vs-from-completion. Weekday sets are expressible; "phone
+  Mum on Wednesdays and Sundays" is one task.
+- **Everything else on the list is met**: PWA plus Windows/macOS/Linux/
+  iOS/Android, self-hosted sync server in Docker or WebDAV, projects with
+  areas and sections, nested contexts as tags, REST API, CLI, an MCP server,
+  AGPL. 1,578 stars in eight months.
+- **But its server does not fire reminders.** `apps/cloud/` is auth, storage,
+  attachments, rate limiting and a calendar feed — no scheduler, no push, no
+  dispatch (zero hits for `webpush`, `cron`, `scheduler` in the repo).
+  Reminders are client-scheduled, exactly as in Super Productivity.
+- **One genuinely useful idea to keep, even though the app is rejected:**
+  `apps/cloud/src/server-calendar-feed.ts` exposes an **ICS feed**. Unlike
+  Super Productivity's internal sync blob, ICS is a documented, stable,
+  standard format — so an independent server-side backstop (subscribe, parse
+  with any iCal library, fire ntfy) is genuinely feasible rather than
+  brittle. **Look for a standards-based export hook when judging whether a
+  client-scheduled app can be given a server-side backstop.**
+- **Rejected on security.** [GHSA-8x25-76x5-jgmr](https://github.com/dongdongbh/Mindwtr/security/advisories),
+  published 28 Jul 2026: **cloud token and WebDAV password stored in
+  plaintext on mobile.** Rated medium generically; disqualifying here, since
+  that credential protects the whole dataset and sits unencrypted on the
+  device most likely to be lost. An eight-month-old single-contributor
+  project shipping a credential-handling flaw is the maturity risk made
+  concrete rather than inferred.
+
 Assessed for Problem A specifically and rejected: **MIND** (looked ideal —
 server-side, weekday recurrence, Apprise delivery, API — but the main branch
 has had no commit since 23 Nov 2024; `pushed_at` reflected branch activity,
