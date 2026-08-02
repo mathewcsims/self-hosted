@@ -19,19 +19,16 @@
 # Result: 9 available, all Google. There is **no Anthropic, Meta, Mistral or
 # Imagen access** on this project — every one returned 404 in every region.
 #
-#   model                     available in
-#   gemini-2.5-flash          ALL 6 regions incl. europe-west2
-#   gemini-2.5-pro            eu-west1/4/9, us-central1, global  (NOT west2)
-#   gemini-2.5-flash-lite     eu-west1/4/9, us-central1, global  (NOT west2)
-#   gemini-2.5-flash-image    eu-west1/4, us-central1, global    (NOT west2)
-#   gemini-3-flash-preview    global ONLY
-#   text-embedding-005        ALL 6 regions
-#   text-embedding-004        ALL 6 regions
-#   text-multilingual-embedding-002  ALL 6 regions
-#   gemini-embedding-001      ALL 6 regions
-#
-# Not available anywhere: all Claude, Llama, Mistral and Imagen models, plus
-# gemini-3-pro, gemini-3-flash (non-preview), gemini-2.0-*, gemini-1.5-*.
+# THE FIRST TWO SWEEPS WERE BOTH WRONG, in instructive ways:
+#   1. They probed only /publishers/<pub>/models/<id>. MaaS models (gpt-oss,
+#      qwen) live on /endpoints/openapi/chat/completions with publisher-
+#      prefixed names — a different surface entirely.
+#   2. They guessed STALE model names. The current generation is Gemini 3.5/
+#      3.6 and Claude 5 — probing for gemini-2.0/3-pro and claude-4-5 found
+#      nothing and wrongly concluded "no third-party access exists".
+# Ground truth came from the Model Garden UI (Model ID + Version name fields),
+# then verified by probing. If in doubt, read the portal — the LIST APIs are
+# unavailable to this credential (they need a quota project it cannot set).
 #
 # ── DATA RESIDENCY: read before using the wider models ───────────────────
 # `vertex_location` is set explicitly per model so the region each request
@@ -47,8 +44,13 @@
 # use — you cannot pick `gemini-pro` without seeing it is `-eu`.
 
 model_list:
-  # ── UK (europe-west2) — data stays in London ───────────────────────────
+  # ══ UK — europe-west2 (London). Data stays in the UK. ═══════════════════
   - model_name: gemini-flash
+    litellm_params:
+      model: vertex_ai/gemini-3.5-flash
+      vertex_location: europe-west2
+
+  - model_name: gemini-2.5-flash
     litellm_params:
       model: vertex_ai/gemini-2.5-flash
       vertex_location: europe-west2
@@ -56,6 +58,11 @@ model_list:
   - model_name: text-embedding
     litellm_params:
       model: vertex_ai/text-embedding-005
+      vertex_location: europe-west2
+
+  - model_name: text-embedding-004
+    litellm_params:
+      model: vertex_ai/text-embedding-004
       vertex_location: europe-west2
 
   - model_name: text-embedding-multilingual
@@ -68,12 +75,7 @@ model_list:
       model: vertex_ai/gemini-embedding-001
       vertex_location: europe-west2
 
-  - model_name: text-embedding-004
-    litellm_params:
-      model: vertex_ai/text-embedding-004
-      vertex_location: europe-west2
-
-  # ── EU (europe-west1, Belgium) — not available in London ───────────────
+  # ══ EU — europe-west1 (Belgium). Leaves the UK, stays in the EU. ════════
   - model_name: gemini-pro-eu
     litellm_params:
       model: vertex_ai/gemini-2.5-pro
@@ -84,26 +86,56 @@ model_list:
       model: vertex_ai/gemini-2.5-flash-lite
       vertex_location: europe-west1
 
-  # Image-capable (generates images as well as text).
   - model_name: gemini-flash-image-eu
     litellm_params:
       model: vertex_ai/gemini-2.5-flash-image
       vertex_location: europe-west1
 
-  # ── GLOBAL — may be served from anywhere in the world ──────────────────
-  # Only model on this project not available in any EU region. Preview, so
-  # expect it to change or disappear without notice.
+  # ══ GLOBAL — may be served from ANY region worldwide. ═══════════════════
+  # Everything below is global-only: no EU region serves it.
+  - model_name: claude-opus-5-global
+    litellm_params:
+      model: vertex_ai/claude-opus-5
+      vertex_location: global
+
+  - model_name: claude-sonnet-5-global
+    litellm_params:
+      model: vertex_ai/claude-sonnet-5
+      vertex_location: global
+
+  - model_name: gemini-3.6-flash-global
+    litellm_params:
+      model: vertex_ai/gemini-3.6-flash
+      vertex_location: global
+
+  - model_name: gemini-3.5-flash-lite-global
+    litellm_params:
+      model: vertex_ai/gemini-3.5-flash-lite
+      vertex_location: global
+
   - model_name: gemini-3-flash-preview-global
     litellm_params:
       model: vertex_ai/gemini-3-flash-preview
       vertex_location: global
 
+  # MaaS models — OpenAI-compatible surface, publisher-prefixed names.
+  - model_name: gpt-oss-120b-global
+    litellm_params:
+      model: vertex_ai/openai/gpt-oss-120b-maas
+      vertex_location: global
+
+  - model_name: gpt-oss-20b-global
+    litellm_params:
+      model: vertex_ai/openai/gpt-oss-20b-maas
+      vertex_location: global
+
+  - model_name: qwen3-next-80b-global
+    litellm_params:
+      model: vertex_ai/qwen/qwen3-next-80b-a3b-instruct-maas
+      vertex_location: global
+
 general_settings:
-  # Every request needs a virtual key. Without this the proxy would accept
-  # unauthenticated calls from anything that reaches the port.
   master_key: os.environ/LITELLM_MASTER_KEY
 
 litellm_settings:
-  # Silently drop provider-unsupported params rather than erroring, so a
-  # generic OpenAI client sending e.g. `frequency_penalty` still works.
   drop_params: true
