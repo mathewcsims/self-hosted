@@ -27,13 +27,15 @@ name: forgejo
 
 services:
   forgejo:
-    # v16.0.1 (2026-07-21), patch bump from v16.0.0 — upgraded from the
+    # v16.0.2 (2026-07-30), patch bump from v16.0.1 — upgraded from the
     # 15.0.x LTS line. v16's breaking changes don't touch this instance:
     # no repo mirrors (the http.followRedirects=false SSRF hardening),
     # reverse-proxy auth is off (and REVERSE_PROXY_TRUSTED_PROXIES was
     # already explicitly pinned here since install). Pinned by digest,
     # not a floating tag.
-    image: codeberg.org/forgejo/forgejo@sha256:3eb3107bc9de4e9d6d9e539044e6c802dc0b7be351919a145540d4cb5422bf07
+    # 2026-08-02 CVE pass: v16.0.1 -> v16.0.2 clears all 3 fixable
+    # HIGH/CRITICAL findings (verified by scanning both digests: 3 -> 0).
+    image: codeberg.org/forgejo/forgejo@sha256:2fdfe28b5c68f82f49580e227b84e2afb43af0250e0631a54a386ef3b1d9b759
     container_name: forgejo
     restart: unless-stopped
     environment:

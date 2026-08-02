@@ -53,7 +53,10 @@ services:
     # export handler) is the only one with any recent relevance, fixed at
     # 26.03.1; 26.05.2 is well past it. Pinned to an exact version + digest,
     # not :latest.
-    image: lscr.io/linuxserver/bookstack@sha256:0879a5e11d880bedd2ae995e62a066d5f4f4a5d44a33668472312b3d439173f4
+    # 2026-08-02 CVE pass: re-pinned to the current linuxserver rebuild,
+    # which clears all 3 fixable HIGH/CRITICAL findings (verified by
+    # scanning both digests: 3 -> 0). Same app version, patched base.
+    image: lscr.io/linuxserver/bookstack@sha256:7f0af07baa41fd6265f5ec57887564d85be03a326f79cb32f926fe735e5313ff
     container_name: bookstack
     restart: unless-stopped
     depends_on:
