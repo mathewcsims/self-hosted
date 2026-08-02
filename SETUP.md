@@ -1476,6 +1476,66 @@ treated as a blocker.
 - **Deleting a Donetick project cascades to its tasks**, silently clearing
   `projectId`, including on completed tasks not visible in any current view.
 
+### The exhaustive sweep, and the structural result (2026-08-02)
+
+A deliberately complete search was run across eight independent channels, to
+settle whether anything had been missed rather than to find one more
+candidate:
+
+1. **awesome-selfhosted's canonical Task Management section** — all 42
+   entries enumerated. Everything not already assessed was Kanban
+   (4ga Boards, Kan, Kanboard, Nullboard, Wekan, Tasks.md), ticketing
+   (Bugzilla, Zammad, FreeScout, MantisBT, OTOBO, Request Tracker, Roundup),
+   time-tracking (Kimai, solidtime, TimeTagger, Traggo, Wakapi, Ziit,
+   ActivityWatch), or single-purpose (Our Shopping List, Listaway,
+   Focus Flow, Surmai).
+2. **GitHub topic sweep** — ten query variants across `todo`, `todolist`,
+   `task-management`, `gtd`, `reminders`, `selfhosted`, all creation dates,
+   200+ stars, active since Feb 2026.
+3. **New launches by creation date** — the search listicles cannot do, since
+   they lag by a year or more. This is how Mindwtr and SilentSuite surfaced.
+4. **E2E-encrypted commercial apps** — the other half of the privacy clause.
+5. **PrivacyGuides community consensus.**
+6. **CalDAV web clients and servers.**
+7. **Dedicated reminder apps** (a different category from task managers).
+8. **Household/chore-specific tools.**
+
+Rejected in this sweep, with reasons: **Will Be Done** (AGPL, self-hosted,
+weekday recurrence, but **zero** notification or reminder code in the repo —
+only a backup scheduler; and Kanban-per-project); **chiri** (CalDAV client,
+active, but desktop-only — no web app); **Zero-Friction Tasks** (E2E, web +
+five platforms, but *deliberately* has no projects, paywalls recurring
+reminders at €5.99/mo, no self-hosting, closed-source so the encryption
+claim is unverifiable); **planify** (GNOME desktop only); **ChoreOps**
+(a Home Assistant add-on); **Habitica** (self-hosting is documented for
+development only); **CalDavZAP** (the only CalDAV web client, and a
+decade-old interface); **jotty**, **taskview-community**, **remembear**,
+**myTinyTodo**, **Task Keeper/piga**, **Taskwarrior**, **dootask**.
+
+Independent corroboration, from a community that specialises in exactly this
+question — the PrivacyGuides thread on E2EE tasks with sync concluded that
+**no fully E2EE task app with reminders, recurrence and a web interface was
+identified as available.**
+
+**The structural result.** The field is not merely short of one feature. It
+divides three ways, and every division is missing something different:
+
+| Has | Lacks | Examples |
+|---|---|---|
+| Server + modern UI | **Privacy** | Todoist, TickTick |
+| Privacy + modern UI | **A server** — reminders are client-scheduled, no independent backstop | Super Productivity, Mindwtr, Lunatask |
+| Privacy + server | **A tolerable UI**, or has a broken feature in view | the incumbent; Donetick |
+
+That is why fifteen candidates failed: not bad luck, but the three
+requirements — privacy, a server that fires reminders, and an interface worth
+using — are not held together by anything in existence in August 2026. The
+commercial products finished the hard 20% because someone was paid to, which
+is also why they are the ones without encryption.
+
+**Do not re-run this search.** It is complete as of 2026-08-02 across all
+eight channels. Re-check only by watching for *new* projects, and screen them
+in the order given below.
+
 ### Where things stand
 
 Vikunja holds everything, unchanged throughout. The two divergences created
