@@ -1259,21 +1259,32 @@ above is two different tools wearing one coat**, which is why nothing has ever
 satisfied it — the search kept intersecting two feature sets no product
 optimises for at once.
 
-**Problem A — recurring chores.** Walking, bins, phoning Mum. Needs weekday-set
-recurrence, reminders at a time of day, a tick, web and mobile, privacy — and
-a **server**: something holding the truth that fires regardless of what any
-device is doing, and exposes an API. That server requirement is the whole
-reliability argument, not a nice-to-have. Needs **no** depth, no projects, no
-labels. A flat list of about a dozen items.
+**Problem A — recurring chores and day-to-day tasks.** Walking, bins, phoning
+Mum, Royal Mail renewals. This is **the full requirement list above minus deep
+nesting, and nothing else**. Projects, labels, a real mobile app, sync between
+devices, a modern interface and an API are all still required. What it adds
+is an explicit **server**: something holding the truth that fires reminders
+regardless of what any device is doing. That server requirement is the whole
+reliability argument, not a nice-to-have — client-scheduled alarms have no
+independent backstop, so if the phone does not fire, nothing does.
+
+*Recorded because it was got wrong once:* "depth doesn't enter the picture"
+means **only** that 15–20 level nesting is not needed here. It does **not**
+mean flat, and it does not mean small. Problem A is still a task manager.
+Any claim that it reduces to "a scheduler and a list" is an inference, not a
+requirement, and it is wrong.
 
 **Problem B — decomposed tree work.** Complex work broken down repeatedly;
 the tasks are the *leaves*. Needs 15–20 levels, editing everywhere, a big
 screen for the tree, privacy. Needs **no** recurrence and **no** reminders —
 structure is the job, and only leaves are ever actionable.
 
-Almost nothing overlaps. Split this way, Problem B has three good answers
+The overlap is small. Split this way, Problem B has three good answers
 (Logseq, SiYuan, Trilium — all AGPL, self-hostable, active, arbitrary depth
 as their core premise). Problem A remains unsolved.
+
+**Priority: A now, B someday.** B is the half with good options available,
+but A is the half that has to be resolved.
 
 **A constraint that exists before any tool is chosen:** a 15–20 level tree
 cannot render on a phone. Mobile will always show a slice — the actionable
@@ -1488,13 +1499,14 @@ approach, and it is the reason the list below is shorter than it was.
 and Trilium are all AGPL, self-hostable, actively maintained, and do
 arbitrary depth as their core premise rather than as a feature request. The
 thing that disqualified them as task managers — no reminders — is irrelevant,
-because reminding is not this half's job. **Start here**: it is the half with
-no bad options and the half that has been failing longest, since the tree
-currently only exists on paper.
+because reminding is not this half's job. **But it is not urgent**: the tree
+has lived on paper for years and can continue to.
 
-**Problem A — chores — remains unsolved**, and the requirement that kills
-everything is now known to be the **server**. Options, all previously
-rejected and recorded so they are not re-proposed as though new:
+**Problem A is the one that needs resolving**, and the requirement that kills
+everything is the **server**. Note that A still needs projects, labels,
+mobile, sync and a modern UI — dropping deep nesting narrows the search, it
+does not shrink the product. Options, all previously rejected and recorded so
+they are not re-proposed as though new:
 
 1. **Build a client** over something that already nests and already fires —
    CalDAV `VTODO`, or an existing API. Not a task manager from scratch: the
@@ -1502,14 +1514,29 @@ rejected and recorded so they are not re-proposed as though new:
    2 August as not a sensible use of effort.
 2. **Fund the gap** — sponsor or bounty a missing feature in a maintained
    project rather than write or fork it. Untested.
-3. **Accept a tool that flattens the structure** and keep decomposition on
-   paper. Now largely moot: Problem B takes the tree, so Problem A never
-   needed depth in the first place.
+3. **Run a large platform at ~1% utilisation** — Home Assistant has the best
+   reminder delivery in self-hosting (actionable notifications, re-nagging
+   until ticked, watch bridging), total privacy, a server by definition and
+   an enormous bus factor. Rejected on 2 August: an oversized workaround, and
+   its recurrence lives in automation config rather than in the item.
+
+Assessed for Problem A specifically and rejected: **MIND** (looked ideal —
+server-side, weekday recurrence, Apprise delivery, API — but the main branch
+has had no commit since 23 Nov 2024; `pushed_at` reflected branch activity,
+not development, and three open issues meant nobody was filing them, not that
+nothing was wrong); **Habitica** (self-hosting is documented for development
+only, not production); **remembear** (three stars, one contributor);
+**Grocy** and **Beaver Habit Tracker** (unexamined; household-inventory and
+habit-streak shaped respectively).
 
 Do not try a fifteenth candidate against the combined criteria — the
 combination is the mistake. Screen Problem A candidates in this order:
-**server and API first, then reminders, then recurrence.** Screen Problem B
-candidates on **depth** alone.
+**server and API first, then reminders, then recurrence, then projects and
+labels, then mobile.** Screen Problem B candidates on **depth** alone.
+
+**Check `pushed_at` against the actual commit log before calling a project
+alive.** This was got wrong with MIND hours after recording the same class of
+error about Tududi's tracker.
 
 Ruled out categorically, not to be re-proposed: **Nextcloud** (in any role),
 **Donetick** (a broken Projects feature visible in the UI is not tolerable,
