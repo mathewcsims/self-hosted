@@ -1252,6 +1252,40 @@ Requirement 4 means genuinely equal access on every device: a **web interface
 for serious work** and a **mobile app for quick capture on the go**, with the
 mobile side still reaching everything — not a cut-down view.
 
+### These are two separate problems, not one (established 2026-08-02)
+
+The single most useful outcome of the whole exercise. **The requirement list
+above is two different tools wearing one coat**, which is why nothing has ever
+satisfied it — the search kept intersecting two feature sets no product
+optimises for at once.
+
+**Problem A — recurring chores.** Walking, bins, phoning Mum. Needs weekday-set
+recurrence, reminders at a time of day, a tick, web and mobile, privacy — and
+a **server**: something holding the truth that fires regardless of what any
+device is doing, and exposes an API. That server requirement is the whole
+reliability argument, not a nice-to-have. Needs **no** depth, no projects, no
+labels. A flat list of about a dozen items.
+
+**Problem B — decomposed tree work.** Complex work broken down repeatedly;
+the tasks are the *leaves*. Needs 15–20 levels, editing everywhere, a big
+screen for the tree, privacy. Needs **no** recurrence and **no** reminders —
+structure is the job, and only leaves are ever actionable.
+
+Almost nothing overlaps. Split this way, Problem B has three good answers
+(Logseq, SiYuan, Trilium — all AGPL, self-hostable, active, arbitrary depth
+as their core premise). Problem A remains unsolved.
+
+**A constraint that exists before any tool is chosen:** a 15–20 level tree
+cannot render on a phone. Mobile will always show a slice — the actionable
+leaves — never the tree. Depth and mobile were never going to be served by
+one view, so the split is forced by the devices, not by software
+availability.
+
+The open design question for Problem A is what happens when a leaf becomes
+actionable: move it by hand (zero engineering, and arguably the point), or
+bridge it automatically (real work — defer until the manual version proves
+annoying).
+
 ### Depth is the primary filter — test it first (established 2026-08-02)
 
 **Nothing in the field nests more than two levels.** That single requirement
@@ -1299,7 +1333,7 @@ editing and reminders.
 | **Tracks** | Hierarchy and reminders — supports weekday sets, but no `parent_id` on any model and no notification code at all |
 | **Notesnook** | Reminders — recurrence supports weekday sets on paper, but the reminders do not work in practice (tested directly). Also notes-shaped: reminders attach to a note, not to an item within it |
 | **Joplin / AppFlowy** | Repeating to-do notifications are an open feature request; AppFlowy's reminders are in-app only, push still on the roadmap |
-| **Super Productivity** | **Depth (10)** — one level; [#2657](https://github.com/super-productivity/super-productivity/issues/2657) open since Jun 2023, labelled *low priority*. Otherwise the closest miss in the field: MIT, 21k stars, v18.16.0 shipped Jul 2026, web app **plus Windows/macOS/Android/iOS**, WebDAV/CalDAV sync to your own storage, projects *and* tags, repeating tasks, reminders, no account required. Also carries pomodoro/time-tracking surface area that is unwanted here |
+| **Super Productivity** | **No server (11)**, and depth (10). See the assessment below — it was the leading answer to Problem A until the sync model was read properly |
 | **Lunatask** | No web interface (4) — desktop and mobile binaries only. Recurrence is paywalled at $6/mo or $300 lifetime (5). Tried directly: too complex and clunky |
 | **SilentSuite** | Longevity (6) — repo created 19 Mar 2026, v0.4.2-beta, 660 of ~670 commits from one person, no native iOS client, GitHub does not detect the claimed AGPL licence. Also does calendar and contacts, which is unwanted scope. E2E via Etebase, self-hostable, real web app — the shape is right, the maturity is not |
 | **Fizzy** (37signals) | Kanban-first (2); **no recurrence code in the repo at all**, and its notifications are activity-based (comment, assignment), not due-date reminders (1, 8) |
@@ -1310,6 +1344,51 @@ one contributor, unwanted scope), Fizzy (Kanban, no recurrence). Nextcloud
 Tasks shipped web-UI recurrence in v0.18.0 (22 Jun 2026), which removes its
 old technical objection — but Nextcloud itself remains **categorically ruled
 out** as a dependency, so this does not reopen it.
+
+### Super Productivity, assessed in the source (2026-08-02)
+
+Worth recording in full because it got closest to Problem A, and because
+**the parts that were verified all held** — the failure was somewhere nobody
+was looking.
+
+**Recurrence: genuinely good.** `task-repeat-cfg.model.ts` carries individual
+weekday booleans (`monday?`…`sunday?`) alongside `repeatCycle: 'WEEKLY'` and
+a `CUSTOM` quick setting, so "Wednesdays and Sundays" is **one task**. Also
+monthly Nth-weekday anchors ("first Thursday", "last Monday") and
+last-day-of-month.
+
+**Reminders: genuinely good.** The repeat config carries `startTime` and
+`remindAt` per configuration, so every generated occurrence gets its own due
+time *and* its own reminder offset — the behaviour that stops reminders
+drifting away from the recurrence. Delivery is real OS-level scheduling, not
+an in-app badge: native `AlarmManager` on Android, Capacitor
+`LocalNotifications` on iOS, service-worker/Electron notifications on
+desktop, with done and snooze actions handled from the notification itself.
+The manifest requests **`SCHEDULE_EXACT_ALARM`** and **`RECEIVE_BOOT_COMPLETED`**
+with a `BootReceiver` that reschedules after reboot — the two things that
+separate alarms which fire from alarms which mostly fire. It does *not*
+request battery-optimisation exemption, so Samsung's "Sleeping apps" would
+need setting manually.
+
+**Why it failed: there is no server.** Sync writes the entire dataset as a
+file blob to Dropbox / Nextcloud / WebDAV / a local folder; each device holds
+everything and reconciles against a file. Consequences:
+
+- **No API (11)** — a plugin system instead of a server API.
+- **No independent backstop.** Reminders are scheduled per-device. If the
+  phone doesn't fire, nothing else does. A server-side job parsing the sync
+  blob was considered and rejected: the format is internal, undocumented, and
+  **actively being rewritten** (operation log, vector clocks, SQLite
+  migration, sync-engine extraction all in flight) — a reliability backstop
+  on a moving format fails silently at the worst moment.
+- **The WebDAV provider is labelled experimental** by upstream, and with
+  Nextcloud categorically ruled out that is the only path available.
+- SuperSync — operation-based, real-time, self-hostable, optional
+  server-side E2E — would supply the missing server, but is **beta**.
+
+**Lesson: check for a server before checking features.** Two hours went into
+verifying recurrence and reminder code that was never the problem. For
+Problem A the ordering is: server and API first, then depth, then reminders.
 
 ### Contribution health, measured rather than assumed (2026-08-02)
 
@@ -1402,22 +1481,40 @@ in 2026 satisfies all eleven requirements, and **depth is why** — see *Depth
 is the primary filter* above. Two things nest arbitrarily; both fail
 elsewhere.
 
-So the question is no longer "which candidate next". It is one of:
+**Treat the two problems separately from here.** That is the change of
+approach, and it is the reason the list below is shorter than it was.
 
-1. **Relax depth** to two levels — which reopens Super Productivity (meets
-   everything else, including iOS and a real web app) and Tududi. Rejected on
-   2 August: real decompositions run 15–20 levels.
-2. **Build the interface** over a data model that already nests — CalDAV
-   `VTODO`, or Vikunja's API. Not a task manager from scratch: the scheduler,
-   recurrence engine, sync and notification delivery all stay upstream.
-   Rejected on 2 August as not a sensible use of effort.
-3. **Fund the gap** — sponsor or bounty the missing feature in a maintained
-   project, rather than write or fork it.
-4. **Accept a tool that flattens the structure** and keep decomposition on
-   paper.
+**Problem B — the tree — is effectively solved and untried.** Logseq, SiYuan
+and Trilium are all AGPL, self-hostable, actively maintained, and do
+arbitrary depth as their core premise rather than as a feature request. The
+thing that disqualified them as task managers — no reminders — is irrelevant,
+because reminding is not this half's job. **Start here**: it is the half with
+no bad options and the half that has been failing longest, since the tree
+currently only exists on paper.
 
-Do not try a fifteenth candidate against the same criteria. Check depth
-first; if it stops at two levels, stop there.
+**Problem A — chores — remains unsolved**, and the requirement that kills
+everything is now known to be the **server**. Options, all previously
+rejected and recorded so they are not re-proposed as though new:
+
+1. **Build a client** over something that already nests and already fires —
+   CalDAV `VTODO`, or an existing API. Not a task manager from scratch: the
+   scheduler, recurrence engine, sync and delivery stay upstream. Rejected on
+   2 August as not a sensible use of effort.
+2. **Fund the gap** — sponsor or bounty a missing feature in a maintained
+   project rather than write or fork it. Untested.
+3. **Accept a tool that flattens the structure** and keep decomposition on
+   paper. Now largely moot: Problem B takes the tree, so Problem A never
+   needed depth in the first place.
+
+Do not try a fifteenth candidate against the combined criteria — the
+combination is the mistake. Screen Problem A candidates in this order:
+**server and API first, then reminders, then recurrence.** Screen Problem B
+candidates on **depth** alone.
+
+Ruled out categorically, not to be re-proposed: **Nextcloud** (in any role),
+**Donetick** (a broken Projects feature visible in the UI is not tolerable,
+even if unused), and **Vikunja** as a destination — it holds the data because
+nothing else does, not because it is the choice.
 
 ---
 
