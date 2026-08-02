@@ -1242,14 +1242,50 @@ harder to satisfy than it looks, and the same candidates keep resurfacing.
 8. **Reminders at a specific time of day, set in the tool, repeating on
    every occurrence of a recurring task**
 9. Delivery via ntfy/Apprise and/or email
-10. Projects, with **multiple layers of subtasks**
+10. Projects **and** labels — two independent axes — with **arbitrarily deep
+    subtasks**: complex tasks broken down repeatedly until atomic. In practice
+    that means **15–20 levels**, which is how the same task decomposes on
+    paper. Not a checkbox; it is the working method
 11. An API for automation
+
+Requirement 4 means genuinely equal access on every device: a **web interface
+for serious work** and a **mobile app for quick capture on the go**, with the
+mobile side still reaching everything — not a cut-down view.
+
+### Depth is the primary filter — test it first (established 2026-08-02)
+
+**Nothing in the field nests more than two levels.** That single requirement
+eliminates every candidate below faster than any other, and it was not
+recognised as the binding constraint until the sweep was re-run on 2 August.
+Interface and reminders got the attention; depth was quietly doing the work.
+
+| Depth supported | Candidates |
+|---|---|
+| None — no `parent_id` at all | Tracks; Notesnook, Joplin, AppFlowy (notes-shaped) |
+| One level | **Tududi**; **Super Productivity** ([#2657](https://github.com/super-productivity/super-productivity/issues/2657) open since Jun 2023, *low priority*); Nextcloud Tasks' mobile client |
+| Arbitrary | **Donetick** (out on the project filter); **CalDAV `VTODO`** via `RELATED-TO` (out on the interface) |
+
+So exactly two things in existence meet the depth requirement, and both are
+broken somewhere else.
+
+**Check depth before anything else.** It takes seconds, it is rarely
+advertised honestly, and it eliminates most of the field. Every other
+requirement on the list — reminders, recurrence, projects, labels, web UI,
+self-hosting — is comparatively common.
+
+The reason is structural: task apps model a *list* with nesting bolted on,
+because that is what most users want. A 15–20 level decomposition is a
+*tree*, and the tool is not storing the structure so much as being the
+thinking. Two levels does not partially serve that — it breaks at exactly the
+point the method starts paying off. This is also why paper keeps pulling: it
+does arbitrary depth effortlessly, and fails instead on portability,
+editing and reminders.
 
 ### What each candidate failed on
 
 | Candidate | Fails on |
 |---|---|
-| **Vikunja** (incumbent) | Interface (3). Recurrence (1) — only three repeat modes exist (interval in seconds, monthly, from-completion), so "Wednesdays and Sundays" is **inexpressible** and needs two separate tasks. Its reminders are otherwise good: absolute and relative, and they shift correctly on repeat |
+| **Vikunja** (incumbent) | Interface (3) — and that is the *only* live objection. Recurrence (1) was the other: three repeat modes exist (interval in seconds, monthly, from-completion), so "Wednesdays and Sundays" is inexpressible and needs two tasks — but [PR #3071](https://github.com/go-vikunja/vikunja/pull/3071) (open 1 Jul 2026) replaces the whole model with RFC 5545 RRULE across API, migrations, CalDAV and frontend, making `FREQ=WEEKLY;BYDAY=WE,SU` expressible. Maintainer engaged ("This is big, I probably won't get to review it immediately"), automated review panel approved with nits, currently needs a rebase. Depth and reminders both already fine |
 | **Tududi** | **No time-of-day reminders at all** (8) — `reminder_at` is a database column nothing writes to; the API accepts the field and silently discards it. Subtasks capped at **one level** (10) |
 | **Donetick** | **Basic usability (3)** — the home view shows only tasks with *no* project, and "all projects" has no representable value, so the selection cannot survive a refresh. Put your tasks in projects and the default view is permanently empty. The maintenance backlog (86 open issues, oldest Feb 2025; 26 open PRs, oldest Sep 2025) is not the failure itself — it is why the defect is **unfixable in practice**, since a patch would be a permanent fork |
 | **Plane / Huly** | Hardware — 4–8 GB and 8–16 GB RAM respectively; slartibartfast has ~4 GB free after Immich |
@@ -1263,6 +1299,40 @@ harder to satisfy than it looks, and the same candidates keep resurfacing.
 | **Tracks** | Hierarchy and reminders — supports weekday sets, but no `parent_id` on any model and no notification code at all |
 | **Notesnook** | Reminders — recurrence supports weekday sets on paper, but the reminders do not work in practice (tested directly). Also notes-shaped: reminders attach to a note, not to an item within it |
 | **Joplin / AppFlowy** | Repeating to-do notifications are an open feature request; AppFlowy's reminders are in-app only, push still on the roadmap |
+| **Super Productivity** | **Depth (10)** — one level; [#2657](https://github.com/super-productivity/super-productivity/issues/2657) open since Jun 2023, labelled *low priority*. Otherwise the closest miss in the field: MIT, 21k stars, v18.16.0 shipped Jul 2026, web app **plus Windows/macOS/Android/iOS**, WebDAV/CalDAV sync to your own storage, projects *and* tags, repeating tasks, reminders, no account required. Also carries pomodoro/time-tracking surface area that is unwanted here |
+| **Lunatask** | No web interface (4) — desktop and mobile binaries only. Recurrence is paywalled at $6/mo or $300 lifetime (5). Tried directly: too complex and clunky |
+| **SilentSuite** | Longevity (6) — repo created 19 Mar 2026, v0.4.2-beta, 660 of ~670 commits from one person, no native iOS client, GitHub does not detect the claimed AGPL licence. Also does calendar and contacts, which is unwanted scope. E2E via Etebase, self-hostable, real web app — the shape is right, the maturity is not |
+| **Fizzy** (37signals) | Kanban-first (2); **no recurrence code in the repo at all**, and its notifications are activity-based (comment, assignment), not due-date reminders (1, 8) |
+
+Assessed and rejected without trial on 2 August: Super Productivity (depth),
+Lunatask (tried directly — no web UI, clunky), SilentSuite (five months old,
+one contributor, unwanted scope), Fizzy (Kanban, no recurrence). Nextcloud
+Tasks shipped web-UI recurrence in v0.18.0 (22 Jun 2026), which removes its
+old technical objection — but Nextcloud itself remains **categorically ruled
+out** as a dependency, so this does not reopen it.
+
+### Contribution health, measured rather than assumed (2026-08-02)
+
+Two corrections to what this document previously implied:
+
+- **Donetick does merge outside contributions**, and reasonably promptly —
+  ~13 outside PRs merged Mar–Jul 2026, many within a week. The problem is
+  variance, not refusal: 13 PRs have sat over 90 days, oldest Sep 2025. A
+  fix you depend on daily cannot ride on a coin flip.
+- **Tududi's tidy tracker was read as a good sign; it is a solo-maintainer
+  artefact.** 49 of every 50 merged PRs are the maintainer's own. Small
+  outside PRs land in 1–6 days, but [PR #762](https://github.com/chrisvel/tududi/pull/762)
+  (push notifications, 2,294 lines) has had **zero maintainer response since
+  6 Jan 2026**. Note also that #762 is notification *transport*, not the
+  missing scheduler — it was never the head start it looked like.
+
+The generalisable pattern: **small PRs and large feature PRs are different
+products.** Vikunja merges stranger bugfixes same-day (TowyTowy, 13rac1,
+taiwithers, maximilize all landed in Jul 2026) while ~24 feature PRs queue —
+the oldest being the maintainer's *own*, open since Sep 2025. Judge a project
+by the queue for the size of change you actually need, not by its headline
+activity. AppFlowy is the failure case: 63 open outside PRs, oldest Oct 2023,
+one merge in 120 days.
 
 ### Why Donetick was tried twice, and dropped twice
 
@@ -1322,9 +1392,32 @@ Vikunja holds everything, unchanged throughout. The two divergences created
 during the Donetick trial were merged back on 1 August: the
 "Adjust repeat prescriptions" task, and Royal Mail marked done.
 
-The unresolved question is which requirement to relax — nothing available in
-2026 satisfies all eleven. That is a decision to be taken deliberately, not
-worked around by trying a fourth candidate against the same criteria.
+**Vikunja is no longer an acceptable resting place** — the interface rules it
+out, stated plainly on 2 August. It holds the data because nothing else does,
+not because it is the choice.
+
+The field is exhausted, and the sweep was re-run properly on 2 August against
+closest-fit-plus-contribution-health rather than pass/fail. Nothing available
+in 2026 satisfies all eleven requirements, and **depth is why** — see *Depth
+is the primary filter* above. Two things nest arbitrarily; both fail
+elsewhere.
+
+So the question is no longer "which candidate next". It is one of:
+
+1. **Relax depth** to two levels — which reopens Super Productivity (meets
+   everything else, including iOS and a real web app) and Tududi. Rejected on
+   2 August: real decompositions run 15–20 levels.
+2. **Build the interface** over a data model that already nests — CalDAV
+   `VTODO`, or Vikunja's API. Not a task manager from scratch: the scheduler,
+   recurrence engine, sync and notification delivery all stay upstream.
+   Rejected on 2 August as not a sensible use of effort.
+3. **Fund the gap** — sponsor or bounty the missing feature in a maintained
+   project, rather than write or fork it.
+4. **Accept a tool that flattens the structure** and keep decomposition on
+   paper.
+
+Do not try a fifteenth candidate against the same criteria. Check depth
+first; if it stops at two levels, stop there.
 
 ---
 
