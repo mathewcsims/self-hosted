@@ -4976,17 +4976,37 @@ Gating with `remote_ip 100.64.0.0/10` (CGNAT only, no `private_ranges`)
 adapted cleanly and validated fine, but aborted every request from the Mac
 while working from the Pi. Diagnosed live rather than guessed: over the
 *identical* tailnet path, `immich.mathewcsims.uk` — which also matches
-`private_ranges` — returned 200 while this one aborted. So **Caddy sees a
-private address for tailnet traffic arriving at the containerised proxy, not
-the client's 100.x address**, and CGNAT-only matching cannot distinguish
-tailnet devices from anything else on the LAN here.
+`private_ranges` — returned 200 while this one aborted, while a request from
+the Pi's *own* tailnet address passed the CGNAT matcher fine. The most likely
+reading is that Caddy does not see the client's 100.x address for tailnet
+traffic arriving at the containerised proxy. **That is an inference, not a
+measurement** — repeated attempts to capture the actual `remote_ip` for such
+a request from the access log failed. What is certain is only the outcome:
+CGNAT-only matching did not work here.
 
-That has a wider implication worth recording: the `private_ranges
-100.64.0.0/10` gates used by BookStack, Forgejo, Apprise, Kopia and Immich
-are matching on an address that may be rewritten in transit. They still work
-because `private_ranges` is broad enough to cover whatever Caddy actually
-sees — but they are not the tailnet-identity control they look like. The
-tailnet ACL is what genuinely enforces that.
+**This does NOT weaken the other apps' gates**, and an earlier draft of this
+section wrongly implied it did. The `private_ranges 100.64.0.0/10` gates on
+BookStack, Forgejo, Apprise, Kopia and Immich exist to admit LAN and tailnet
+while denying the internet, and they still do exactly that:
+
+- internet traffic arrives with a public source IP and is aborted — router
+  NAT rewrites the *destination*, not the source;
+- a private source cannot be spoofed from outside, because the request must
+  complete both a TCP and a TLS handshake before Caddy evaluates anything;
+- other LAN devices can reach those apps, but `private_ranges` admits them
+  **by design** — that is not a consequence of anything found here.
+
+The only real implication is narrower: the `100.64.0.0/10` clause in those
+matchers may be **redundant**, since `private_ranges` would already cover
+whatever Caddy sees. Do not act on that without measuring first — it may be
+doing genuine work for a device on the tailnet but *not* on the LAN, such as
+a phone on mobile data.
+
+One documentation point does follow. The 2026-07-23 ACL entry describes those
+gates as relying on "trusting the tailnet CGNAT range as personal only". If
+tailnet traffic does not present as CGNAT, that framing is inaccurate: they
+are really "LAN **or** tailnet", with LAN the broader admission. An accuracy
+correction, not an exposure.
 
 The sidecar approach is stronger anyway: access is decided by tailnet policy
 at the network layer, not by IP matching in a proxy.
