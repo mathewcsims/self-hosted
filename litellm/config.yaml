@@ -98,6 +98,31 @@ model_list:
       model: vertex_ai/gemini-3-flash-preview
       vertex_location: global
 
+  # ── MaaS models via the OpenAI-compatible endpoint ─────────────────────
+  # These are NOT publisher models under /publishers/<pub>/models — they are
+  # served through Vertex's OpenAI-compatible surface
+  # (/endpoints/openapi/chat/completions) and must be named with their
+  # publisher prefix. LiteLLM reaches them with the `vertex_ai/openai/...`
+  # form. Missing this endpoint entirely is why the first availability sweep
+  # wrongly concluded there was no third-party access at all.
+  #
+  # US/global only — no EU region serves these, so every request leaves the
+  # UK and the EU. Named accordingly.
+  - model_name: gpt-oss-120b-global
+    litellm_params:
+      model: vertex_ai/openai/gpt-oss-120b-maas
+      vertex_location: global
+
+  - model_name: gpt-oss-20b-global
+    litellm_params:
+      model: vertex_ai/openai/gpt-oss-20b-maas
+      vertex_location: global
+
+  - model_name: qwen3-next-80b-global
+    litellm_params:
+      model: vertex_ai/qwen/qwen3-next-80b-a3b-instruct-maas
+      vertex_location: global
+
 general_settings:
   # Every request needs a virtual key. Without this the proxy would accept
   # unauthenticated calls from anything that reaches the port.
