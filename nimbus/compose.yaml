@@ -47,14 +47,17 @@ services:
       retries: 5
 
   nimbus:
-    # Pinned to the exact digest behind :latest as of 2026-07-02 (no clean
+    # 2026-08-02 CVE pass: re-pinned to the current :latest digest, taking
+    # fixable HIGH/CRITICAL findings from 11 down to 3 (verified by scanning
+    # both digests). The remaining 3 are upstream's to rebuild.
+    # Pinned to the exact digest behind :latest as of 2026-08-02 (no clean
     # version-tag releases exist upstream to pin to instead — confirmed via
     # Docker Hub's own API, and cross-checked against Nimbus's GitHub releases
     # for CVEs: none found). Pinning means an upstream push to :latest can't
     # silently change what's running here — an intentional `docker compose
     # pull` + digest update is required, same discipline as Vikunja's version
     # pin (see ../vikunja/compose.yaml) and copyparty's.
-    image: turboot/nimbus@sha256:3a8f9651f467c422fd3e45321e7cc1e3e2a856819eef8183d01c3f9af7c9b151
+    image: turboot/nimbus@sha256:23c9909638a5c94725a6c54ca6ca758ea7032fbcf71d64d79cb1cd1d824dcc78
     container_name: nimbus
     restart: unless-stopped
     environment:

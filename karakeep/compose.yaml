@@ -44,7 +44,12 @@ services:
     # analytics, and Uptime Kuma's latest builds, so likely a wider
     # ecosystem lag, not karakeep-specific), CVE-2026-64831 (ffmpeg, no
     # fix published at all). Re-check next weekly scan.
-    image: ghcr.io/karakeep-app/karakeep@sha256:8157c269bacf954c0c759f79bb52bb61cb877a44d5cc8d60f6763a87f678a9e0
+    #
+    # 2026-08-02 CVE pass: re-pinned to the current :latest digest (v0.33.1
+    # line). Fixable HIGH/CRITICAL findings drop 100 -> 82, verified by
+    # scanning both digests. The 11 unfixed CRITICALs are unchanged and the
+    # mitigations below still stand.
+    image: ghcr.io/karakeep-app/karakeep@sha256:2a789d4dfd2b15b11e7ea5efd105d5f77483ead61b870f6e67b1a1d3f2a679a9
     container_name: karakeep
     restart: unless-stopped
     # Mitigations pending upstream fixes for the CRITICAL CVEs found in the

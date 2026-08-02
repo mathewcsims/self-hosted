@@ -66,7 +66,18 @@ services:
     # Meilisearch — required by Wanderer, not optional (web depends on it
     # for search). Pinned to the exact version upstream's own reference
     # compose ships, not left floating.
-    image: getmeili/meilisearch:v1.36.0
+    #
+    # 2026-08-02 CVE pass: digest added (was a bare tag). v1.36.0 carries 10
+    # fixable HIGH findings, all Alpine base packages; v1.50/v1.51 are clean
+    # of them. NOT bumped, deliberately, on two counts: upstream Wanderer's
+    # own compose still ships v1.36.0 on main, so a unilateral jump is
+    # untested against this app; and Meilisearch refuses to start against an
+    # incompatible on-disk format, so 1.36 -> 1.51 needs the dump/import
+    # migration documented for karakeep's v1.11 -> v1.49 move in SETUP.md.
+    # Mitigation in the meantime: this container publishes no port and is
+    # reachable only by web/db on the internal network — see the comment on
+    # the absent `ports:` below. Revisit when upstream moves.
+    image: getmeili/meilisearch:v1.36.0@sha256:203a0854738be101bfdada825ac3cbf95e5681bc849757b6bc199e4cfae98faa
     container_name: wanderer-search
     restart: unless-stopped
     security_opt:
