@@ -5155,6 +5155,80 @@ Note `pass-deploy-remote.sh` runs a bare `up -d` with **no `pull`**, so a
 version bump must be a deliberate digest change followed by an explicit
 `docker compose pull` on the host.
 
+### Connecting a client
+
+Everything speaks to this as an **OpenAI-compatible** endpoint. Three things
+to get right, and one of them bites almost every client.
+
+**1. Endpoint — origin and path are usually SEPARATE fields.**
+
+| | |
+|---|---|
+| Base URL / host | `https://litellm.possum-prometheus.ts.net` |
+| Path (if asked separately) | `v1/chat/completions` |
+| Combined, if one field | `https://litellm.possum-prometheus.ts.net/v1` |
+
+**The trap: most clients CONCATENATE host + path.** Put the full endpoint URL
+in the host field and you get
+`…/v1/chat/completions/v1/chat/completions` and a 404. Hit live with Goose,
+and the doubled path is visible right there in the error text:
+
+```
+Resource not found (404) at
+https://litellm.possum-prometheus.ts.net/v1/chat/completions/v1/chat/completions
+```
+
+**A 404 with a repeated path is always this**, never a missing model or a bad
+key. Check the host field before anything else.
+
+**2. One virtual key per device — never the master key.**
+
+`LITELLM_MASTER_KEY` is the admin credential that *mints* keys. It should
+never leave Pass. Give each device its own virtual key so spend is
+attributable and any one device can be revoked without disturbing the others
+— this is the whole reason the deployment carries Postgres.
+
+Mint one (from the Mac, on the tailnet):
+
+```sh
+curl -s -X POST https://litellm.possum-prometheus.ts.net/key/generate \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"key_alias":"<device>-<tool>"}'
+```
+
+Use a descriptive alias (`goose-heartofgold`) — it is what you will be
+reading later when deciding what to revoke. Existing keys:
+`GET /key/info`; revoke with `POST /key/delete`.
+
+**3. Model name must match `config.yaml`**, not the upstream Google ID.
+Clients see `gemini-flash`, not `gemini-3.5-flash`. `GET /v1/models` lists
+what is actually available. Remember the naming carries residency:
+unsuffixed = UK, `-eu` = Belgium, `-global` = anywhere.
+
+**Reachability.** The tailnet is the only route in. If a client cannot
+connect at all — no TLS, no 401, nothing — check Tailscale is up on that
+device before debugging anything else.
+
+**Worked example — Goose (desktop), configured 2026-08-02.** In
+`~/.config/goose/config.yaml`:
+
+```yaml
+providers:
+  litellm:
+    enabled: true
+    model: gemini-flash
+    configured: true
+LITELLM_HOST: https://litellm.possum-prometheus.ts.net   # origin ONLY
+LITELLM_BASE_PATH: v1/chat/completions
+LITELLM_TIMEOUT: '600'
+```
+
+`LITELLM_API_KEY` lives in the **macOS keychain**, not the config file —
+service `goose`, account `secrets`, as a JSON blob. Inspect it with
+`security find-generic-password -s goose -a secrets -w`. Goose reads config
+at launch, so **restart it after any change**.
+
 ### Gotchas
 
 - **The Pass item must be titled exactly `Litellm`**, not `LiteLLM` — the
