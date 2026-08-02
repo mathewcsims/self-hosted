@@ -59,6 +59,26 @@ services:
     image: lscr.io/linuxserver/bookstack@sha256:7f0af07baa41fd6265f5ec57887564d85be03a326f79cb32f926fe735e5313ff
     container_name: bookstack
     restart: unless-stopped
+    # Hardening added 2026-08-02. LAN/tailnet-gated at the proxy, so defence
+    # in depth rather than the primary control. Capability set is dictated by
+    # the image, not chosen: LSIO's s6-overlay boots as root, chowns /config,
+    # then drops to PUID/PGID, and nginx binds :80/:443 inside the container
+    # (verified with netstat in the running container). A bare
+    # `cap_drop: ALL` breaks this class of image — see the nimbus note in
+    # SETUP.md. Limits are ~4x observed steady state (56 MiB, 32 PIDs).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    mem_limit: 768m
+    pids_limit: 256
     depends_on:
       db:
         condition: service_healthy

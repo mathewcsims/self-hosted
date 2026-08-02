@@ -38,6 +38,33 @@ services:
     image: codeberg.org/forgejo/forgejo@sha256:2fdfe28b5c68f82f49580e227b84e2afb43af0250e0631a54a386ef3b1d9b759
     container_name: forgejo
     restart: unless-stopped
+    # Hardening added 2026-08-02. LAN/tailnet-gated at the proxy, so defence
+    # in depth. Capability set is dictated by what this image actually does,
+    # verified in the running container rather than guessed:
+    #   CHOWN/DAC_OVERRIDE/FOWNER/SETGID/SETUID — s6-svscan boots as root and
+    #     drops to the `git` user
+    #   NET_BIND_SERVICE — sshd listens on :22 *inside* the container (the
+    #     2222 in `ports:` below is the host side only)
+    #   SYS_CHROOT — OpenSSH privilege separation chroots its unprivileged
+    #     child; without it sshd refuses to start and git-over-SSH dies while
+    #     the web UI carries on working, which is exactly the kind of
+    #     half-broken state that hides for weeks
+    # A bare `cap_drop: ALL` breaks this image — see the nimbus note in
+    # SETUP.md. Limits are ~4x observed steady state (127 MiB, 16 PIDs).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      - SYS_CHROOT
+    mem_limit: 768m
+    pids_limit: 256
     environment:
       # Forgejo's own docker convention (not PUID/PGID like linuxserver
       # images) — matches the Mac user's uid/gid, same reasoning as every

@@ -34,6 +34,34 @@ services:
     # No `ports:` — reached only by Caddy (apprise.mathewcsims.uk, LAN-gated)
     # over `pi-shared`, by container name. Same no-published-port pattern as
     # Nimbus/Speedtest Tracker.
+    #
+    # Hardening added 2026-08-02. LAN/tailnet-gated at the proxy, so defence
+    # in depth. This image runs nginx + gunicorn under **supervisord**, which
+    # starts as root and drops privileges — so the same capability set the
+    # LSIO/s6 images need applies here, minus NET_BIND_SERVICE (it listens on
+    # :8000, unprivileged — the port Caddy proxies to).
+    #
+    # Its Trivy headline of "17 unfixed CRITICAL" is really **5 distinct
+    # CVEs**: four Perl ones counted once each across perl, perl-base,
+    # libperl5.40 and perl-modules-5.40, plus one OpenSSH client
+    # use-after-free. Apprise is Python; nothing in its notification path
+    # invokes Perl or ssh. None of them have a published fix.
+    #
+    # mem_limit is deliberately generous — steady state is ~610 MiB, the
+    # highest of anything on the Pi, so 1.5g leaves real headroom rather
+    # than trading an unreachable CVE for OOM-killed notifications.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 1536m
+    pids_limit: 256
     networks:
       - pi-shared
 

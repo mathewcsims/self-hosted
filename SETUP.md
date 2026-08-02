@@ -5647,9 +5647,34 @@ and memory/PID limits at roughly 3× observed steady state. This patches
 nothing; it caps the blast radius so a crash or resource-exhaustion attempt
 stays a contained restart instead of taking the ingress host with it.
 
-**Still unhardened, LAN-only, worth doing when convenient** (not urgent —
-the proxy gate is the real control): `apprise`, `speedtest-tracker`,
-`bookstack`, `forgejo`.
+**The LAN-only four were done the same day**: `apprise`,
+`speedtest-tracker`, `bookstack` and `forgejo` all now have
+`no-new-privileges`, `cap_drop: ALL` with only the capabilities they need,
+and memory/PID limits at ~4× steady state. Every container in the estate
+that faces a hostname is now capped.
+
+**The capability set is dictated by the image, never chosen.** All four run
+an init system that starts as root and drops privileges — s6-overlay for the
+LSIO images and Forgejo, supervisord for Apprise — so
+CHOWN/DAC_OVERRIDE/FOWNER/SETGID/SETUID are mandatory in every case. On top
+of that, decided by checking what each actually binds with `netstat` inside
+the running container rather than assuming:
+
+- `NET_BIND_SERVICE` for bookstack, speedtest-tracker and forgejo — nginx
+  binds :80/:443, and Forgejo's sshd binds **:22 inside** the container (the
+  2222 in `ports:` is the host side only). **Not** granted to apprise, which
+  listens on :8000.
+- `SYS_CHROOT` for forgejo alone — OpenSSH privilege separation chroots its
+  unprivileged child. Without it sshd refuses to start **while the web UI
+  carries on working**, so git-over-SSH would break silently.
+
+**Verified per app, not just "container is up":** speedtest and bookstack
+serving 302 with clean logs; **apprise proven end-to-end by sending a real
+notification and confirming both fan-out targets** (ntfy *and* Discord)
+delivered it — a health check would not have caught a broken relay; forgejo
+web serving 200, `sshd` confirmed running inside the container, an SSH
+connection completing the transport handshake, and `git ls-remote` against
+the contact-sync store returning refs.
 
 **Cost of that change, recorded honestly:** `cap_drop: ALL` on nimbus caused
 ~4 minutes of downtime on `dashboard.mathewcsims.uk`. Its image runs nginx
