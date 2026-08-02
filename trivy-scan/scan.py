@@ -9,12 +9,17 @@ Image list is derived live from the repo (every `image:` in every
 compose.yaml, every `FROM` in every Dockerfile) — not a maintained list
 that could drift from what's actually pinned.
 
-State (which CVE IDs have already been seen, per image) lives outside the
-repo at ~/trivy-scan-state/, same "scripts tracked, runtime data isn't"
+State (which CVE IDs have already been seen, per *repository*) lives outside
+the repo at ~/trivy-scan-state/, same "scripts tracked, runtime data isn't"
 split as contact-sync/. Only NEWLY-seen HIGH/CRITICAL CVEs trigger a
 notification — a CVE already known and accepted doesn't re-alert every
 week, matching the resend-only-on-change spirit of the rest of this repo's
 notification setup, not a wall of repeats.
+
+Keyed on the repository, NOT the full image reference — see repo_key() for
+why. The digest is recorded alongside and a change in it is reported as
+"re-pinned", so a rebuild reads as "same findings, new build" instead of
+looking like a fresh wave of vulnerabilities.
 
 Findings are grouped by what they actually call for, not just severity:
 fixable (any severity — bump the pin) and unfixed-critical (no patch
@@ -114,27 +119,117 @@ def scan(image):
     return found, None
 
 
+def repo_key(image):
+    """State key: repository + tag, with only the digest stripped.
+
+    State used to be keyed by the FULL image reference, digest included —
+    which meant every pin bump created a brand-new key with no history, so
+    the image's entire existing finding set re-reported as "new". A CVE pass
+    is exactly the thing that bumps digests, so the fix guaranteed a false
+    alarm the following week: the 2026-08-02 pass patched 25 findings and
+    was reported as "155 new findings" for that reason alone.
+
+    Dropping ONLY the digest means a rebuild of the same tag is compared
+    against what that tag showed last time, so only genuinely-new CVE IDs
+    alert. The digest is still recorded (as `ref`) and a change in it is
+    called out as "re-pinned", so "same findings, new build" stays visible
+    rather than silent.
+
+    The tag is deliberately KEPT. Keying on the bare repository was tried
+    first and is wrong — this repo pins several distinct images from one
+    repository, and collapsing them makes whichever scans last overwrite the
+    others, so their findings vanish from state and re-alert on the next run,
+    alternating forever. Real collisions here:
+      caddy:2.11.4-alpine        vs caddy:2.11.4-builder-alpine
+      python:3.13-alpine         vs python:3.14-slim
+      getmeili/meilisearch:v1.36.0 vs :v1.50.0   (wanderer vs karakeep)
+
+    Consequence to be aware of: bumping a version *tag* (uptime-kuma 2.4.0 ->
+    2.5.0) still creates a new key and re-reports. That is defensible — a
+    different upstream version is worth re-reviewing — and it is not what
+    caused the false alarm, which was digest churn on unchanged tags.
+    """
+    return image.split("@", 1)[0]
+
+
+def load_state():
+    """Load state, migrating the old full-reference format in place.
+
+    Old format: {"<full ref>": {cve: info}}
+    New format: {"<repo>": {"ref": "<full ref>", "findings": {cve: info}}}
+
+    Migration unions the findings of every old key that maps to the same
+    repository. That is deliberate: those CVE IDs have all been seen and
+    reported before, and the point of the state file is not to re-alert on
+    them.
+    """
+    if not STATE_FILE.exists():
+        return {}, True
+    raw = json.loads(STATE_FILE.read_text())
+    if not raw:
+        return {}, True
+    if all(isinstance(v, dict) and "findings" in v for v in raw.values()):
+        return raw, False
+    migrated = {}
+    for old_ref, findings in raw.items():
+        entry = migrated.setdefault(repo_key(old_ref), {"ref": old_ref, "findings": {}})
+        entry["findings"].update(findings)
+        entry["ref"] = old_ref
+    return migrated, False
+
+
 def main():
     STATE_DIR.mkdir(exist_ok=True)
-    state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
-    is_first_run = not state
+    state, is_first_run = load_state()
 
     images = find_images()
     new_findings = {}
+    rebuilt = {}
     errors = {}
+    scanned_keys = set()
+    pruned = []
 
     for image in images:
         found, err = scan(image)
         if err:
             errors[image] = err
             continue
-        prev = set(state.get(image, {}).keys())
-        new_ids = set(found.keys()) - prev
+        key = repo_key(image)
+        prev_entry = state.get(key) or {"ref": None, "findings": {}}
+        new_ids = set(found.keys()) - set(prev_entry["findings"].keys())
         if new_ids:
             new_findings[image] = {vid: found[vid] for vid in new_ids}
-        state[image] = found
+        # Same repo, different digest — worth surfacing even when the CVE set
+        # is unchanged, since it means what's deployed was re-pinned.
+        if prev_entry["ref"] and prev_entry["ref"] != image:
+            gone = set(prev_entry["findings"].keys()) - set(found.keys())
+            rebuilt[key] = {"was": prev_entry["ref"], "now": image,
+                            "added": len(new_ids), "cleared": len(gone)}
+        state[key] = {"ref": image, "findings": found}
+        scanned_keys.add(key)
+
+    # Drop state for images no longer pinned anywhere in the repo — otherwise
+    # every removed app, and every pin whose TAG changed (e.g. `:latest` ->
+    # digest-only, which changes the key), leaves a key behind forever.
+    # Guarded on a clean run: if any image failed to scan, its key would look
+    # absent and pruning would silently discard real history, so a transient
+    # registry error must never cost us the suppression list.
+    if not errors:
+        for stale in set(state) - scanned_keys:
+            del state[stale]
+            pruned.append(stale)
 
     STATE_FILE.write_text(json.dumps(state, indent=1))
+
+    if pruned:
+        print(f"pruned {len(pruned)} state key(s) no longer pinned in the repo: "
+              + ", ".join(sorted(pruned)))
+
+    if rebuilt:
+        print(f"{len(rebuilt)} image(s) re-pinned since the last scan:")
+        for key, r in sorted(rebuilt.items()):
+            print(f"  {key}: {r['cleared']} cleared, {r['added']} added "
+                  f"({r['was'].split('@')[-1][:19]} -> {r['now'].split('@')[-1][:19]})")
 
     if errors:
         print(f"{len(errors)} image(s) failed to scan:", file=sys.stderr)
@@ -170,6 +265,15 @@ def main():
         header = ("Initial baseline scan" if is_first_run
                   else "New findings since the last scan")
         report_lines.append(f"# Trivy: {header} ({total} finding(s))\n")
+        if rebuilt:
+            # Context, not a finding: without this a re-pinned image's numbers
+            # look like a regression when they are usually the opposite.
+            report_lines.append("## Re-pinned since the last scan\n")
+            for key, r in sorted(rebuilt.items()):
+                report_lines.append(
+                    f"- `{key}`: {r['cleared']} finding(s) cleared, {r['added']} new "
+                    f"(`{r['was'].split('@')[-1][:19]}…` → `{r['now'].split('@')[-1][:19]}…`)")
+            report_lines.append("")
         for image, cves in sorted(new_findings.items()):
             report_lines.append(f"## {image}")
             for vid, info in sorted(cves.items(), key=lambda kv: (kv[1]["severity"] != "CRITICAL", kv[0])):
@@ -237,6 +341,13 @@ def main():
                                  f"action possible): {counts}")
             summary_lines.append("")
 
+        if rebuilt:
+            cleared = sum(r["cleared"] for r in rebuilt.values())
+            summary_lines.append(f"**{len(rebuilt)} image(s) re-pinned** since the last "
+                                 f"scan, clearing {cleared} finding(s) — counts above are "
+                                 f"net of that.")
+            summary_lines.append("")
+
         summary_lines.append(f"Full detail: `{REPORT_FILE}` on the Mac.")
         if errors:
             summary_lines.append(f"{len(errors)} image(s) failed to scan — see trivy-scan.log.")
@@ -251,7 +362,7 @@ def main():
               f"{len(unfixed_critical)} unfixed-critical, {len(unfixed_high)} unfixed-high) "
               f"across {len(new_findings)} image(s) — full detail in {REPORT_FILE}")
     else:
-        print("no new findings")
+        print("no new findings" + (f" ({len(rebuilt)} image(s) re-pinned)" if rebuilt else ""))
 
 
 if __name__ == "__main__":
