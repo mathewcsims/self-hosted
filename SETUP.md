@@ -5032,44 +5032,53 @@ The Google Cloud CLI is installed **in userspace** at
 `~/google-cloud-sdk` on slartibartfast (there is no passwordless sudo on
 that host, and this needs none) — official tarball, nothing system-wide.
 
-### What this project actually has — probed, not assumed
+### What this project actually has — and how two sweeps got it wrong
 
-**The publisher-model LIST endpoints are unavailable to this credential.**
-They require a quota project, and the ADC account lacks
-`serviceusage.services.use` to set one — so `gcloud ai model-garden models
-list` and the `/publishers/google/models` REST endpoints all fail, even
-though *inference* works fine. Availability therefore had to be established
-by probing: 31 model IDs × 6 regions, with a real call to the correct
-endpoint per family (`generateContent`, `predict`, `rawPredict`).
+**17 models are exposed.** Getting there took three passes, and the two
+failures are worth more than the answer.
 
-**Result: 9 available, all Google.**
+**The LIST APIs are unavailable to this credential.** They need a quota
+project, and the ADC account lacks `serviceusage.services.use` to set one —
+so the REST `/publishers/*/models` endpoints fail, and `gcloud ai
+model-garden models list` falls back to Google's shared project
+(`32555940559`, `SERVICE_DISABLED`) on the Mac too. Inference works fine;
+only enumeration is blocked.
 
-| Model | Available in |
+**Failure 1 — probing only one API surface.** The first sweep tested only
+`/publishers/<pub>/models/<id>`. MaaS models (gpt-oss, qwen) are served from
+`/endpoints/openapi/chat/completions` with **publisher-prefixed** names, a
+different surface entirely. Missing it hid three models.
+
+**Failure 2 — guessing stale model names.** The second sweep probed
+`gemini-2.0-*`, `gemini-3-pro`, `claude-sonnet-4-5`, `claude-opus-4-1`. None
+exist. The current generation is **Gemini 3.5/3.6 and Claude 5**, so every
+probe 404'd and the sweep concluded "no Anthropic, Meta or Mistral access on
+this project" — confidently, and completely wrongly. Claude Opus 5 and
+Sonnet 5 were available the whole time.
+
+**What actually resolved it: reading the Model Garden UI.** Each model page
+shows a **Model ID** (`publishers/anthropic/models/claude-opus-5`) and a
+**Version name** (`claude-opus-5@default`). That is ground truth. When the
+list APIs are blocked, read the portal — do not extrapolate from model names
+you think you know.
+
+| Region | Models |
 |---|---|
-| `gemini-2.5-flash` | all 6 regions **including europe-west2** |
-| `gemini-2.5-pro` | eu-west1/4/9, us-central1, global — **not** west2 |
-| `gemini-2.5-flash-lite` | eu-west1/4/9, us-central1, global — **not** west2 |
-| `gemini-2.5-flash-image` | eu-west1/4, us-central1, global — **not** west2 |
-| `gemini-3-flash-preview` | **global only** |
-| `text-embedding-005` / `-004` | all 6 regions |
-| `text-multilingual-embedding-002` | all 6 regions |
-| `gemini-embedding-001` | all 6 regions |
+| **europe-west2** (London, UK) | `gemini-3.5-flash`, `gemini-2.5-flash`, and all four embedding models |
+| **europe-west1** (Belgium, EU) | `gemini-2.5-pro`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-image` |
+| **global** (anywhere) | `claude-opus-5`, `claude-sonnet-5`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3-flash-preview`, `gpt-oss-120b`, `gpt-oss-20b`, `qwen3-next-80b` |
 
-**There is no Anthropic, Meta, Mistral or Imagen access on this project** —
-every Claude, Llama, Mistral and Imagen ID returned 404 in every region, as
-did `gemini-3-pro`, non-preview `gemini-3-flash`, all `gemini-2.0-*` and all
-`gemini-1.5-*`. If Model Garden access is granted later, re-probe rather than
-assuming.
+**Not available, and why:**
 
-**Two traps worth recording:**
+- **Mistral** (`mistral-medium-3` etc.) — visible in Model Garden but shows an
+  **Enable** button, i.e. not yet enabled on this project. Click Enable in the
+  portal, then re-probe; nothing here needs changing first.
+- `claude-haiku-5`, `gemini-3.6-pro`, `gemini-3.5-pro`, `gemini-3.6-flash-lite`,
+  `gemini-4-flash`, Llama, Imagen — 404 in every region tried.
 
-- **The `global` location's host is `aiplatform.googleapis.com`**, NOT
-  `global-aiplatform.googleapis.com`. Getting that wrong produces a 404 that
-  looks exactly like "model not available" — which is precisely the wrong
-  conclusion drawn on the first pass here. `global` actually has the widest
-  coverage of any location.
-- **An unavailable model fails at *call* time with a 404, not at startup**,
-  so a perfectly healthy proxy can still reject every request.
+**Re-probe rather than assume** whenever this is revisited: model generations
+turn over fast, and `/tmp/probe*.py`-style scripts (a model × region matrix
+hitting the right endpoint per family) take minutes.
 
 ### Data residency — deliberate, and visible at the point of use
 
