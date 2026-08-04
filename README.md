@@ -140,14 +140,18 @@ apparent, 7.9 MB on disk — reading them would hydrate the lot), and ~60 GB
 of regenerable machine state (caches, package stores, downloaded models,
 podman VM images).
 
-**One gap needs a decision from you.** macOS TCC blocks 127 directories
-under `~/Library`, plus the Photos Library, from any process without Full
-Disk Access — so Photos, Apple Mail, Messages and Safari currently have
-Time Machine as their only backup. Granting Full Disk Access to `kopia`
-(System Settings ▸ Privacy & Security) and dropping two ignore rules closes
-it; see [SETUP.md](SETUP.md). Thunderbird — the actual mail store here —
-Keychains and Preferences are readable and *are* backed up, as their own
-sources.
+`~/Library` is excluded from that source and its valuable parts backed up
+as their own instead — **Thunderbird** (the real mail store), **Application
+Support**, **Keychains** and **Preferences**. Full Disk Access was granted
+to `kopia` to make those readable at all, but even with it a real snapshot
+of `~/Library` hit 803 unreadable paths: 671 of them one per-app file, the
+rest Apple's own Siri/Spotlight/HomeKit service state. None is user data,
+and the set grows with every app installed, so excluding it wholesale keeps
+the nightly run at zero errors — which is what the verifier trusts.
+
+Apple Mail, Messages and the Photos library are excluded **by choice, not
+limitation**: none is used. Thunderbird is the mail store here, and
+photographs live in Immich, itself a Kopia source.
 
 **Backups are verified, and say so.** A separate nightly job
 (`kopia-mac/verify-backups.sh`, 06:00, after all three hosts have finished)

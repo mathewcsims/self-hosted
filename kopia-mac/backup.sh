@@ -43,10 +43,24 @@ set -eu
 REPO_ROOT="/Users/mathewcsims/self-hosted"
 LOG="$REPO_ROOT/kopia-mac/backup.log"
 APPRISE_URL="https://apprise.mathewcsims.uk/notify/self-hosted"
-# The readable, high-value parts of ~/Library, snapshotted individually
-# because /Library/ as a whole is excluded from the home source above
-# (TCC). Thunderbird is the real mail store on this Mac; Keychains and
-# Preferences are small and painful to lose.
+# The valuable parts of ~/Library, snapshotted individually because
+# /Library/ as a whole is excluded from the home source above.
+#
+# WHY /Library/ IS EXCLUDED EVEN THOUGH kopia HAS FULL DISK ACCESS. FDA cut
+# the unreadable set from 127 directories to a handful of top-level ones —
+# but a real snapshot with /Library/ included still hit 803 unreadable
+# paths. 671 of those are one per-app file
+# (.com.apple.containermanagerd.metadata.plist, one for every sandboxed app
+# on the machine) and the other 132 are Apple's own service state: Siri,
+# Spotlight, HomeKit, Weather, Suggestions, Group Containers for Apple
+# apps. macOS protects them beyond FDA, none of it is user data, and the
+# set grows with every app installed. Enumerating it would be 800+ rules
+# that rot on the next install — so /Library/ stays excluded wholesale and
+# the parts actually worth restoring are named here instead.
+#
+# Each of these has its own small ignore list for the Apple-owned items
+# inside it (`kopia policy show "<path>"`), which is what keeps the nightly
+# snapshot at zero errors — and zero errors is what the verifier trusts.
 HOME_LIB="/Users/mathewcsims/Library"
 # No single source may wedge the whole job again — see the header.
 #
@@ -205,6 +219,7 @@ $REPO_ROOT/wanderer/data
 $HOME_LIB/Thunderbird
 $HOME_LIB/Keychains
 $HOME_LIB/Preferences
+$HOME_LIB/Application Support
 "
 # Extra, deliberately-untracked sources (one absolute path per line) — for
 # folders whose existence shouldn't be documented in the public repo. The

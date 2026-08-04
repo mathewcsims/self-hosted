@@ -3670,49 +3670,87 @@ live list):
 | Excluded | Why |
 |---|---|
 | `/nas-mounts/` | The SMB mount of the NAS — not this Mac's data, and where the Time Machine sparsebundle lives. Re-including it recreates the 40-hour hang described above. |
-| `/Library/` | macOS TCC blocks **127 directories** under here from any process without Full Disk Access. See below. |
-| `/Pictures/Photos Library.photoslibrary/` | Same TCC restriction. |
 | `/Library/CloudStorage/` | **128 GB apparent, 7.9 MB on disk** — Proton Drive placeholders. Reading them makes macOS hydrate the lot from the cloud. Already offsite in Proton Drive anyway. |
-| `.cache`, `.npm`, `.ollama`, `.minutes/models`, `go/pkg`, `.local/share/containers`, `.Trash` | ~60 GB of regenerable machine state. The podman VM images alone are 31 GB and are rebuilt from the compose files plus the app data already backed up. |
+| `/Library/Mail/`, `/Library/Messages/` | **Deliberate, not a limitation** — Mathew doesn't use Apple Mail or Messages. Thunderbird is the real mail store here and *is* backed up. |
+| `/Pictures/Photos Library.photoslibrary/` | **Deliberate** — Photos isn't used; photographs live in Immich, which is itself a Kopia source on slartibartfast. (The local library is an empty shell: 406 files, 82 KB.) |
+| `/Library/` | 803 paths under here are unreadable even with Full Disk Access, and none of them is user data — see below. Its valuable parts are separate sources instead. |
+| `.cache`, `.npm`, `.ollama`, `.minutes/models`, `go/pkg`, `.local/share/containers`, `.Trash`, `Library/Caches`, `Library/Logs`, `Library/pnpm` | ~60 GB of regenerable machine state. The podman VM images alone are 31 GB and are rebuilt from the compose files plus the app data already backed up. |
 
-**Why `/Library/` is excluded wholesale rather than per-path.** The blocked
-set is 127 directories scattered through `Application Support`, `Group
-Containers`, `Containers` and the rest, and it changes with macOS releases.
-A hand-maintained exclusion list would rot, and the failure mode is a job
-that starts erroring every night on a directory that did not exist last
-month. One rule that is obviously true beats 127 that quietly go stale.
+Because `/Library/` is excluded from the home source (see below), its
+valuable parts are separate sources:
 
-The readable, irreplaceable parts are added back as their own sources —
-confirmed to contain no blocked subdirectories:
+| Source | Size | Own exclusions |
+|---|---|---|
+| `~/Library/Thunderbird` | 5.1 GB — the real mail store on this Mac | none |
+| `~/Library/Application Support` | ~16 GB of app data | 11 Apple-owned subdirectories |
+| `~/Library/Keychains` | 14 MB | none |
+| `~/Library/Preferences` | 2.8 MB | 6 Apple-owned plists |
 
-- `~/Library/Thunderbird` (5.1 GB) — the actual mail store on this Mac
-- `~/Library/Keychains` (14 MB)
-- `~/Library/Preferences` (2.8 MB)
+`Containers` and `Group Containers` are deliberately NOT included: between
+them they are almost entirely Apple sandbox state and the 671 protected
+metadata files described below.
 
-#### Closing the TCC gap (needs one manual step)
+#### Full Disk Access is granted to kopia, and `/Library/` is STILL excluded
 
-Photos, Apple Mail, Messages and Safari are **not** in Kopia and have Time
-Machine as their only backup. Time Machine can read them because Apple
-grants it a private entitlement; ordinary tools get `operation not
-permitted`. To close it:
+**FDA granted 2026-08-04.** It genuinely helps — it is what lets kopia read
+`~/Library/Application Support`, `Containers`, `Thunderbird`, `Keychains`
+and `Preferences` at all. But it does **not** make `~/Library` snapshottable
+as a whole, and the numbers are worth recording because the intuition is
+wrong:
 
-1. System Settings ▸ Privacy & Security ▸ **Full Disk Access** ▸ `+`
-2. Add `/opt/homebrew/bin/kopia` (⌘⇧G to type the path), and enable it.
-3. Drop the two TCC exclusions:
-   ```sh
-   kopia policy set ~ --remove-ignore '/Library/' \
-                      --remove-ignore '/Pictures/Photos Library.photoslibrary/'
-   ```
-4. Re-check nothing is still unreadable, then seed the bigger snapshot by
-   hand (the first run after this will be large — do it outside the nightly
-   job so the 3-hour per-source timeout does not kill it):
-   ```sh
-   kopia snapshot estimate ~     # must finish without "operation not permitted"
-   kopia snapshot create ~
-   ```
+- Before FDA, a scan found **127** unreadable directories.
+- After FDA, a `kopia snapshot estimate` reported just **1**.
+- A real `kopia snapshot create` with `/Library/` included then hit **803**.
 
-This is a security setting, so it is deliberately left as a manual step
-rather than automated.
+The estimate undercounts badly: it stops descending a branch at the first
+failure, so it sees the top of each blocked tree and nothing beneath. Only
+a real snapshot enumerates the true set — worth remembering before trusting
+a dry run here.
+
+Of those 803: **671** are a single per-app file
+(`.com.apple.containermanagerd.metadata.plist`, one for every sandboxed app
+installed), and the remaining **132** are Apple's own service state — Siri,
+Spotlight, HomeKit, Weather, Suggestions, `Group Containers/com.apple.*`,
+and the sandbox containers of Apple apps. macOS protects all of it beyond
+FDA, none of it is user data, and the set grows with every application
+installed.
+
+So `/Library/` stays excluded wholesale, and the parts worth restoring are
+named as their own sources instead — each with a small ignore list for the
+Apple-owned items inside it, which is what keeps the nightly run at **zero
+errors**. Zero errors is not cosmetic here: it is the signal the verifier
+trusts, so anything that makes errors routine would quietly disable the
+check.
+
+If it ever needs re-granting: System Settings ▸ Privacy & Security ▸ **Full
+Disk Access** ▸ `+` ▸ `/opt/homebrew/bin/kopia` (⌘⇧G to type the path).
+
+**Two traps worth knowing, both hit while setting this up:**
+
+1. **TCC grants are per-binary, and attach to the *responsible* process.**
+   Testing with `ls` from a shell still reports `Operation not permitted`
+   even when kopia itself can read the path perfectly — the responsible
+   process for a terminal command is the terminal, which has no grant. The
+   only meaningful test is running **kopia itself, from launchd**, which is
+   how the nightly job runs. Verified that way here: `ls` could not read
+   the Photos library while kopia, under launchd, read all 406 files of it.
+2. **`/opt/homebrew/bin/kopia` is a symlink** into a versioned Cellar path
+   (`/opt/homebrew/Cellar/kopia/<version>/bin/kopia`). A `brew upgrade
+   kopia` changes that target, which can silently invalidate the grant. If
+   `~/Library` suddenly starts erroring after an upgrade, re-grant first
+   before assuming anything is broken.
+
+To enumerate what is still blocked without uploading anything, temporarily
+tolerate directory errors so the scan reports instead of aborting on the
+first one — then **put it straight back**, because leaving it on turns
+unreadable data into a silently "clean" snapshot and makes the verifier's
+zero-error check meaningless:
+
+```sh
+kopia policy set ~ --ignore-dir-errors=true
+kopia snapshot estimate ~ 2>&1 | grep 'operation not permitted'
+kopia policy set ~ --ignore-dir-errors=false   # DO NOT SKIP
+```
 
 ### Why there is no NAS source any more (removed 2026-08-04)
 
