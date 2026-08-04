@@ -100,7 +100,13 @@ START=$(date +%s)
 if "$REPO_ROOT/scripts/mirror-backup-to-external-drive.sh" "$TARGET_VOL" >> "$LOG" 2>&1; then
     END=$(date +%s)
     MINS=$(( (END - START) / 60 ))
-    SIZE=$(du -sh "$TARGET_VOL/kopia-mirror" 2>/dev/null | cut -f1)
+    # awk, not `cut -f1`: du pads its output, so cut yields " 75G" with a
+    # leading space. And default to "unknown" rather than leaving it blank —
+    # the first real run wrote an empty size, which made both the log line
+    # and the notification read "complete in 38m ()". A cosmetic field
+    # should not be able to produce a confusing report.
+    SIZE=$(du -sh "$TARGET_VOL/kopia-mirror" 2>/dev/null | awk '{print $1}')
+    [ -n "$SIZE" ] || SIZE="unknown"
     # The verifier reads this to report how stale the second copy is, so it
     # is written ONLY on success — a failed run must not look like a fresh
     # mirror, or the staleness warning silently stops working.
