@@ -272,12 +272,27 @@ fi
 # it cannot be missed but also cannot cry wolf.
 MIRROR_STATE="$REPO_ROOT/kopia-mac/.mirror-state"
 MIRROR_NOTE=""
+_m_epoch=""
 if [ -f "$MIRROR_STATE" ]; then
-    _m_epoch=$(awk -F= '/^last_success_epoch=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo 0)
+    _m_epoch=$(awk -F= '/^last_success_epoch=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo "")
     _m_human=$(awk -F= '/^last_success_human=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo "unknown")
     _m_size=$(awk -F= '/^size=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo "?")
-    _m_days=$(( ( $(date +%s) - ${_m_epoch:-0} ) / 86400 ))
-    if [ "${_m_epoch:-0}" -gt 0 ] 2>/dev/null && [ "$_m_days" -le "$MIRROR_MAX_AGE_DAYS" ]; then
+fi
+
+# VALIDATE BEFORE DOING ARITHMETIC ON IT. Caught in review: a state file
+# with a non-numeric epoch (truncated write, manual edit) made $(( ))
+# fail, and `set -eu` then killed the whole script — so a corrupt
+# second-copy marker suppressed the ENTIRE nightly verification, with no
+# notification at all. The least important input in this file was able to
+# silence its most important output. An unparseable marker now reads as
+# "never completed", which is both true and safe.
+case "$_m_epoch" in
+    ''|*[!0-9]*) _m_epoch="" ;;
+esac
+
+if [ -n "$_m_epoch" ]; then
+    _m_days=$(( ( $(date +%s) - _m_epoch ) / 86400 ))
+    if [ "$_m_days" -le "$MIRROR_MAX_AGE_DAYS" ]; then
         MIRROR_NOTE="
 
 **Offline mirror:** last updated $_m_human ($_m_days days ago, $_m_size) — the Pi's and slartibartfast's second copy is current."
@@ -290,8 +305,8 @@ if [ -f "$MIRROR_STATE" ]; then
 else
     MIRROR_NOTE="
 
-⚠️ **Offline mirror has never completed** since automation was added. The Pi's and slartibartfast's data has only one copy, in Backblaze B2, until the external drive is connected."
-    log "WARNING: no offline mirror state recorded yet"
+⚠️ **Offline mirror has never completed** (or its state marker is unreadable). The Pi's and slartibartfast's data has only one copy, in Backblaze B2, until the external drive is connected."
+    log "WARNING: no usable offline mirror state recorded"
 fi
 
 log "=== verification passed ==="
