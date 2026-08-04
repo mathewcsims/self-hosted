@@ -2269,6 +2269,43 @@ above), same pattern as `scripts/pass-create-vikunja-relay-secret.sh`.
    toggle alone. Only remove any setup-time IP-allowlist in the Caddyfile
    after that's confirmed.
 
+**Medications are moving off this app to MedTimer (decided 2026-08-04).**
+Accumulated rough edges and bugs — the 15-minute reminder loop above, plus
+enough smaller ones to erode confidence — but the deciding factor was that
+a medication's dose can't be altered after it's created. The upstream
+tracker was checked before concluding that's a design gap rather than a
+reportable bug: nothing matching `dose` or `dosage` covers editing a dose
+post-creation. The near misses are all something else — #316 (inventory),
+#650 (JSON intake import skipping entries), #214 (`calculateCompliance`
+ignoring `daysOfWeek`/`intervalWeeks`), #664 (web push firing a day late
+for a 23:45 dose). So it's untracked upstream and not something a version
+bump resolves. **Deliberately not filed** — this is a decision to move on,
+not a feature request, and filing one would imply waiting for it.
+
+[MedTimer](https://github.com/Futsch1/medTimer) (MIT, Android, F-Droid +
+Play Store, fully offline, no account) takes over medications specifically.
+Two reasons it closes the gap: dose changes and tapering are a documented
+use case — one reminder per amount, each bounded to its own active period,
+so a dose change is an end-date plus a start-date and the history stays
+intact — and reminders fire from the phone's own `AlarmManager` rather than
+a server-side tick fanned out over ntfy. That removes the entire class of
+failure the reminder loop above came from: no cron tick, no push relay, no
+channel-specific dedup ledger to get wrong.
+
+**MedTimer's backups do NOT go through Kopia — deliberately.** Its
+automatic backup writes a timestamped JSON to a directory chosen through
+Android's Storage Access Framework, so any DocumentsProvider (SMB to the
+NAS, WebDAV to copyparty) *could* drop it straight into an existing Kopia
+source with no change to `kopia-mac/backup.sh`. Not doing that. Backup is
+**Syncthing → Proton Drive** instead, handled entirely off this repo's
+infrastructure. It keeps phone-originated health data out of the Mac's
+backup path, and the copyparty variant in particular would have cost the
+`vague-403` setting in `copyparty/cfg/copyparty.conf` — which is only free
+there because nothing currently uses WebDAV.
+
+So if you're reading `kopia-mac/backup.sh` wondering why there's no
+MedTimer source: there isn't one, and there shouldn't be.
+
 ---
 
 ## msims.link — URL shortener, runs on the Pi
