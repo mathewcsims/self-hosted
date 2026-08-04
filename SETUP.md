@@ -5809,6 +5809,52 @@ itself on first boot — no need to pre-create them.
   bypasses the file-cleanup signal, orphaning blobs on the share. Empty the
   trash through the UI instead.
 
+### Metadata suggestion: the classifier is on, the LLM layer is not
+
+Two capabilities, routinely conflated because both get called "the AI bit".
+
+**The classifier** is what suggests tags, correspondent, document type and
+storage path. scikit-learn, entirely local, no external calls, and **on by
+default** — `PAPERLESS_TRAIN_TASK_CRON` retrains hourly at :05. There is
+nothing to configure. It learns from your own filing decisions, so it does
+nothing at all until there is a corpus; file a few dozen documents with tags
+and correspondents and suggestions appear on their own.
+
+Worth knowing alongside it: per-tag matching supports `MATCH_LITERAL`,
+`MATCH_REGEX` and `MATCH_FUZZY`, none of which need training. For a rule
+like "anything mentioning the NHS number gets tagged Medical", a regex match
+beats the classifier and works from the first document. `MATCH_AUTO` is the
+mode that defers to the classifier.
+
+**The LLM layer is deliberately off.** 3.x ships a complete `paperless_ai`
+package — embeddings, vector store, document chat — so the RAG layer this
+repo would once have needed a third-party tool for is now native. Unlike the
+classifier it works zero-shot, so it would be useful immediately.
+
+It stays off because this instance holds personal medical and legal
+documents and the classifier already covers what the store is for. The
+decision to revisit is "what is the classifier actually missing", answerable
+only once there are documents.
+
+If it is ever turned on, the live options (read from the running container,
+not the docs):
+
+- `PAPERLESS_AI_LLM_BACKEND` — `ollama` or `openai-like`
+- `PAPERLESS_AI_LLM_EMBEDDING_BACKEND` — `huggingface`, `ollama` or
+  `openai-like`. **`huggingface` runs embeddings locally inside the
+  container**, no external calls, whichever LLM backend is chosen — so
+  "local embeddings, cloud LLM only for the retrieved chunks" is a
+  supported shape rather than something needing to be built.
+- `PAPERLESS_LLM_INDEX_TASK_CRON` — vector index rebuild, default daily
+  02:10.
+
+There is already an Ollama on the Mac (`qwen3.5:4b`), but it binds
+`127.0.0.1` only and is therefore **not reachable from the podman VM**.
+Using it needs `OLLAMA_HOST=0.0.0.0` and a restart, which exposes an
+unauthenticated Ollama to the whole LAN — weigh that rather than assuming it
+is free. `../litellm/` is not an option here at any point: employer-funded
+infrastructure, personal medical documents.
+
 ### Backups — deliberately half a source
 
 `kopia-mac/backup.sh` snapshots `paperless/data` (SQLite database, Tantivy

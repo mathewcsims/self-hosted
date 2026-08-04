@@ -250,6 +250,45 @@ services:
       # deprecated, and there is no reason to start out on it. Compose does
       # not interpolate {{ }} (only ${ }), so this passes through untouched.
       PAPERLESS_FILENAME_FORMAT: "{{ created_year }}/{{ correspondent }}/{{ title }}"
+
+      # ── METADATA SUGGESTION: classifier YES, LLM NO ───────────────────
+      # Two separate capabilities in 3.x, easily conflated.
+      #
+      # THE CLASSIFIER (this setting) is what suggests tags, correspondent,
+      # document type and storage path. scikit-learn, entirely local, no
+      # external calls. It is on by default; stated explicitly here because
+      # it IS the metadata-suggestion feature and should be visible at the
+      # point of use rather than inherited silently — same reasoning as
+      # karakeep's INFERENCE_ENABLE_AUTO_TAGGING.
+      #
+      # It learns from your own filing, so it does nothing until there is a
+      # corpus to learn from. Hourly at :05 is upstream's default and is
+      # frequent enough that newly-filed documents start influencing
+      # suggestions the same day.
+      PAPERLESS_TRAIN_TASK_CRON: "5 */1 * * *"
+
+      # THE LLM LAYER is deliberately OFF (this is also upstream's default,
+      # stated explicitly because it is a decision here, not an oversight).
+      # 3.x ships a full paperless_ai package — embeddings, vector store,
+      # document chat — and it would work from the first document rather
+      # than needing a corpus like the classifier does.
+      #
+      # It stays off because this instance holds personal medical and legal
+      # documents, and the classifier already covers what this store is
+      # actually for. Revisit once there are enough documents to know what
+      # the classifier is genuinely missing — not before.
+      #
+      # If it is ever enabled: PAPERLESS_AI_LLM_BACKEND accepts `ollama` or
+      # `openai-like`, and PAPERLESS_AI_LLM_EMBEDDING_BACKEND additionally
+      # accepts `huggingface`, which runs embeddings locally in this
+      # container with no external calls whichever LLM backend is chosen.
+      # There is already an Ollama on this Mac (qwen3.5:4b) — but it binds
+      # 127.0.0.1 only, so it is NOT reachable from the podman VM without
+      # setting OLLAMA_HOST=0.0.0.0, which exposes an unauthenticated Ollama
+      # to the whole LAN. Weigh that before reaching for it.
+      # An employer-funded endpoint (../litellm/) is NOT an option here at
+      # any point — see the header.
+      PAPERLESS_AI_ENABLED: "false"
     volumes:
       # LOCAL — SQLite database, Tantivy index, classifier model. See header.
       - ./data:/usr/src/paperless/data
