@@ -282,10 +282,19 @@ services:
       # `openai-like`, and PAPERLESS_AI_LLM_EMBEDDING_BACKEND additionally
       # accepts `huggingface`, which runs embeddings locally in this
       # container with no external calls whichever LLM backend is chosen.
-      # There is already an Ollama on this Mac (qwen3.5:4b) — but it binds
-      # 127.0.0.1 only, so it is NOT reachable from the podman VM without
-      # setting OLLAMA_HOST=0.0.0.0, which exposes an unauthenticated Ollama
-      # to the whole LAN. Weigh that before reaching for it.
+      # There is already an Ollama on this Mac (qwen3.5:4b), and it IS
+      # reachable from in here at http://host.containers.internal:11434 with
+      # no change to Ollama and nothing exposed beyond this container.
+      #
+      # CORRECTION (2026-08-04, same day): this comment previously claimed
+      # the opposite — that Ollama binds 127.0.0.1 and would need
+      # OLLAMA_HOST=0.0.0.0, exposing it to the LAN. That was wrong, and the
+      # reasoning behind it is worth keeping because it is a trap: Ollama
+      # does bind loopback only, but gvproxy forwards
+      # host.containers.internal (192.168.127.254) to the MAC's loopback,
+      # not the VM's. So Mac-loopback services are reachable from containers
+      # while the Mac's LAN IP is NOT a route to them. Verified by connecting
+      # and reading /api/tags back.
       # An employer-funded endpoint (../litellm/) is NOT an option here at
       # any point — see the header.
       PAPERLESS_AI_ENABLED: "false"
