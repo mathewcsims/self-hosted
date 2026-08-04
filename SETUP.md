@@ -5809,6 +5809,62 @@ itself on first boot — no need to pre-create them.
   bypasses the file-cleanup signal, orphaning blobs on the share. Empty the
   trash through the UI instead.
 
+### Email rendering: Tika + Gotenberg
+
+Added 2026-08-05, because the email *body* is frequently the substantive
+content here rather than just a wrapper around an attachment.
+
+Without these, Paperless ingests an `.eml` as **`text/plain`**: the body is
+extracted and searchable, but there is no archive PDF, so there is nothing
+to actually read in the viewer. With them, the same file becomes
+`message/rfc822` with a rendered PDF alongside the preserved original.
+Verified before and after on this instance.
+
+They also make Office formats (`.docx`, `.odt`, `.xlsx`, `.pptx`)
+ingestible, which would otherwise land as badly as the emails did.
+
+Two services, neither published, both reached by service name:
+
+| Setting | Value |
+|---------|-------|
+| `PAPERLESS_TIKA_ENABLED` | `1` |
+| `PAPERLESS_TIKA_ENDPOINT` | `http://tika:9998` |
+| `PAPERLESS_TIKA_GOTENBERG_ENDPOINT` | `http://gotenberg:3000` |
+
+Upstream's defaults are `localhost:9998` and `localhost:3000`, which only
+make sense when everything shares a network namespace. Left alone they fail
+silently here. **Neither service has any authentication**, so neither may
+ever be published — anything that can reach Gotenberg can make it render
+arbitrary content.
+
+Gotenberg's two command flags are a security control, not tuning. It renders
+HTML in a headless Chromium, and the HTML in question is the body of
+arbitrary inbound email — the least trustworthy input anywhere in this repo.
+`--chromium-disable-javascript=true` stops it executing;
+`--chromium-allow-list=file:///tmp/.*` confines file access. Do not drop
+them to work around a rendering quirk.
+
+**Cost:** ~2.1 GB of images (Gotenberg 1.72 GB — it bundles Chromium *and*
+LibreOffice — plus Tika 422 MB), against a Paperless install that was
+previously two lean containers. This is the largest single addition to the
+stack and was accepted deliberately.
+
+#### Emails imported BEFORE this was enabled cannot be repaired in place
+
+Worth understanding, because the obvious fix does not work. When Tika is
+off, Paperless does not merely skip rendering — it **converts the email to
+plain text at ingest and stores that as the original**. The stored file
+becomes `<subject>.txt` with mime type `text/plain`; the `.eml` is gone.
+
+So `document_archiver` cannot help: it dispatches on the recorded mime type,
+correctly picks the *text* parser, and produces nothing. Confirmed by
+running it against one of the affected documents — no archive was created
+and no error was raised.
+
+The only fix is to re-save those messages from the mail client and re-drop
+them into the consume folder, then delete the text-only versions. Anything
+ingested after this change is unaffected.
+
 ### Monitoring
 
 Uptime Kuma monitor, added by hand at `https://status.mathewcsims.uk` —

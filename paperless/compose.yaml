@@ -138,6 +138,78 @@ services:
       retries: 10
       start_period: 10s
 
+  # ── .eml → PDF RENDERING (Tika + Gotenberg) ──────────────────────────────
+  # Without these two, Paperless ingests an email as text/plain: the body is
+  # extracted and searchable, but there is no archive PDF, so there is
+  # nothing to actually *look at* in the document viewer. Confirmed on this
+  # instance before adding them — two .eml files consumed as text/plain with
+  # archive=False, while a PDF filed the same day got a proper archive
+  # version.
+  #
+  # Tika does content/metadata extraction; Gotenberg does the conversion to
+  # PDF. Paperless supports both natively (paperless_tika is added to
+  # INSTALLED_APPS only when PAPERLESS_TIKA_ENABLED is set) — this is not a
+  # plugin, just two services it expects to be able to reach.
+  #
+  # They also make Office formats ingestible (.docx/.odt/.xlsx/.pptx), which
+  # would otherwise land as badly as the emails did.
+  #
+  # COST, since it is not trivial: ~2.1 GB of images (Gotenberg 1.72 GB —
+  # it bundles Chromium AND LibreOffice — plus Tika 422 MB) against a
+  # Paperless install that was two lean containers. Accepted deliberately:
+  # the email body is often the substantive content here, not just a wrapper
+  # for an attachment.
+  gotenberg:
+    image: docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923
+    container_name: paperless-gotenberg
+    restart: unless-stopped
+    # THE TWO FLAGS ARE A SECURITY CONTROL, not tuning. Gotenberg renders
+    # HTML in a headless Chromium, and the HTML being rendered here is the
+    # body of arbitrary inbound email — the least trustworthy input anywhere
+    # in this repo. `--chromium-disable-javascript` stops that content
+    # executing at all, and `--chromium-allow-list` confines file access to
+    # /tmp so a crafted message cannot reference local paths. Both are
+    # upstream Paperless's own documented invocation; do not drop them to
+    # "fix" a rendering quirk without understanding what is being rendered.
+    command:
+      - "gotenberg"
+      - "--chromium-disable-javascript=true"
+      - "--chromium-allow-list=file:///tmp/.*"
+    security_opt:
+      - no-new-privileges:true
+    # Chromium and LibreOffice both fork freely, so this needs a far higher
+    # PID ceiling than the other services here, and conversions spike memory
+    # well above idle.
+    mem_limit: 2g
+    pids_limit: 512
+    # No `ports:` — reached only by the webserver service, by container name,
+    # over this project's own network. Gotenberg has NO authentication of any
+    # kind, so it must never be published: anything that can reach it can use
+    # it to render arbitrary content. (Its default port 3000 is also already
+    # taken on this Mac, so publishing would collide anyway — but the reason
+    # not to is the auth, not the collision.)
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  tika:
+    image: docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973
+    container_name: paperless-tika
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # Pure JVM service — needs no capabilities at all, unlike the LSIO-style
+    # images elsewhere in this repo that chown-then-drop on boot.
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    pids_limit: 256
+    # No `ports:` — same reasoning as Gotenberg above; Tika is likewise
+    # unauthenticated.
+
   webserver:
     # Paperless-ngx 3.0.5, the current stable release. Pinned to an exact
     # version + digest, not :latest, so ../trivy-scan/ has something stable
@@ -153,6 +225,15 @@ services:
     depends_on:
       broker:
         condition: service_healthy
+      # Deliberately service_started, not service_healthy: these are only
+      # called during consumption, long after boot, so waiting on them buys
+      # nothing — while a healthcheck that misbehaves would block Paperless
+      # itself from ever starting. Ordering enough to avoid a cold-start
+      # window, no more coupling than that.
+      gotenberg:
+        condition: service_started
+      tika:
+        condition: service_started
     # Hardening consistent with the rest of the repo. LAN/tailnet-gated at
     # the proxy, so this is defence in depth rather than the primary control.
     #
@@ -190,6 +271,15 @@ services:
       PAPERLESS_OCR_LANGUAGE: eng
 
       PAPERLESS_REDIS: redis://broker:6379
+
+      # Reached by SERVICE NAME over this project's own network. Upstream's
+      # defaults are localhost:9998 and localhost:3000, which only make sense
+      # when everything shares a network namespace — left as-is they would
+      # silently fail here, since nothing answers on this container's own
+      # loopback.
+      PAPERLESS_TIKA_ENABLED: 1
+      PAPERLESS_TIKA_ENDPOINT: http://tika:9998
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://gotenberg:3000
       # No PAPERLESS_DBHOST — its absence is what selects SQLite. Setting it
       # to anything, including an empty string, would switch this to
       # Postgres and fail. See the SQLite note in the header.
