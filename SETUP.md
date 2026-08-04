@@ -5895,12 +5895,47 @@ not the docs):
 - `PAPERLESS_LLM_INDEX_TASK_CRON` — vector index rebuild, default daily
   02:10.
 
-There is already an Ollama on the Mac (`qwen3.5:4b`), but it binds
-`127.0.0.1` only and is therefore **not reachable from the podman VM**.
-Using it needs `OLLAMA_HOST=0.0.0.0` and a restart, which exposes an
-unauthenticated Ollama to the whole LAN — weigh that rather than assuming it
-is free. `../litellm/` is not an option here at any point: employer-funded
-infrastructure, personal medical documents.
+There is already an Ollama on the Mac (`qwen3.5:4b`), and it **is** reachable
+from inside the container at `http://host.containers.internal:11434` — no
+change to Ollama, nothing exposed beyond the container. `../litellm/` is not
+an option here at any point: employer-funded infrastructure, personal
+medical documents.
+
+> **Correction, 2026-08-04.** This section originally said the opposite —
+> that Ollama binds `127.0.0.1` and would need `OLLAMA_HOST=0.0.0.0`,
+> exposing it to the LAN. That was wrong, and it was wrong in a way worth
+> keeping on the record, because the intuition behind it is a trap. See
+> below.
+
+### `host.containers.internal` reaches the Mac's loopback
+
+Generally useful, and repeatedly counter-intuitive on this host:
+
+**gvproxy forwards `host.containers.internal` (`192.168.127.254`) to the
+*Mac's* loopback, not the VM's.** So a service bound to `127.0.0.1` on the
+Mac — Ollama, Proton Mail Bridge, anything — is reachable from inside a
+container, with no rebinding and nothing exposed to the LAN.
+
+The trap is that the reverse intuition also holds, and the two together
+catch people out:
+
+- **Mac loopback → reachable** from containers via `host.containers.internal`.
+- **The Mac's LAN IP is NOT a route to those services.** `10.0.1.14:11434`
+  is refused, because Ollama isn't listening on that interface.
+- **The gateway does not blanket-accept.** Ports with nothing behind them
+  give `ConnectionRefused` (checked 9999 and 54321), so a successful connect
+  is real evidence, not an artefact.
+
+Two things to watch when testing this:
+
+- **`/dev/tcp/host/port` is a bash feature and the containers run dash**, so
+  it reports every port as closed. It will tell you the NAS is unreachable
+  while a working CIFS mount to that exact host sits in front of you. Use
+  Python's `socket` instead.
+- **A silent connect is not a dead port.** Bridge's IMAP accepts and then
+  says nothing, because it is implicit TLS waiting for a ClientHello — not
+  STARTTLS, which would greet first. Complete the handshake before
+  concluding anything.
 
 ### Backups — deliberately half a source
 
