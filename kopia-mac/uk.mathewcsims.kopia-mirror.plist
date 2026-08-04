@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>uk.mathewcsims.kopia-mirror</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>/Users/mathewcsims/self-hosted/kopia-mac/mirror-on-connect.sh</string>
+    </array>
+
+    <!-- WatchPaths, not a calendar interval: the trigger for mirroring is
+         "the drive became available", and that is an event, not a time.
+         launchd runs the job whenever /Volumes changes — a disk mounting or
+         unmounting. It fires often and for irrelevant reasons (Time Machine
+         mounting its own sparsebundle, disk images opening), so the script
+         itself decides whether there is anything to do: it exits silently
+         unless a volume containing `kopia-mirror/` is present, and
+         rate-limits itself to one run per 20 hours. Cheap no-ops are the
+         expected case here. -->
+    <key>WatchPaths</key>
+    <array>
+        <string>/Volumes</string>
+    </array>
+
+    <!-- Also run once at login, so a drive left permanently connected still
+         gets mirrored rather than waiting for a mount event that never
+         comes. The same rate-limit stops this doubling up with a genuine
+         connect. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/mathewcsims</string>
+        <!-- Load-bearing, same lesson as the backup and verify agents:
+             launchd gives a minimal PATH. This job needs rclone (does the
+             sync), pass-cli (fetches the B2 credentials) and python3 (the
+             mirror script's credential handling) — all in
+             /opt/homebrew/bin, which is on no default PATH. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mathewcsims/self-hosted/kopia-mac/mirror-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mathewcsims/self-hosted/kopia-mac/mirror-launchd.log</string>
+</dict>
+</plist>

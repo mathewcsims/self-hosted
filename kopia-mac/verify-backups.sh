@@ -64,6 +64,14 @@ APPRISE_URL="https://apprise.mathewcsims.uk/notify/self-hosted"
 #   MAX_AGE_HOURS=0.001 ./verify-backups.sh   # everything reads as stale
 MAX_AGE_HOURS="${MAX_AGE_HOURS:-30}"
 
+# How stale the offline drive mirror may get before the nightly report
+# warns. That mirror is the SECOND copy for the Pi's and slartibartfast's
+# data — everything else about those hosts lives only in B2 — so letting it
+# rot silently turns "two copies of everything" back into one without
+# anything saying so. 14 days is loose enough for a drive that is plugged in
+# occasionally, tight enough to notice it has stopped being plugged in.
+MIRROR_MAX_AGE_DAYS="${MIRROR_MAX_AGE_DAYS:-14}"
+
 # Percentage of files re-downloaded from B2 on the weekly deep pass.
 # Overridable so the deep path can be exercised on demand rather than only
 # discovering it is broken on some unattended Sunday:
@@ -257,6 +265,50 @@ Log: $LOG"
     fi
 fi
 
+# ── Second-copy (offline mirror) freshness ───────────────────────────────
+# Deliberately NOT a hard failure: a stale mirror does not mean tonight's
+# backups are bad, and conflating the two would make the nightly result
+# useless for its main job. It is surfaced in the same message instead, so
+# it cannot be missed but also cannot cry wolf.
+MIRROR_STATE="$REPO_ROOT/kopia-mac/.mirror-state"
+MIRROR_NOTE=""
+_m_epoch=""
+if [ -f "$MIRROR_STATE" ]; then
+    _m_epoch=$(awk -F= '/^last_success_epoch=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo "")
+    _m_human=$(awk -F= '/^last_success_human=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo "unknown")
+    _m_size=$(awk -F= '/^size=/{print $2}' "$MIRROR_STATE" 2>/dev/null || echo "?")
+fi
+
+# VALIDATE BEFORE DOING ARITHMETIC ON IT. Caught in review: a state file
+# with a non-numeric epoch (truncated write, manual edit) made $(( ))
+# fail, and `set -eu` then killed the whole script — so a corrupt
+# second-copy marker suppressed the ENTIRE nightly verification, with no
+# notification at all. The least important input in this file was able to
+# silence its most important output. An unparseable marker now reads as
+# "never completed", which is both true and safe.
+case "$_m_epoch" in
+    ''|*[!0-9]*) _m_epoch="" ;;
+esac
+
+if [ -n "$_m_epoch" ]; then
+    _m_days=$(( ( $(date +%s) - _m_epoch ) / 86400 ))
+    if [ "$_m_days" -le "$MIRROR_MAX_AGE_DAYS" ]; then
+        MIRROR_NOTE="
+
+**Offline mirror:** last updated $_m_human ($_m_days days ago, $_m_size) — the Pi's and slartibartfast's second copy is current."
+    else
+        MIRROR_NOTE="
+
+⚠️ **Offline mirror is $_m_days days old** (last $_m_human). Until the external drive is connected again, the Pi's and slartibartfast's data has only ONE copy, in Backblaze B2. Plugging the drive in updates it automatically."
+        log "WARNING: offline mirror is $_m_days days old"
+    fi
+else
+    MIRROR_NOTE="
+
+⚠️ **Offline mirror has never completed** (or its state marker is unreadable). The Pi's and slartibartfast's data has only one copy, in Backblaze B2, until the external drive is connected."
+    log "WARNING: no usable offline mirror state recorded"
+fi
+
 log "=== verification passed ==="
 notify "✅ Backups verified — $OK_COUNT sources" success \
 "All backups completed and were verified against the repository tonight.
@@ -266,4 +318,4 @@ notify "✅ Backups verified — $OK_COUNT sources" success \
 $OK_LIST
 
 Hosts: mathews-mac, babel, slartibartfast — one shared Kopia repository.
-$DORMANT_COUNT decommissioned source(s) skipped by design (retained, not snapshotted).$DEEP_NOTE"
+$DORMANT_COUNT decommissioned source(s) skipped by design (retained, not snapshotted).$DEEP_NOTE$MIRROR_NOTE"

@@ -134,7 +134,7 @@ section below says which.
 | `immich/compose.yaml` | **slartibartfast** | Immich photo library — server + ML sidecar + Valkey + Immich's own vector-Postgres; LAN/tailnet-only; reads secrets from Proton Pass |
 | `immich/data/` | **slartibartfast** | **your photos and videos live here** (gitignored) — `library/` originals, `upload/`, `profile/`, regenerable `thumbs/`+`encoded-video/`, and `backups/` (Immich's own DB dumps) |
 | `immich/pgdata/` | **slartibartfast** | Immich's Postgres datadir (gitignored) — deliberately NOT what gets backed up, see its section |
-| `immich/kopia-backup.sh` | **slartibartfast** | daily Kopia snapshot of the photo library to B2; alerts via Apprise on failure |
+| `immich/kopia-backup.sh` | **slartibartfast** | daily Kopia backup of everything on that host worth keeping — the photo library, and (since 2026-08-04) a `pg_dump` of LiteLLM's database; alerts via Apprise on failure |
 | `immich/kopia-immich.{service,timer}` | **slartibartfast** | systemd **user** units driving the above at 03:00 (installed to `~/.config/systemd/user/`) |
 | `scripts/dump-databases.sh` | **Mac** | consistent DB dumps (pg_dump / mysqldump / SQLite `VACUUM INTO`) written before every Kopia run; alerts via Apprise on failure |
 | `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
@@ -154,6 +154,7 @@ section below says which.
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data, 02:00 |
+| `kopia-mac/mirror-on-connect.sh` + `uk.mathewcsims.kopia-mirror.plist` | **Mac** | launchd job on `WatchPaths /Volumes` — mirrors the B2 bucket to the external drive automatically whenever it is connected; this is the **second copy** for the Pi's and slartibartfast's data |
 | `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 06:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
 | `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh` (legacy — no job mounts the NAS since 2026-08-04), `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
@@ -3989,13 +3990,56 @@ shell run.
    and a different security context; both differences have caused real
    silent failures here (see the historical note above).
 
-**Offline copy on an external HDD:** `scripts/mirror-backup-to-external-drive.sh`
-mirrors the entire B2 bucket (already encrypted by Kopia — no extra
-encryption needed) onto a drive whenever it's plugged in — no automatic
-schedule, since the drive isn't always connected:
+**Offline copy on an external HDD — now automatic on connect.**
+`scripts/mirror-backup-to-external-drive.sh` mirrors the entire B2 bucket
+(already encrypted by Kopia — no extra encryption needed) onto a drive. It
+can still be run by hand:
 ```
 ./scripts/mirror-backup-to-external-drive.sh /Volumes/YourDriveName
 ```
+but since **2026-08-04** it also runs on its own, driven by
+`kopia-mac/mirror-on-connect.sh` and the `uk.mathewcsims.kopia-mirror`
+LaunchAgent.
+
+**Why it had to stop being manual.** This mirror is the *second copy* for
+the Pi's and slartibartfast's data — those hosts write only to B2, so
+everything on them is one provider away from total loss without it. The Mac
+is fine either way, because Time Machine covers it too. When the automation
+was written, the mirror on the drive was from **2026-07-05**: a month
+stale, holding 9.8 GB of a repository that had grown well past that. A
+second copy that depends on remembering is not a second copy.
+
+**How the trigger works.** The agent uses `WatchPaths` on `/Volumes` rather
+than a schedule, because the trigger is an event — the drive becoming
+available — not a time. launchd fires the job on any volume mount or
+unmount, which happens often and mostly for irrelevant reasons (Time
+Machine mounting its own sparsebundle, disk images opening), so the script
+decides whether there is anything to do:
+
+- **The drive identifies itself.** No volume name is hardcoded. The script
+  looks for any mounted volume already containing a `kopia-mirror/`
+  directory — exactly what the mirror script creates. So the drive can be
+  renamed or replaced without editing anything: create `kopia-mirror` on
+  the new one and it is adopted. A volume *without* it is never written to,
+  so plugging in an unrelated disk cannot start a 70 GB sync onto it.
+- **Rate-limited to one run per 20 hours**, so repeated mount events do not
+  restart an expensive sync.
+- **Single-instance lock**, same mkdir-atomic pattern and stale-lock
+  reclaim as `kopia-mac/backup.sh`.
+- **State is written only on success**, to `kopia-mac/.mirror-state`. A
+  failed run must not look like a fresh mirror, or the staleness warning
+  below quietly stops working.
+- `RunAtLoad` is set too, so a drive left permanently connected is still
+  mirrored rather than waiting for a mount event that never comes.
+
+**The nightly verification reports how stale it is.** `verify-backups.sh`
+reads that state file and includes the mirror's age in the nightly
+notification, warning past `MIRROR_MAX_AGE_DAYS` (14). It is deliberately
+**not** a hard failure: a stale mirror does not mean tonight's backups are
+bad, and conflating the two would make the nightly result useless for its
+main job. Without this, "two copies of everything" silently degrades to one
+the moment the drive stops being plugged in — which is the exact class of
+silent failure the verifier exists to catch.
 Uses `rclone sync` (not `copy`) so the drive stays an *exact* mirror,
 including deletions — not an ever-growing pile of old copies. Credentials
 flow the same way as everywhere else: fetched from the "Backblaze B2" Pass
