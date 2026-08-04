@@ -5809,6 +5809,28 @@ itself on first boot — no need to pre-create them.
   bypasses the file-cleanup signal, orphaning blobs on the share. Empty the
   trash through the UI instead.
 
+### Paperless depends on the NAS being up
+
+A consequence of putting the media root on a share, and worth knowing before
+it surprises you at 3am. The CIFS volume is mounted when the container
+starts, so **if Eddie is unreachable, Paperless does not start** — the
+container exits with `mount error(...)` rather than starting in a degraded
+state. Nothing else in this repo behaves that way; every other Mac app is
+self-contained on local disk.
+
+In practice this is self-correcting: `restart: unless-stopped` means podman
+keeps retrying, and `autostart/podman-autostart.sh` needs no per-app
+registration (it starts everything with a restart policy), so after a power
+cut Paperless comes up on its own once the NAS is back. But the ordering is
+real — if Paperless is down and nothing obvious is wrong with it, check
+whether Eddie is up before debugging the container.
+
+The mount is `soft` (visible in `mount | grep cifs` inside the container),
+which is the right choice here rather than the default reflex of `hard`: a
+NAS that goes away mid-operation returns I/O errors instead of blocking
+processes in uninterruptible sleep. Given this repo has already lost 40
+hours of backups to exactly that failure mode, do not "fix" this to `hard`.
+
 ### Metadata suggestion: the classifier is on, the LLM layer is not
 
 Two capabilities, routinely conflated because both get called "the AI bit".
