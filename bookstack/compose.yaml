@@ -1,7 +1,7 @@
 # BookStack (https://www.bookstackapp.com) — self-hosted project wiki for
 # writing projects. LAN-only: reachable at https://author.mathewcsims.uk,
 # but gated to private/tailnet source IPs at the Caddy layer (see
-# ../pi-reverse-proxy/Caddyfile) — same pattern as Speedtest Tracker.
+# ../pi-reverse-proxy/Caddyfile) — same LAN-gate idiom as Apprise.
 #
 # Same architecture as every other Mac app here: TLS and the public
 # hostname are handled by Caddy on the Pi; this Mac only serves plain HTTP

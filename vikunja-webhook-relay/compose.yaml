@@ -7,7 +7,7 @@
 # there's no way to wire the two together without something in between.
 #
 # Runs HERE on the Pi (not the Mac), fronted by Caddy at
-# vikunja-relay.mathewcsims.uk (LAN-gated, same pattern as Speedtest
+# vikunja-relay.mathewcsims.uk (LAN-gated, same pattern as Apprise
 # Tracker/Apprise — see ../pi-reverse-proxy/Caddyfile) so Vikunja on the Mac
 # can reach it over a real hostname+TLS+LAN-gate, consistent with everything
 # else in this repo, rather than a bare published port. Joins `pi-shared` to

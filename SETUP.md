@@ -10,8 +10,6 @@ follow the same recipe — see "Adding another app" near the end.
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
 | Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
-| Nimbus | `https://dashboard.mathewcsims.uk` | **Pi** (not the Mac) | `mat@mathewcsims.uk`, see its section below |
-| Speedtest Tracker | `https://speedtest.mathewcsims.uk` | **Pi**, LAN-only | admin credentials set at first boot, see its section below |
 | Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
 | Landing page | `https://mathewcsims.uk` | Mac `:3080` | static site, no login |
 | Karakeep | `https://karakeep.mathewcsims.uk` | Mac `:3000` | set up on first visit; signups disabled |
@@ -42,7 +40,7 @@ follow the same recipe — see "Adding another app" near the end.
        │             (author/fj are BookStack/Forgejo,     │
        │             LAN/tailnet-gated)                    │
        │     Pi:     status (Kuma),                        │
-       │             speedtest*, apprise*, vikunja-relay*, │
+       │             apprise*, vikunja-relay*,             │
        │             backup* (Kopia)                       │
        │     slarti: immich*  (third host, 10.0.1.11)      │
        │     router: mc37* (its own admin UI)              │
@@ -68,7 +66,7 @@ follow the same recipe — see "Adding another app" near the end.
 
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
 Let's Encrypt validation works normally and public URLs are clean, no ports.
-Several apps (Nimbus, Speedtest Tracker, Apprise, Uptime Kuma, the Vikunja
+Several apps (Apprise, Uptime Kuma, the Vikunja
 webhook relay, Kopia's server) are deliberately Pi-resident rather than
 Mac-resident — either
 for resilience (the thing telling you something's down shouldn't depend on
@@ -147,8 +145,6 @@ section below says which.
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
 | `pi-reverse-proxy/.env` | **Pi** | domain, email, Mac IP — gitignored; see `.env.example` |
-| `speedtest-tracker/compose.yaml` | **Pi**, LAN-only | periodic speed tests, charted over time; reads secrets from Proton Pass |
-| `speedtest-tracker/config/` | **Pi** | **your speed test history lives here** |
 | `apprise/compose.yaml` | **Pi**, LAN-only | generic Discord notification relay for any script to `curl`; no secrets in the compose file itself |
 | `apprise/scripts/seed.py` | **Pi** | no-secrets helper invoked by `scripts/pass-seed-apprise.sh` to register the Discord webhook after deploy |
 | `apprise/config/` | **Pi** | **the registered notification-target config lives here** |
@@ -239,7 +235,7 @@ pass-cli login   # your normal Proton Pass login
 # Mac-hosted apps (vikunja, blog, karakeep, copyparty, landing-page)
 ./scripts/pass-deploy.sh <app-dir>
 
-# Apps on ANY remote host — the Pi (speedtest-tracker, uptime-kuma) or
+# Apps on ANY remote host — the Pi (uptime-kuma, apprise) or
 # slartibartfast (immich). Fetches locally, pipes the export +
 # `docker compose up -d` over SSH via stdin, so secret values never appear
 # in the SSH command line itself. NOTE: it does NOT copy the app folder —
@@ -522,7 +518,7 @@ resolved the hostname.
 The Pi runs Tailscale, configured as both a subnet router (advertising the
 LAN) and an exit node — meaning devices elsewhere can reach this network
 through it, including while off any physical LAN entirely. Every LAN-gated
-app in this repo (`mc37`, `speedtest`, `apprise`, `vikunja-relay`, `backup`)
+app in this repo (`mc37`, `apprise`, `vikunja-relay`, `backup`)
 needs two separate things to actually be reachable this way, and both were
 missing until this was diagnosed directly (bug report → root-caused → fixed
 → verified working, not assumed):
@@ -1742,7 +1738,21 @@ podman run --rm -v "$PWD/files:/files" -v "$PWD/db:/db" docker.io/library/alpine
 
 ---
 
-## Speedtest Tracker (https://speedtest.mathewcsims.uk) — LAN-only, runs on the Pi
+## Speedtest Tracker (https://speedtest.mathewcsims.uk) — DECOMMISSIONED (was LAN-only, on the Pi)
+
+> **DECOMMISSIONED 2026-08-04.** Torn down for lack of use. Container,
+> image, network attachment, the Caddy site block, the Uptime Kuma monitor
+> and the DNS records are all gone; `speedtest-tracker/` was removed from
+> this repo and survives only in git history. The section below is kept
+> verbatim as the rebuild recipe. A final SQLite dump (3,135 results,
+> integrity-checked) and a cold `tar.gz` of the whole data directory live in
+> `db-dumps/decommissioned/` on the Pi, and the **SpeedtestTracker** Proton
+> Pass item was deliberately retained — between them, everything needed to
+> stand this back up still exists. The LAN-gate idiom this app introduced
+> outlived it: its rationale now lives at the top of
+> `pi-reverse-proxy/Caddyfile`, where the seven remaining LAN-gated sites
+> reference it.
+
 
 [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) — periodic
 internet speed tests, charted over time. Runs on the **Pi**, like Nimbus, both

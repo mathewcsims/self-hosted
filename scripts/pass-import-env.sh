@@ -17,7 +17,7 @@
 #
 # Example:
 #   ./scripts/pass-import-env.sh vikunja
-#   ./scripts/pass-import-env.sh speedtest-tracker SpeedtestTracker
+#   ./scripts/pass-import-env.sh bookstack BookStack
 
 set -eu
 
