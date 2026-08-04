@@ -567,6 +567,52 @@ author.mathewcsims.uk {
 	}
 }
 
+# ── Paperless-ngx (running on the Mac, LAN-ONLY) ─────────────────────────
+# Clean public URL https://paperless.mathewcsims.uk, but only for LAN/tailnet
+# clients — same @lan/abort idiom as BookStack and Forgejo below.
+#
+# LAN-gating matters more here than for most: this instance holds personal
+# medical documents, official correspondence and identity paperwork. Same
+# priority as HealthLog further down, and for the same reason.
+#
+# Paperless serves its login form at /accounts/login/ (Django allauth).
+# Rather than assume its built-in throttling is sufficient, this gets the
+# same dedicated tighter zone as BookStack's and Forgejo's login POSTs —
+# defence in depth on the one endpoint that accepts a password.
+#
+# PAPERLESS_URL in ../paperless/compose.yaml must match this hostname
+# exactly: Django derives CSRF trusted origins and ALLOWED_HOSTS from it,
+# so a mismatch surfaces as a 400 on every form submission, not as a
+# routing error.
+paperless.mathewcsims.uk {
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		rate_limit {
+			zone rl_paperless {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+			zone rl_paperless_login {
+				match {
+					method POST
+					path /accounts/login/
+				}
+				key {remote_host}
+				events 10
+				window 1m
+			}
+		}
+		reverse_proxy http://{$MAC_IP}:8000
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Forgejo (running on the Mac, LAN-ONLY) ───────────────────────────────
 # Clean public URL https://fj.mathewcsims.uk, but only for LAN/tailnet
 # clients — same @lan/abort idiom as BookStack and Apprise above.

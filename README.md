@@ -34,6 +34,7 @@ in front of the lot.
 | [chhoto-url](https://github.com/SinTan1729/chhoto-url) | `msims.link` | Pi (self-hosted URL shortener on its own short domain — bare root redirects to `mathewcsims.uk` rather than showing the shortener's own login screen) |
 | [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars; posts a Memo to Owl on every new ride via a PocketBase-realtime relay) |
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
+| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `paperless.mathewcsims.uk` | Mac (personal document store — letters, medical, certificates; OCR on ingest, LAN-only. Document blobs live on the NAS over CIFS; the SQLite database and search index stay on local disk. **Deliberately not wired to LiteLLM** — personal medical/legal documents have no business on an employer's GCP project) |
 | [LiteLLM](https://github.com/BerriAI/litellm) | `litellm.possum-prometheus.ts.net` | **slartibartfast** (OpenAI-compatible proxy in front of employer-funded Gemini Enterprise Agent Platform (formerly Vertex AI) — **tailnet-only** via a Tailscale sidecar tagged `personal` — no public hostname, no DNS record, not behind Caddy; ADC auth, no service-account key) |
 
 ### Decommissioned
@@ -77,6 +78,7 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
                                   ├─ owl.mathewcsims.uk               → Mac
                                   ├─ author.mathewcsims.uk            → Mac (LAN clients only)
+                                  ├─ paperless.mathewcsims.uk         → Mac (LAN clients only)
                                   └─ fj.mathewcsims.uk                → Mac (LAN clients only;
                                                                           git-over-SSH bypasses
                                                                           Caddy entirely, port 2222)

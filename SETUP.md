@@ -379,6 +379,65 @@ so the token never touches an external command's argv. Neither needs a
 personal pass-cli session — like the deploy scripts, they auto-login using
 `SECRET_ACCESS_TOKEN` from the repo-root `.env` if no session is active.
 
+#### When `dns-digitalocean.sh` returns `HTTP 401: Unable to authenticate you`
+
+Hit on 2026-08-04 while adding the `paperless` record. **This is a dead
+token, not a broken script** — and the distinction is worth internalising
+because the two look identical from the command line.
+
+Diagnosis, in the order worth doing it:
+
+1. **Check the token is being read at all.** The Pass item holds one field,
+   `DIGITAL_OCEAN_DNS_TOKEN`. A renamed or missing field yields an empty
+   string, and an empty bearer token also produces a 401 — the same error
+   as a revoked one, from a completely different cause. On 2026-08-04 the
+   field was present and the value well-formed: `dop_v1_` prefix, 71 chars
+   total (the prefix plus 64), no leading or trailing whitespace.
+2. **Distinguish 401 from 403.** This matters more than it looks:
+   - **403** = the token is real and authenticated, but lacks the scope for
+     what you asked. DigitalOcean supports scoped tokens, so a token
+     without domain write access reaches the API fine and is refused at the
+     specific call. Fix by re-scoping.
+   - **401** = the token does not exist server-side at all. Revoked, or
+     expired. No amount of re-scoping helps.
+3. **Confirm against `/v2/account`**, which needs no special scope — if
+   even that returns 401, the token is definitively dead rather than merely
+   under-scoped. It did.
+
+**Cause.** DigitalOcean personal access tokens can be created with an
+expiry, and an expired token fails exactly this way, silently, with no
+warning anywhere in this repo's tooling. Check the Tokens page — an expired
+token normally still appears in the list, flagged as such, which confirms it
+in seconds. If it is simply absent, it was revoked.
+
+**Fix — note this does NOT involve granting anything to an agent.** The
+tooling authenticates as *you*, with a personal access token stored in Pass;
+there is nothing in the DigitalOcean UI to "create access for Claude", and
+looking for one is a blind alley. Just mint a fresh PAT and update the
+existing Pass item:
+
+1. DigitalOcean control panel → **API** (left sidebar, near the bottom) →
+   **Tokens** tab → **Generate New Token**.
+2. Name it something traceable (e.g. `self-hosted-dns`). For scopes, either
+   Full Access or Custom Scopes with **`domain`** read *and* write (create /
+   update / delete) — read alone is enough for `list` but will 403 on `add`
+   and `remove`.
+3. Set the expiry deliberately. "No expiry" avoids silent breakage but never
+   rotates; a dated token rotates but will do this again with no warning.
+   Either is defensible — what is not defensible is picking one by accident,
+   which is how this happened.
+4. Update `DIGITAL_OCEAN_DNS_TOKEN` on the **"Digital Ocean DNS"** Pass
+   item. Edit the existing field in the Proton Pass UI rather than using
+   `pass-cli item update --field`: that CLI path writes into the top-level
+   `extra_fields` array instead of the section, leaving the stale value in
+   place alongside the new one. Both scripts read sections *then*
+   `extra_fields`, so the new value does win — but a Pass item holding two
+   copies of the same credential, one of them dead, is a trap for later.
+5. Verify: `./scripts/dns-digitalocean.sh list` should print the zone's
+   records.
+
+The same failure mode applies to the NextDNS token in exactly the same way.
+
 NextDNS's API sits behind Cloudflare, which 403s (error 1010) against
 Python's default `urllib` User-Agent — worth knowing if you ever see that
 specific error from a modified version of this script; a plain identifying
@@ -5664,6 +5723,138 @@ nothing enabling.
 - **No Caddy, no DNS records.** Nothing to add to `pi-reverse-proxy/` and
   nothing in DigitalOcean or NextDNS. The `llm.mathewcsims.uk` A record and
   NextDNS rewrite created during the abandoned Caddy attempt were removed.
+
+---
+
+## Paperless-ngx (https://paperless.mathewcsims.uk) — LAN-only, runs on the Mac
+
+Personal document store: official letters, medical documentation,
+certificates, receipts. OCRs on ingest so scans become searchable. Deployed
+2026-08-04. **Document blobs live on the NAS; the database and index do
+not.** See `paperless/compose.yaml` — its header is the authoritative
+explanation of that split and why it is not negotiable.
+
+**This instance is deliberately not wired to LiteLLM.** That proxy fronts
+the employer-funded Gemini Enterprise Agent Platform, and this store holds
+personal medical and legal documents. The intended work document store is a
+separate deployment on slartibartfast sharing nothing with this one. No AI
+layer here yet at all — OCR plus full-text search answers most of what this
+is for, and the decision is easier with real documents in it.
+
+### The NAS mount: what does not work, and why
+
+**A Finder mount plus a bind mount cannot work, and fails confusingly.**
+podman-machine runs containers inside a libkrun VM that does not share
+`/Volumes`, and an SMB mount made on the macOS side does not propagate
+across virtiofs into the VM. Verified directly:
+
+```
+$ podman run --rm -v /Volumes/Public:/test:ro alpine:3 ls /test
+Error: statfs /Volumes/Public: no such file or directory
+```
+
+So the mount is done by the VM's own kernel, via a compose volume with
+`driver_opts: type=cifs`. Fedora CoreOS has `cifs.ko` and `mount.cifs`
+already, and reaches `10.0.1.12:445` fine.
+
+**The consequence for credentials is the non-obvious part.** Because the
+Linux VM performs the mount, the Mac's Keychain is not reachable at the
+moment it is needed. `NAS_USER`/`NAS_PASSWORD` therefore have to be fields
+on the **"Paperless"** Pass item — not a convenience, the only way the mount
+can authenticate. The Keychain copy still serves the Finder `/Volumes`
+mounts and should stay; these are a second copy for a different consumer.
+
+The NAS account is `paperless-user`, scoped to the `Paperless` share alone —
+deliberately not `hog-user` (which also reaches magrathea, Archive, Public,
+ProtonDriveBackup) and not `admin`. A credential that has to sit in a
+container environment variable should be able to do as little as possible.
+
+### Deploying
+
+1. On Eddie: create the `Paperless` share and a dedicated account with
+   read/write on it, and nothing else.
+2. `./scripts/pass-create-paperless-secrets.sh` — run under your **own**
+   pass-cli session; agent tokens are read-only and cannot create items. It
+   generates the Django secret key and admin password, and prompts for the
+   admin username/email and the NAS credentials.
+3. `./scripts/pass-deploy.sh paperless`
+4. DNS: `./scripts/dns-digitalocean.sh add paperless <WAN IP>` and the
+   NextDNS rewrite to `10.0.1.19`, then deploy the Caddy block.
+
+Paperless creates `media/`, `consume/` and the media subtree on the share
+itself on first boot — no need to pre-create them.
+
+### Things found the hard way
+
+- **`mount error(13)` is a NAS-side permissions problem, not a client
+  one.** First deploy failed here; the share existed and the account
+  existed, but the grant was wrong. Diagnose by mounting inside the VM by
+  hand with `-o credentials=<file>` before touching any mount option — that
+  isolates authentication from option-string parsing. `sudo dmesg | grep
+  -i cifs` in the VM gives the actual return code (`-13` = EACCES).
+- **inotify does not work over CIFS.** With the consume directory on a
+  share, no filesystem event ever fires and Paperless silently ingests
+  nothing — it does not error. `PAPERLESS_CONSUMER_POLLING` is mandatory
+  here, not tuning. The polling-retry settings exist because a file copied
+  over SMB can be visible before it is fully written.
+- **`PAPERLESS_FILENAME_FORMAT` needs double braces** (`{{ created_year }}`)
+  on 3.x — Jinja templating. Single braces still work but warn on every
+  startup check. Compose does not interpolate `{{ }}`, only `${ }`, so it
+  passes through untouched.
+- **3.x indexes with Tantivy, not Whoosh**, and runs SQLite in WAL mode —
+  which is precisely why `db.sqlite3` is dumped by
+  `scripts/dump-databases.sh` rather than merely snapshotted live.
+- **Deleting a document soft-deletes it to a trash** with a 30-day delay.
+  `hard_delete()` from the Django shell removes the database row but
+  bypasses the file-cleanup signal, orphaning blobs on the share. Empty the
+  trash through the UI instead.
+
+### Backups — deliberately half a source
+
+`kopia-mac/backup.sh` snapshots `paperless/data` (SQLite database, Tantivy
+index, classifier) and **nothing on the NAS**. Adding a NAS source here
+would recreate the 40-hour uninterruptible-I/O wedge documented at the top
+of that script — a static PDF store is a far gentler workload than the Time
+Machine sparsebundle was, but a process stuck in state U does not die on
+SIGKILL, and the blast radius is every source that night plus every
+subsequent night.
+
+The blobs are covered separately, and off this repo's infrastructure: the
+NAS has its own backup arrangements for the data living on it, which is why
+nothing here reaches onto the share.
+
+**No scheduled `document_exporter`, and that is a decision rather than an
+omission.** The command exports every document plus a `manifest.json` of all
+database metadata (tags, correspondents, types, dates, notes, saved views),
+which `document_importer` can restore into *any* Paperless — so unlike a
+Kopia snapshot of `db.sqlite3` plus blobs, it does not depend on landing on
+a compatible schema version. It is also the only restore path that cannot
+hand you a database and a blob store captured at different moments, since
+the two halves here are backed up by different systems on different
+schedules.
+
+Both of those are real, and neither is worth the duplicate copy of every
+document here, because they insure against the wrong things:
+
+- **The threat model is hardware failure**, which the split backup already
+  covers completely.
+- **The documents themselves survive independently** of Paperless and of
+  this repo — they are on the NAS, backed up on their own terms, and remain
+  readable PDFs whatever happens to the application.
+
+That leaves only exotic cases — a major-version upgrade going wrong, SQLite
+corruption, or migrating off Paperless entirely — where the DB dump plus
+the blobs would not be enough. `PAPERLESS_EXPORT_DIR` is configured and
+points at the share, so the command is there to run by hand if one of those
+ever arrives:
+
+```
+podman exec paperless python3 manage.py document_exporter /usr/src/paperless/nas/export -c -d
+```
+
+Revisit the scheduling question only if the value of the metadata (the
+tagging and filing work, which is the part *not* recoverable from the raw
+PDFs) ever outgrows the cost of a second copy.
 
 ---
 

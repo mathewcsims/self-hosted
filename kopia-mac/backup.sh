@@ -147,6 +147,26 @@ fi
 # entirely. Don't wire it in. See SETUP.md's HealthLog section for the
 # full reasoning (incl. why the copyparty route would cost vague-403).
 #
+# Paperless is deliberately HALF a source. paperless/data (SQLite db, Tantivy
+# index, classifier) is in the list below; the document blobs are NOT, and
+# must not be added. They live on Eddie's Paperless share, and re-introducing
+# any NAS source here would recreate exactly the 40-hour uninterruptible-I/O
+# wedge this file's header describes — a static PDF store is a far gentler
+# workload than the Time Machine sparsebundle was, but the header is honest
+# that a process stuck in state U does not die on SIGKILL, and the blast
+# radius is every source that night, plus every subsequent night.
+#
+# The blobs are covered separately and off this repo's infrastructure — the
+# NAS has its own backup arrangements for what lives on it. Nothing here
+# reaches onto the share, by design.
+#
+# There is deliberately no scheduled `document_exporter` either. It would be
+# the only restore path that cannot give you a database and a blob store
+# captured at different moments — but the threat model here is hardware
+# failure, which the split already covers, and the documents survive as
+# readable PDFs on the NAS independently of Paperless regardless. See
+# SETUP.md's Paperless section for the full reasoning and the manual command.
+#
 # No marque/data or timetagger/data either — both decommissioned 2026-08-04
 # along with Nimbus (see SETUP.md). Their existing snapshots stay in the
 # repository, and a final cold archive of each lives permanently in
@@ -215,6 +235,7 @@ $REPO_ROOT/bookstack/config
 $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data
 $REPO_ROOT/wanderer/data
+$REPO_ROOT/paperless/data
 /Users/mathewcsims/contact-sync
 $HOME_LIB/Thunderbird
 $HOME_LIB/Keychains
