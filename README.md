@@ -129,8 +129,32 @@ podman. Backblaze B2 is the actual storage backend; see
 policy, and how to periodically mirror the whole (already encrypted) B2
 bucket onto an offline external drive.
 
+**The whole home directory is backed up, not just the apps.** Since
+2026-08-04 `/Users/mathewcsims` is itself a Kopia source — media included —
+so nothing on the Mac depends on Time Machine as its only copy. The
+per-app sources are kept as well, for obvious granular restore targets;
+Kopia dedupes content, so covering them twice costs essentially nothing.
+Excluded, deliberately: the NAS mount (not this Mac's data, and where the
+Time Machine image lives), Proton Drive's cloud placeholders (128 GB
+apparent, 7.9 MB on disk — reading them would hydrate the lot), and ~60 GB
+of regenerable machine state (caches, package stores, downloaded models,
+podman VM images).
+
+`~/Library` is excluded from that source and its valuable parts backed up
+as their own instead — **Thunderbird** (the real mail store), **Application
+Support**, **Keychains** and **Preferences**. Full Disk Access was granted
+to `kopia` to make those readable at all, but even with it a real snapshot
+of `~/Library` hit 803 unreadable paths: 671 of them one per-app file, the
+rest Apple's own Siri/Spotlight/HomeKit service state. None is user data,
+and the set grows with every app installed, so excluding it wholesale keeps
+the nightly run at zero errors — which is what the verifier trusts.
+
+Apple Mail, Messages and the Photos library are excluded **by choice, not
+limitation**: none is used. Thunderbird is the mail store here, and
+photographs live in Immich, itself a Kopia source.
+
 **Backups are verified, and say so.** A separate nightly job
-(`kopia-mac/verify-backups.sh`, 04:00, after all three hosts have finished)
+(`kopia-mac/verify-backups.sh`, 06:00, after all three hosts have finished)
 checks the repository rather than trusting any job's own report: every
 active source must have a complete snapshot from within the last 30 hours,
 with zero errors, whose contents actually resolve in B2. On Sundays it goes

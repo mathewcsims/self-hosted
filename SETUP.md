@@ -154,7 +154,7 @@ section below says which.
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data, 02:00 |
-| `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 04:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
+| `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 06:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
 | `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh` (legacy — no job mounts the NAS since 2026-08-04), `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
@@ -3577,7 +3577,7 @@ have proven themselves in anger.
   repository directly, but has no long-running process. A launchd job
   (`uk.mathewcsims.kopia-mac-backup`, matching the `autostart/` pattern)
   triggers `kopia snapshot create` daily. A second launchd job
-  (`uk.mathewcsims.kopia-verify`, 04:00) verifies the night's backups
+  (`uk.mathewcsims.kopia-verify`, 06:00) verifies the night's backups
   across ALL THREE hosts afterwards and sends the success notification —
   see "Nightly verification" below.
 
@@ -3607,7 +3607,7 @@ which are silent by construction:
    `kopia snapshot create` exited 0 throughout. Partial success is
    indistinguishable from success to the caller.
 
-`kopia-mac/verify-backups.sh` (launchd, 04:00) exists to catch both. It
+`kopia-mac/verify-backups.sh` (launchd, 06:00) exists to catch both. It
 ignores what the jobs claim and interrogates the repository — all three
 hosts write into one B2 repository, so a single verifier on the Mac sees
 every source on every host. Four checks, in order:
@@ -3655,6 +3655,102 @@ DEEP_VERIFY_DOW=$(date +%u) VERIFY_FILES_PERCENT=1 ./kopia-mac/verify-backups.sh
 At 1% that re-downloaded 117 files / 0.9 GB in ~73s, so the configured 2%
 is roughly 1.8 GB of B2 egress per week — comfortably inside B2's free
 allowance (3x stored bytes per month) for a ~36 GB repository.
+
+### The whole home directory is a source (added 2026-08-04)
+
+`/Users/mathewcsims` is itself a Kopia source, media included, so **nothing
+on the Mac has Time Machine as its only backup**. The per-app sources are
+kept as well as this, not instead of it — they are obvious granular restore
+targets, and Kopia dedupes content, so covering the same bytes twice costs
+essentially nothing in B2. Roughly 12.7 GB / 57k files after exclusions.
+
+**Exclusions, and why each one is there** (`kopia policy show ~` for the
+live list):
+
+| Excluded | Why |
+|---|---|
+| `/nas-mounts/` | The SMB mount of the NAS — not this Mac's data, and where the Time Machine sparsebundle lives. Re-including it recreates the 40-hour hang described above. |
+| `/Library/CloudStorage/` | **128 GB apparent, 7.9 MB on disk** — Proton Drive placeholders. Reading them makes macOS hydrate the lot from the cloud. Already offsite in Proton Drive anyway. |
+| `/Library/Mail/`, `/Library/Messages/` | **Deliberate, not a limitation** — Mathew doesn't use Apple Mail or Messages. Thunderbird is the real mail store here and *is* backed up. |
+| `/Pictures/Photos Library.photoslibrary/` | **Deliberate** — Photos isn't used; photographs live in Immich, which is itself a Kopia source on slartibartfast. (The local library is an empty shell: 406 files, 82 KB.) |
+| `/Library/` | 803 paths under here are unreadable even with Full Disk Access, and none of them is user data — see below. Its valuable parts are separate sources instead. |
+| `.cache`, `.npm`, `.ollama`, `.minutes/models`, `go/pkg`, `.local/share/containers`, `.Trash`, `Library/Caches`, `Library/Logs`, `Library/pnpm` | ~60 GB of regenerable machine state. The podman VM images alone are 31 GB and are rebuilt from the compose files plus the app data already backed up. |
+
+Because `/Library/` is excluded from the home source (see below), its
+valuable parts are separate sources:
+
+| Source | Size | Own exclusions |
+|---|---|---|
+| `~/Library/Thunderbird` | 5.1 GB — the real mail store on this Mac | none |
+| `~/Library/Application Support` | ~16 GB of app data | 11 Apple-owned subdirectories |
+| `~/Library/Keychains` | 14 MB | none |
+| `~/Library/Preferences` | 2.8 MB | 6 Apple-owned plists |
+
+`Containers` and `Group Containers` are deliberately NOT included: between
+them they are almost entirely Apple sandbox state and the 671 protected
+metadata files described below.
+
+#### Full Disk Access is granted to kopia, and `/Library/` is STILL excluded
+
+**FDA granted 2026-08-04.** It genuinely helps — it is what lets kopia read
+`~/Library/Application Support`, `Containers`, `Thunderbird`, `Keychains`
+and `Preferences` at all. But it does **not** make `~/Library` snapshottable
+as a whole, and the numbers are worth recording because the intuition is
+wrong:
+
+- Before FDA, a scan found **127** unreadable directories.
+- After FDA, a `kopia snapshot estimate` reported just **1**.
+- A real `kopia snapshot create` with `/Library/` included then hit **803**.
+
+The estimate undercounts badly: it stops descending a branch at the first
+failure, so it sees the top of each blocked tree and nothing beneath. Only
+a real snapshot enumerates the true set — worth remembering before trusting
+a dry run here.
+
+Of those 803: **671** are a single per-app file
+(`.com.apple.containermanagerd.metadata.plist`, one for every sandboxed app
+installed), and the remaining **132** are Apple's own service state — Siri,
+Spotlight, HomeKit, Weather, Suggestions, `Group Containers/com.apple.*`,
+and the sandbox containers of Apple apps. macOS protects all of it beyond
+FDA, none of it is user data, and the set grows with every application
+installed.
+
+So `/Library/` stays excluded wholesale, and the parts worth restoring are
+named as their own sources instead — each with a small ignore list for the
+Apple-owned items inside it, which is what keeps the nightly run at **zero
+errors**. Zero errors is not cosmetic here: it is the signal the verifier
+trusts, so anything that makes errors routine would quietly disable the
+check.
+
+If it ever needs re-granting: System Settings ▸ Privacy & Security ▸ **Full
+Disk Access** ▸ `+` ▸ `/opt/homebrew/bin/kopia` (⌘⇧G to type the path).
+
+**Two traps worth knowing, both hit while setting this up:**
+
+1. **TCC grants are per-binary, and attach to the *responsible* process.**
+   Testing with `ls` from a shell still reports `Operation not permitted`
+   even when kopia itself can read the path perfectly — the responsible
+   process for a terminal command is the terminal, which has no grant. The
+   only meaningful test is running **kopia itself, from launchd**, which is
+   how the nightly job runs. Verified that way here: `ls` could not read
+   the Photos library while kopia, under launchd, read all 406 files of it.
+2. **`/opt/homebrew/bin/kopia` is a symlink** into a versioned Cellar path
+   (`/opt/homebrew/Cellar/kopia/<version>/bin/kopia`). A `brew upgrade
+   kopia` changes that target, which can silently invalidate the grant. If
+   `~/Library` suddenly starts erroring after an upgrade, re-grant first
+   before assuming anything is broken.
+
+To enumerate what is still blocked without uploading anything, temporarily
+tolerate directory errors so the scan reports instead of aborting on the
+first one — then **put it straight back**, because leaving it on turns
+unreadable data into a silently "clean" snapshot and makes the verifier's
+zero-error check meaningless:
+
+```sh
+kopia policy set ~ --ignore-dir-errors=true
+kopia snapshot estimate ~ 2>&1 | grep 'operation not permitted'
+kopia policy set ~ --ignore-dir-errors=false   # DO NOT SKIP
+```
 
 ### Why there is no NAS source any more (removed 2026-08-04)
 
@@ -3882,7 +3978,7 @@ shell run.
    launchctl load ~/Library/LaunchAgents/uk.mathewcsims.kopia-verify.plist
    ```
    Backup runs daily at 02:00 (see `kopia-mac/backup.sh` for the exact
-   source list); verification at 04:00, after the Pi and slartibartfast have
+   source list); verification at 06:00, after the Pi and slartibartfast have
    finished too. Neither needs Pass access at run time — `kopia repository
    connect`, done once above, persists locally, and no job mounts the NAS
    any more.
