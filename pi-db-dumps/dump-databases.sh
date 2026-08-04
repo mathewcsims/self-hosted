@@ -85,7 +85,9 @@ sys.exit(0 if chk == 'ok' else 1)
 
 echo "=== dumping Pi databases -> $OUT ==="
 
-dump_postgres nimbus-db nimbus
+# No nimbus-db here: Nimbus was decommissioned 2026-08-04 (see SETUP.md).
+# Its final pg_dump and a cold archive of its whole data directory live
+# permanently in db-dumps/decommissioned/.
 
 dump_sqlite "$HOME/uptime-kuma/data/kuma.db"                uptime-kuma
 dump_sqlite "$HOME/speedtest-tracker/config/database.sqlite" speedtest-tracker
@@ -126,7 +128,7 @@ fi
 # response = broken.
 UNHEALTHY=""
 echo "=== post-dump health check ==="
-for _host in dashboard status speedtest msims.link; do
+for _host in status speedtest msims.link; do
     case "$_host" in
         msims.link) _url="https://msims.link/" ;;
         *)          _url="https://$_host.mathewcsims.uk/" ;;

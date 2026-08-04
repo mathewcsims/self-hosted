@@ -190,18 +190,17 @@ dump_mysql blog-db      mysqldump     ghost
 dump_mysql bookstack-db mariadb-dump  bookstack
 
 dump_sqlite "$REPO_ROOT/owl/data/memos_prod.db"                    owl
-dump_sqlite "$REPO_ROOT/marque/data/memos_prod.db"                 marque
 dump_sqlite "$REPO_ROOT/memos-prospect-ukri-tus/data/memos_prod.db" memos-prospect
 dump_sqlite "$REPO_ROOT/vikunja/db/vikunja.db"                     vikunja
 dump_sqlite "$REPO_ROOT/forgejo/data/gitea/gitea.db"               forgejo
 dump_sqlite "$REPO_ROOT/karakeep/data/db.db"                       karakeep
 dump_sqlite "$REPO_ROOT/wanderer/data/pb_data/data.db"             wanderer
 
-# TimeTagger stores one SQLite file per user; glob rather than hardcode.
-for _f in "$REPO_ROOT"/timetagger/data/users/*.db; do
-    [ -f "$_f" ] || continue
-    dump_sqlite "$_f" "timetagger-$(basename "$_f" .db | cut -c1-24)"
-done
+# Marque and TimeTagger were decommissioned 2026-08-04 (see SETUP.md), so
+# neither is dumped here any more. Their final dumps and cold archives live
+# permanently in db-dumps/decommissioned/, which the rotation below cannot
+# touch — it only globs "$OUT/<label>-*.gz" at the top level, never into a
+# subdirectory.
 
 # ── Rotation: keep the most recent $KEEP of each label ────────────────────
 # Kopia keeps its own history, so this only bounds local disk.
@@ -229,7 +228,7 @@ done
 # at all — counts as broken, which is exactly how that incident presented.
 UNHEALTHY=""
 echo "=== post-dump health check ==="
-for _host in owl marque prospect-ukri-tus vikunja karakeep wanderer fj time healthlog blog author; do
+for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj healthlog blog author; do
     _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$_host.mathewcsims.uk/" 2>/dev/null || true)
     [ -z "$_code" ] && _code=000
     case "$_code" in

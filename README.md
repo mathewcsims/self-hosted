@@ -16,7 +16,6 @@ in front of the lot.
 | [copyparty](https://github.com/9001/copyparty) | `cp.mathewcsims.uk` | Mac |
 | [Memos](https://github.com/usememos/memos) | `prospect-ukri-tus.mathewcsims.uk` | Mac |
 | [Vikunja](https://vikunja.io) | `vikunja.mathewcsims.uk` | Mac |
-| [Nimbus](https://github.com/Turbootzz/Nimbus) | `dashboard.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 | [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) | `speedtest.mathewcsims.uk` | Pi (LAN-only — no WAN access at all) |
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 | [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
@@ -26,9 +25,7 @@ in front of the lot.
 | Vikunja webhook relay (this repo) | `vikunja-relay.mathewcsims.uk` | Pi (LAN-only — bridges Vikunja's webhook events to Apprise) |
 | Tailscale webhook relay (this repo) | `tailscale-relay.mathewcsims.uk` | Pi (public — bridges Tailscale's webhook events to Apprise; HMAC-verified) |
 | [Kopia](https://kopia.io) | `backup.mathewcsims.uk` | Pi (LAN-only — encrypted, deduplicated backups to Backblaze B2) |
-| [TimeTagger](https://github.com/almarklein/timetagger) | `time.mathewcsims.uk` | Mac (fronted by oauth2-proxy for Infomaniak SSO — TimeTagger itself has no OAuth) |
 | Owl ([Memos](https://github.com/usememos/memos)) | `owl.mathewcsims.uk` | Mac (personal notes instance, migrated from a Tailscale-only ScaleTail deployment — closed registration, unrelated to the Prospect Memos instance above) |
-| Marque ([Memos](https://github.com/usememos/memos)) | `marque.mathewcsims.uk` | Mac (private, work-focused notes instance — closed registration, Infomaniak SSO only, unrelated to the other two Memos instances) |
 | [BookStack](https://www.bookstackapp.com) | `author.mathewcsims.uk` | Mac (project wiki for writing projects — LAN-only, no SSO, local admin login) |
 | [Forgejo](https://forgejo.org) | `fj.mathewcsims.uk` | Mac (self-hosted git remote + web UI for sensitive personal projects — LAN-only, SQLite, git-over-SSH on port 2222) |
 | Contact sync (this repo) | — (no URL; launchd job) | Mac (cross-provider address-book sync: Proton + Google + 2× Microsoft → one canonical store, git-versioned on Forgejo) |
@@ -40,6 +37,25 @@ in front of the lot.
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
 | [LiteLLM](https://github.com/BerriAI/litellm) | `litellm.possum-prometheus.ts.net` | **slartibartfast** (OpenAI-compatible proxy in front of employer-funded Gemini Enterprise Agent Platform (formerly Vertex AI) — **tailnet-only** via a Tailscale sidecar tagged `personal` — no public hostname, no DNS record, not behind Caddy; ADC auth, no service-account key) |
 
+### Decommissioned
+
+Three apps were torn down on **2026-08-04** for not earning their keep —
+Marque (a private, work-focused third Memos instance), Nimbus
+(`dashboard.mathewcsims.uk`, the Pi-resident homelab dashboard) and
+TimeTagger (`time.mathewcsims.uk`, fronted by oauth2-proxy for Infomaniak
+SSO). Containers, images, volumes, networks, Caddy site blocks, Uptime Kuma
+monitors and DNS records are all gone; their compose projects live on only
+in git history.
+
+Their data is deliberately **not** gone. A final database dump plus a cold
+`tar.gz` of each app's whole data directory sits in `db-dumps/decommissioned/`
+on the relevant host — which is itself a Kopia source, so the archives ride
+along with every future backup instead of ageing out of a dormant source's
+retention. Each app's Proton Pass item (OIDC client secrets, JWT secret,
+Nimbus's DB password) was kept for the same reason. The rebuild instructions
+remain in [SETUP.md](SETUP.md), retitled as decommissioned rather than
+deleted.
+
 ## Architecture, in short
 
 ```
@@ -50,15 +66,12 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ vikunja.mathewcsims.uk           → Mac
                                   ├─ blog.mathewcsims.uk              → Mac
                                   ├─ karakeep.mathewcsims.uk          → Mac
-                                  ├─ dashboard.mathewcsims.uk         → itself (Pi)
                                   ├─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
                                   ├─ apprise.mathewcsims.uk           → itself (Pi, LAN clients only)
                                   ├─ status.mathewcsims.uk            → itself (Pi)
                                   ├─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
                                   ├─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
-                                  ├─ time.mathewcsims.uk              → Mac (via oauth2-proxy)
                                   ├─ owl.mathewcsims.uk               → Mac
-                                  ├─ marque.mathewcsims.uk            → Mac
                                   ├─ author.mathewcsims.uk            → Mac (LAN clients only)
                                   └─ fj.mathewcsims.uk                → Mac (LAN clients only;
                                                                           git-over-SSH bypasses
@@ -121,16 +134,13 @@ vikunja/               compose.yaml and data (Mac)
 blog/                  compose.yaml, MySQL, and Ghost content (Mac)
 landing-page/          compose.yaml, static site content (Mac, no secrets)
 karakeep/              compose.yaml, bookmark/asset data, search index (Mac)
-nimbus/                compose.yaml (Pi — deployed via scp + docker compose)
 speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 apprise/               compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 uptime-kuma/           compose.yaml (Pi — deployed via scp + docker compose)
 vikunja-webhook-relay/ compose.yaml + Dockerfile + relay.py (Pi — deployed via scp + docker compose, LAN-only)
 kopia-server/          compose.yaml + Dockerfile + entrypoint.sh (Pi — deployed via scp + docker compose, LAN-only)
 kopia-mac/             backup.sh + LaunchAgent plist (Mac — scheduled snapshots, no compose project)
-timetagger/            compose.yaml (Mac — TimeTagger + oauth2-proxy for Infomaniak SSO)
 owl/                   compose.yaml, logo SVG, and data (Mac — personal Memos instance)
-marque/                compose.yaml, logo SVG, theme CSS, and data (Mac — private work notes instance)
 bookstack/             compose.yaml, MariaDB, and config (Mac — project wiki, LAN-only)
 .claude/skills/bookstack-api/  Claude Code skill for using BookStack's REST API
 forgejo/               compose.yaml and data (Mac — self-hosted git remote, LAN-only)

@@ -7,7 +7,7 @@
 	# order, so it must be told where to run. "first" = every site block
 	# checks its rate-limit zones before anything else (headers, rewrites,
 	# proxying) — an over-limit request is rejected as cheaply as possible,
-	# and never reaches copyparty/Memos/Vikunja/Nimbus at all.
+	# and never reaches copyparty/Memos/Vikunja at all.
 	order rate_limit first
 
 	# Persist the access log to a file on disk (bind-mounted out of the
@@ -29,7 +29,8 @@
 # Reusable hardening headers — HSTS (force HTTPS on repeat visits),
 # clickjacking and MIME-sniffing protection, conservative referrer leakage.
 # Was Vikunja-only ("wasn't asked for elsewhere"); now applied everywhere
-# per "harden Copyparty/Nimbus/Caddy in general" — it's free and every app
+# per "harden Copyparty/Nimbus/Caddy in general" (Nimbus decommissioned
+# 2026-08-04; the blanket policy it prompted stays) — it's free and every app
 # here is either private or has an admin login worth protecting.
 (security_headers) {
 	header {
@@ -43,7 +44,7 @@
 # General-purpose per-site, per-IP request budget — coarse abuse/DoS
 # protection, not a substitute for each app's own auth-specific limits
 # (copyparty has --ban-pw/--ban-403 built in and enabled by default; Vikunja
-# has VIKUNJA_RATELIMIT_*; Nimbus has none at all, see the @auth zone below).
+# has VIKUNJA_RATELIMIT_*; Memos has none at all, see its own zones below).
 # 300 req/min/IP is loose enough not to bother a real browsing session
 # (page + assets + polling) while still capping a single source's blast
 # radius. Zone name is parameterized per site (import ... <name>) so each
@@ -89,10 +90,10 @@ prospect-ukri-tus.mathewcsims.uk {
 	import general_ratelimit memos
 
 	# Memos has no rate-limiting, brute-force lockout, or CAPTCHA of its own
-	# anywhere in its source (confirmed by reading it) — same gap class as
-	# Nimbus. Registration is deliberately open here (this is for Prospect
-	# members to self-signup), so unlike Nimbus this can't just be "strict
-	# zone on all of /api/v1/auth/*" — a genuine new member still needs to
+	# anywhere in its source (confirmed by reading it). Registration is
+	# deliberately open here (this is for Prospect members to self-signup),
+	# so unlike a closed instance this can't just be "strict zone on all
+	# of /api/v1/auth/*" — a genuine new member still needs to
 	# be able to sign up without hassle. Two separate, purpose-matched zones:
 	#
 	# Both zones match TWO path forms per action, not one — the web app
@@ -140,8 +141,8 @@ prospect-ukri-tus.mathewcsims.uk {
 # Clean public URL https://owl.mathewcsims.uk. Same pattern as the Memos
 # block above — a separate, unrelated Memos instance (personal notes, not
 # Prospect), migrated from an unrelated ScaleTail Tailscale-sidecar
-# deployment. Registration is closed here (personal instance, matching the
-# Nimbus precedent), so only one rate-limit zone is needed — no signup zone,
+# deployment. Registration is closed here (personal instance), so only one
+# rate-limit zone is needed — no signup zone,
 # unlike prospect-ukri-tus.mathewcsims.uk above.
 owl.mathewcsims.uk {
 	# Wrapped in an explicit route{} block: without it, Caddyfile's adapter
@@ -232,32 +233,6 @@ owl.mathewcsims.uk {
 	}
 }
 
-# ── Marque (running on the Mac) ────────────────────────────────────────────
-# Same pattern as Owl above: a third, unrelated Memos instance (private,
-# work-focused notes), registration closed, Infomaniak SSO only — so only
-# a signin/refresh rate-limit zone, no signup zone.
-marque.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit marque
-
-	rate_limit {
-		# Matches both the REST-gateway and Connect-RPC forms of the same
-		# two endpoints — see the comment on the equivalent Memos zone
-		# above for why both are needed (the web app actually uses the
-		# Connect-RPC path, not the REST one this used to match alone).
-		zone rl_marque_auth {
-			match {
-				path /api/v1/auth/signin /api/v1/auth/refresh /memos.api.v1.AuthService/SignIn /memos.api.v1.AuthService/RefreshToken
-			}
-			key {remote_host}
-			events 20
-			window 1m
-		}
-	}
-
-	reverse_proxy http://{$MAC_IP}:5232
-}
-
 # ── Vikunja (running on the Mac) ───────────────────────────────────────────
 # Clean public URL https://vikunja.mathewcsims.uk. Same pattern as copyparty
 # above. Vikunja's own image is pinned to an exact patched version and
@@ -333,79 +308,6 @@ ways-of-working.mathewcsims.uk {
 	redir https://blog.mathewcsims.uk/ways-of-working/ permanent
 }
 
-# ── Nimbus (running HERE on the Pi, not the Mac) ──────────────────────────
-# Clean public URL https://dashboard.mathewcsims.uk. Unlike every other app,
-# Nimbus is a separate docker-compose project also on the Pi (see ../nimbus/),
-# for resilience if the Mac is down. It joins the `pi-shared` Docker network
-# (created by this compose project — see compose.yaml) and is reached by
-# container name, not an IP:port — no host port is published for it at all.
-dashboard.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit dashboard
-
-	# Nimbus has NO brute-force/rate-limit protection anywhere in its own
-	# codebase (confirmed by reading its source) — unlike copyparty's
-	# --ban-pw/--ban-403 (on by default) and Vikunja's VIKUNJA_RATELIMIT_*.
-	# This is the compensating control: an unauthenticated attacker gets 10
-	# attempts/minute/IP against login/register/password-reset/OAuth-callback
-	# before Caddy itself starts rejecting the requests — well below anything
-	# a real user needs, and low enough to make online password-guessing
-	# impractical against the shared admin login (see nimbus/compose.yaml —
-	# there is no per-user login here, just the one admin account shared per
-	# the earlier decision).
-	rate_limit {
-		zone rl_dashboard_auth {
-			match {
-				path /api/v1/auth/*
-			}
-			key {remote_host}
-			events 10
-			window 1m
-		}
-	}
-
-	# Workaround for a bug in Nimbus itself: avatar uploads are written to
-	# /uploads/avatars/<file> and that exact path (no /api/v1 prefix) is what
-	# gets stored as avatar_url and returned to the frontend. But Nimbus's own
-	# bundled nginx only routes /api/* to the Go backend that actually owns
-	# /uploads/avatars/* and /uploads/service-icons/* — everything else falls
-	# through to the Next.js frontend, which 404s on those paths. Rewriting
-	# here fixes it for already-uploaded avatars too, not just future ones,
-	# and survives Nimbus image updates since the fix lives in our Caddyfile,
-	# not inside their container. See SETUP.md.
-	@uploads path /uploads/*
-	rewrite @uploads /api/v1{uri}
-
-	# Second, deeper Nimbus bug: Next.js's built-in image optimizer
-	# (/_next/image?url=...) does its OWN internal fetch of the source image
-	# from Next's own process (port 3001 inside the container), never through
-	# the nginx layer that bridges to the Go backend. Since /api/v1/uploads/*
-	# only exists behind nginx+the Go backend, that internal fetch always gets
-	# Next's own 404 HTML page back, which sharp then rejects as "not a valid
-	# image" — every avatar/service-icon thumbnail fails to render, even
-	# though the upload succeeded and the raw file is fully fetchable (proven
-	# working by the @uploads rewrite above). This one can't be fixed by
-	# proxying differently — the failing request never leaves the container,
-	# so nothing outside it can intercept where it goes. Instead: catch the
-	# outer /_next/image request before Next.js's optimizer gets it, and
-	# rewrite straight to the raw (already-working) image path — scoped
-	# narrowly to our known-safe upload prefix, not every /_next/image
-	# request, so this can't be abused as an open internal-path redirector.
-	#
-	# Caddy's plain `query` matcher only supports exact-value or bare "*"
-	# (any-value) matches — no substring/prefix globbing (confirmed from
-	# Caddy's own matchers.go source) — so a CEL `expression` matcher is used
-	# instead for the .startsWith() check. Caddy placeholders used inside an
-	# expression must stay UNQUOTED: they get expanded into a proper CEL
-	# function call (ph(req, "...")) before compilation, not substituted as
-	# literal text — wrapping one in quotes turns it into an inert string
-	# literal that can never match anything.
-	@nextimage_uploads expression `path('/_next/image') && {http.request.uri.query.url}.startsWith('/api/v1/uploads/')`
-	rewrite @nextimage_uploads {http.request.uri.query.url}
-
-	reverse_proxy nimbus:3000
-}
-
 # ── Speedtest Tracker (running HERE on the Pi, LAN-ONLY) ─────────────────
 # Clean public URL https://speedtest.mathewcsims.uk, but only for LAN clients
 # — same pattern as mc37 below: a real public A-record lets Caddy obtain a
@@ -413,7 +315,7 @@ dashboard.mathewcsims.uk {
 # site), but only private/LAN source IPs get proxied through; everyone else
 # gets a closed connection. Unlike mc37 this is a container on the Pi itself
 # (see ../speedtest-tracker/), reached over `pi-shared` by container name —
-# same no-published-port pattern as Nimbus. Deliberately not using
+# no host port published at all. Deliberately not using
 # speedtest-tracker's own ALLOWED_IPS env var for this: with no documented
 # trusted-proxy/X-Forwarded-For config on that app, it would only ever see
 # Caddy's own container IP as the "client", not real LAN clients — the
@@ -485,22 +387,6 @@ karakeep.mathewcsims.uk {
 	}
 
 	reverse_proxy http://{$MAC_IP}:3000
-}
-
-# ── TimeTagger (running on the Mac) ────────────────────────────────────────
-# Clean public URL https://time.mathewcsims.uk. Same pattern as every other
-# Mac app: Caddy terminates TLS and proxies to a plain-HTTP backend on the
-# Mac — but here that backend is oauth2-proxy, not TimeTagger itself.
-# TimeTagger has no native OAuth (unlike ../nimbus/'s Infomaniak OIDC), so
-# oauth2-proxy sits in front doing the actual Infomaniak login and only
-# forwards requests it has verified on to TimeTagger, over a network Caddy
-# can't reach at all — see ../timetagger/compose.yaml's file header for the
-# full reasoning. Caddy's normal X-Forwarded-For/-Proto/-Host is all
-# oauth2-proxy needs; nothing extra required here.
-time.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit time
-	reverse_proxy http://{$MAC_IP}:4180
 }
 
 # ── Apprise (running HERE on the Pi, LAN-ONLY) ────────────────────────────

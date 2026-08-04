@@ -21,8 +21,6 @@ copyparty/cfg/copyparty/
 memos-prospect-ukri-tus/data/
 vikunja/db/
 vikunja/files/
-nimbus/db/
-nimbus/uploads/
 pi-reverse-proxy/caddy_data/
 pi-reverse-proxy/caddy_config/
 speedtest-tracker/config/
@@ -41,11 +39,8 @@ kopia-server/config/
 kopia-server/cache/
 kopia-server/logs/
 kopia-server/tmp/
-timetagger/data/
-timetagger/oauth2-proxy/authenticated-emails.txt
 pi-reverse-proxy/logs/
 owl/data/
-marque/data/
 bookstack/db/
 bookstack/config/
 forgejo/data/

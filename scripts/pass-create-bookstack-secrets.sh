@@ -41,8 +41,8 @@ json.dump(template, sys.stdout)
 ' "$APP_KEY" "$DB_ROOT_PASSWORD" "$DB_PASSWORD" \
     | pass-cli item create custom --vault-name "Self-Hosted Secrets" --from-template - >/dev/null
 # Output suppressed: `item create` echoes the created item back, including
-# the secret values just generated above — see pass-create-timetagger-
-# secrets.sh for how this was found out the hard way.
+# the secret values just generated above — confirmed the hard way, then
+# rotated. Never let this command's stdout reach a terminal/log unredirected.
 
 echo "Done. Verify with:"
 echo "  pass-cli item view --vault-name \"Self-Hosted Secrets\" --item-title \"BookStack\""
