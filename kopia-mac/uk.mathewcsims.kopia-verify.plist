@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>uk.mathewcsims.kopia-verify</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>/Users/mathewcsims/self-hosted/kopia-mac/verify-backups.sh</string>
+    </array>
+    <!-- 04:00, deliberately AFTER all three hosts have finished:
+           babel          01:00 kopia-server scheduler, 01:30 db-dumps.timer
+           mathews-mac    02:00 kopia-mac/backup.sh (~2 min now the NAS
+                                source is gone; it used to run for hours)
+           slartibartfast 03:00 kopia-immich.timer
+         An hour of headroom after the last of them. This is a SEPARATE job
+         from the backup rather than a step at the end of backup.sh, on
+         purpose: if the backup wedges or is skipped entirely, the verifier
+         still runs and is exactly what tells you so. Chaining it would mean
+         the check dies with the thing it is checking. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/mathewcsims</string>
+        <!-- Same load-bearing PATH reasoning as the backup agent: launchd
+             gives a job a minimal PATH, not a login shell's. kopia lives in
+             /opt/homebrew/bin, and python3 in /usr/bin. Without this the
+             job dies immediately with "kopia: command not found" — and,
+             being the thing that reports failures, it would fail silently. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mathewcsims/self-hosted/kopia-mac/verify-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mathewcsims/self-hosted/kopia-mac/verify-launchd.log</string>
+</dict>
+</plist>

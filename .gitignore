@@ -9,6 +9,16 @@ copyparty/cfg/accounts.conf
 copyparty/cfg/local-*.conf
 copyparty/compose.override.yaml
 kopia-mac/local-sources.txt
+# Runtime scratch written by backup.sh / verify-backups.sh each night —
+# the lock and its pid file, the recorded per-source failures, and the raw
+# repository queries the verifier reasons over. Regenerated every run; none
+# of it is state worth versioning.
+kopia-mac/.backup.lock/
+kopia-mac/.backup-failures
+kopia-mac/.timed-out.*
+kopia-mac/.snapshots.json
+kopia-mac/.policies.json
+kopia-mac/.verify-report
 
 # ── Runtime data & databases ────────────────────────────────────────────
 # This repo is infrastructure-as-code only — never the actual files,
