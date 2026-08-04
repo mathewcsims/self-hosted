@@ -19,6 +19,8 @@ kopia-mac/.timed-out.*
 kopia-mac/.snapshots.json
 kopia-mac/.policies.json
 kopia-mac/.verify-report
+kopia-mac/.mirror.lock/
+kopia-mac/.mirror-state
 
 # ── Runtime data & databases ────────────────────────────────────────────
 # This repo is infrastructure-as-code only — never the actual files,

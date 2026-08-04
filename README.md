@@ -153,6 +153,17 @@ Apple Mail, Messages and the Photos library are excluded **by choice, not
 limitation**: none is used. Thunderbird is the mail store here, and
 photographs live in Immich, itself a Kopia source.
 
+**Everything has at least two copies.** The Mac's data has Kopia → B2 plus
+Time Machine → NAS. The Pi and slartibartfast write only to B2, so their
+second copy is an offline mirror of the whole bucket on an external drive —
+and since 2026-08-04 that runs **automatically whenever the drive is
+connected** (a launchd agent watching `/Volumes`; the drive identifies
+itself by containing a `kopia-mirror/` directory, so nothing is hardcoded
+and an unrelated disk is never written to). The nightly report includes how
+stale that mirror is, because a second copy that depends on remembering
+silently stops being one — the mirror was a month out of date when this was
+automated.
+
 **Backups are verified, and say so.** A separate nightly job
 (`kopia-mac/verify-backups.sh`, 06:00, after all three hosts have finished)
 checks the repository rather than trusting any job's own report: every
