@@ -101,12 +101,12 @@ else
     log "WARNING: database dumps reported failures (see Apprise alert) — continuing with file snapshots"
 fi
 
-# No MedTimer source here, on purpose. Medications moved off HealthLog to
-# MedTimer (an Android app) on 2026-08-04 — its automatic backup writes a
-# timestamped JSON to a directory picked through Android's Storage Access
-# Framework, so an SMB or WebDAV DocumentsProvider on the phone could drop
-# it into copyparty/data or the NAS mount below and it would be swept up
-# here with no change to this file. That was considered and declined:
+# No MedTimer source here, on purpose. Medications are moving off HealthLog
+# to MedTimer (an Android app), decided 2026-08-04 — its automatic backup
+# writes a timestamped JSON to a directory picked through Android's Storage
+# Access Framework, so an SMB or WebDAV DocumentsProvider on the phone could
+# drop it into copyparty/data or the NAS mount below and it would be swept
+# up here with no change to this file. That was considered and declined:
 # backup is Syncthing -> Proton Drive, off this repo's infrastructure
 # entirely. Don't wire it in. See SETUP.md's HealthLog section for the
 # full reasoning (incl. why the copyparty route would cost vague-403).
