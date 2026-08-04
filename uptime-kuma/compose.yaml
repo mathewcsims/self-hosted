@@ -35,7 +35,7 @@ services:
       - ./data:/app/data
     # No `ports:` — reached only by Caddy (status.mathewcsims.uk), over
     # `pi-shared`, by container name. Same no-published-port pattern as
-    # Nimbus/Speedtest Tracker.
+    # the other Pi-resident stacks.
     #
     # Hardening added 2026-08-02. This is a **public** hostname carrying 14
     # unfixed CRITICAL findings, and it had no cap_drop, no

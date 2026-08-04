@@ -59,6 +59,39 @@
 	}
 }
 
+# ── THE LAN-GATE IDIOM, EXPLAINED ONCE ────────────────────────────────────
+# Several sites below are "public hostname, LAN clients only":
+#
+#     @lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+#     handle @lan { reverse_proxy ... }
+#     handle      { abort }
+#
+# A real public A-record lets Caddy obtain a Let's Encrypt cert (needed
+# regardless of who is allowed to actually use the site), but only
+# private/LAN source IPs get proxied through; everyone else gets a closed
+# connection rather than an error page, revealing nothing.
+#
+# `100.64.0.0/10` alongside `private_ranges`: Tailscale assigns every
+# device an IP in this CGNAT range, which Caddy's own `private_ranges`
+# shortcut does NOT include (confirmed directly from Caddy's source,
+# internal/ranges.go — it's just RFC1918 + loopback). Without this, a
+# connection arriving via the tailnet (e.g. babel, this same Pi, acting as
+# a Tailscale subnet router/exit node) would always be rejected, even
+# though it's exactly the kind of "trusted network" access this LAN-gate is
+# meant to allow. This alone only helps once the connection actually
+# *arrives* carrying a Tailscale-range source IP — see SETUP.md's Tailscale
+# DNS section for the other half (making these hostnames resolve to
+# 10.0.1.19 in the first place while tailnet-connected).
+#
+# Where an app has its own IP-allowlist setting, it is deliberately NOT
+# used instead of this: with no documented trusted-proxy/X-Forwarded-For
+# handling, such an app only ever sees Caddy's own container IP as the
+# "client", never the real LAN client. The request-source check has to
+# happen here, at the actual network edge, not in the app. (This was
+# written up for Speedtest Tracker, the first site to need it —
+# decommissioned 2026-08-04; the idiom it established is used by every
+# LAN-gated block below.)
+
 # ── copyparty (running on the Mac) ───────────────────────────────────────
 # Clean public URL https://cp.mathewcsims.uk. Caddy gets the cert here (it
 # owns 80/443) and proxies to plain-HTTP copyparty on the Mac. Caddy preserves
@@ -308,45 +341,6 @@ ways-of-working.mathewcsims.uk {
 	redir https://blog.mathewcsims.uk/ways-of-working/ permanent
 }
 
-# ── Speedtest Tracker (running HERE on the Pi, LAN-ONLY) ─────────────────
-# Clean public URL https://speedtest.mathewcsims.uk, but only for LAN clients
-# — same pattern as mc37 below: a real public A-record lets Caddy obtain a
-# Let's Encrypt cert (needed regardless of who's allowed to actually use the
-# site), but only private/LAN source IPs get proxied through; everyone else
-# gets a closed connection. Unlike mc37 this is a container on the Pi itself
-# (see ../speedtest-tracker/), reached over `pi-shared` by container name —
-# no host port published at all. Deliberately not using
-# speedtest-tracker's own ALLOWED_IPS env var for this: with no documented
-# trusted-proxy/X-Forwarded-For config on that app, it would only ever see
-# Caddy's own container IP as the "client", not real LAN clients — the
-# request-source check has to happen here, at the actual network edge, not
-# in the app.
-#
-# `100.64.0.0/10` alongside `private_ranges`: Tailscale assigns every
-# device an IP in this CGNAT range, which Caddy's own `private_ranges`
-# shortcut does NOT include (confirmed directly from Caddy's source,
-# internal/ranges.go — it's just RFC1918 + loopback). Without this, a
-# connection arriving via the tailnet (e.g. babel, this same Pi, acting as
-# a Tailscale subnet router/exit node) would always be rejected here, even
-# though it's exactly the kind of "trusted network" access this LAN-gate is
-# meant to allow. This alone only helps once the connection actually
-# *arrives* carrying a Tailscale-range source IP — see SETUP.md's Tailscale
-# DNS section for the other half (making these hostnames resolve to
-# 10.0.1.19 in the first place while tailnet-connected).
-speedtest.mathewcsims.uk {
-	import security_headers
-	import general_ratelimit speedtest
-
-	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
-	handle @lan {
-		reverse_proxy speedtest-tracker:80
-	}
-	# non-LAN (internet) clients: closed connection, nothing revealed
-	handle {
-		abort
-	}
-}
-
 # ── Landing page (running on the Mac) ─────────────────────────────────────
 # The bare apex domain, not a subdomain — everything else in this Caddyfile
 # is a subdomain of mathewcsims.uk, covered by the existing wildcard DNS
@@ -391,9 +385,8 @@ karakeep.mathewcsims.uk {
 
 # ── Apprise (running HERE on the Pi, LAN-ONLY) ────────────────────────────
 # Clean public URL https://apprise.mathewcsims.uk, but only for LAN clients —
-# same pattern as Speedtest Tracker above: a real public A-record lets Caddy
-# obtain a Let's Encrypt cert, but only private/LAN source IPs get proxied
-# through. Apprise has NO built-in authentication at all (confirmed in its
+# the LAN-gate idiom explained at the top of this file. Apprise has NO
+# built-in authentication at all (confirmed in its
 # own README) — this LAN-gate is its only access control, since there's no
 # in-app auth option to layer on top of instead. See ../apprise/compose.yaml.
 apprise.mathewcsims.uk {
@@ -454,7 +447,7 @@ tailscale-relay.mathewcsims.uk {
 
 # ── Vikunja webhook relay (running HERE on the Pi, LAN-ONLY) ─────────────
 # Clean public URL https://vikunja-relay.mathewcsims.uk, but only for LAN
-# clients — same pattern as Apprise/Speedtest Tracker above. Bridges
+# clients — same LAN-gate idiom as Apprise above. Bridges
 # Vikunja's webhook payload shape to Apprise's /notify shape (see
 # ../vikunja-webhook-relay/compose.yaml for why this exists at all — the two
 # don't line up without something in between). The real access control is
@@ -477,7 +470,7 @@ vikunja-relay.mathewcsims.uk {
 
 # ── Kopia backup server (running HERE on the Pi, LAN-ONLY) ───────────────
 # Clean public URL https://backup.mathewcsims.uk, but only for LAN clients —
-# same pattern as Apprise/Speedtest Tracker above, and for the same reason
+# same LAN-gate idiom as Apprise above, and for the same reason
 # as every other admin surface in this repo: this can browse AND restore
 # (and, if compromised, delete) every backup this stack has, so it never
 # gets anywhere near the internet even with a login in front of it.
@@ -533,7 +526,7 @@ mc37.mathewcsims.uk {
 
 # ── BookStack (running on the Mac, LAN-ONLY) ─────────────────────────────
 # Clean public URL https://author.mathewcsims.uk, but only for LAN/tailnet
-# clients — same reasoning and same @lan/abort shape as Speedtest Tracker
+# clients — same @lan/abort idiom as Apprise
 # and mc37 above: a real public A-record lets Caddy obtain a Let's Encrypt
 # cert (BookStack's own APP_URL always redirects to this hostname
 # regardless of what Host header a request arrives with, so the cert has
@@ -576,7 +569,7 @@ author.mathewcsims.uk {
 
 # ── Forgejo (running on the Mac, LAN-ONLY) ───────────────────────────────
 # Clean public URL https://fj.mathewcsims.uk, but only for LAN/tailnet
-# clients — same @lan/abort shape as BookStack and Speedtest Tracker above.
+# clients — same @lan/abort idiom as BookStack and Apprise above.
 # Note this only covers the web UI; git-over-SSH (port 2222 on the Mac's
 # LAN IP) is reached directly by clients, not proxied through Caddy at all
 # — Caddy only ever speaks HTTP(S).
@@ -693,7 +686,7 @@ wanderer.mathewcsims.uk {
 
 # ── Immich (running on slartibartfast — the THIRD host, LAN-ONLY) ────────
 # Clean public URL https://immich.mathewcsims.uk, but only for LAN/tailnet
-# clients — same @lan/abort shape as BookStack/Forgejo/Speedtest above. A
+# clients — same @lan/abort idiom as BookStack/Forgejo above. A
 # real public A-record lets Caddy obtain a Let's Encrypt cert; only
 # private-range or Tailscale-CGNAT source IPs are ever proxied through.
 #

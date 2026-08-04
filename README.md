@@ -16,7 +16,6 @@ in front of the lot.
 | [copyparty](https://github.com/9001/copyparty) | `cp.mathewcsims.uk` | Mac |
 | [Memos](https://github.com/usememos/memos) | `prospect-ukri-tus.mathewcsims.uk` | Mac |
 | [Vikunja](https://vikunja.io) | `vikunja.mathewcsims.uk` | Mac |
-| [Speedtest Tracker](https://github.com/alexjustesen/speedtest-tracker) | `speedtest.mathewcsims.uk` | Pi (LAN-only — no WAN access at all) |
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 | [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
 | [Karakeep](https://github.com/karakeep-app/karakeep) | `karakeep.mathewcsims.uk` | Mac (migrated from a separate Tailscale-only deployment) |
@@ -39,11 +38,16 @@ in front of the lot.
 
 ### Decommissioned
 
-Three apps were torn down on **2026-08-04** for not earning their keep —
-Marque (a private, work-focused third Memos instance), Nimbus
-(`dashboard.mathewcsims.uk`, the Pi-resident homelab dashboard) and
-TimeTagger (`time.mathewcsims.uk`, fronted by oauth2-proxy for Infomaniak
-SSO). Containers, images, volumes, networks, Caddy site blocks, Uptime Kuma
+Four apps were torn down on **2026-08-04** for not earning their keep:
+
+- **Marque** — a private, work-focused third Memos instance (2 memos, 1 user).
+- **Nimbus** — `dashboard.mathewcsims.uk`, the Pi-resident homelab dashboard.
+- **TimeTagger** — `time.mathewcsims.uk`, fronted by oauth2-proxy for
+  Infomaniak SSO (zero time records logged).
+- **Speedtest Tracker** — `speedtest.mathewcsims.uk`, Pi-resident and
+  LAN-only, polling every 15 minutes (3,135 results kept).
+
+Containers, images, volumes, networks, Caddy site blocks, Uptime Kuma
 monitors and DNS records are all gone; their compose projects live on only
 in git history.
 
@@ -51,10 +55,11 @@ Their data is deliberately **not** gone. A final database dump plus a cold
 `tar.gz` of each app's whole data directory sits in `db-dumps/decommissioned/`
 on the relevant host — which is itself a Kopia source, so the archives ride
 along with every future backup instead of ageing out of a dormant source's
-retention. Each app's Proton Pass item (OIDC client secrets, JWT secret,
-Nimbus's DB password) was kept for the same reason. The rebuild instructions
-remain in [SETUP.md](SETUP.md), retitled as decommissioned rather than
-deleted.
+retention. Every archive was restore-tested back out of Backblaze B2 and
+matched its source by sha256. Each app's Proton Pass item (OIDC client
+secrets, JWT secret, Nimbus's DB password, Speedtest's `APP_KEY`) was kept
+for the same reason. The rebuild instructions remain in
+[SETUP.md](SETUP.md), retitled as decommissioned rather than deleted.
 
 ## Architecture, in short
 
@@ -66,7 +71,6 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ vikunja.mathewcsims.uk           → Mac
                                   ├─ blog.mathewcsims.uk              → Mac
                                   ├─ karakeep.mathewcsims.uk          → Mac
-                                  ├─ speedtest.mathewcsims.uk         → itself (Pi, LAN clients only)
                                   ├─ apprise.mathewcsims.uk           → itself (Pi, LAN clients only)
                                   ├─ status.mathewcsims.uk            → itself (Pi)
                                   ├─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
@@ -134,7 +138,6 @@ vikunja/               compose.yaml and data (Mac)
 blog/                  compose.yaml, MySQL, and Ghost content (Mac)
 landing-page/          compose.yaml, static site content (Mac, no secrets)
 karakeep/              compose.yaml, bookmark/asset data, search index (Mac)
-speedtest-tracker/      compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 apprise/               compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 uptime-kuma/           compose.yaml (Pi — deployed via scp + docker compose)
 vikunja-webhook-relay/ compose.yaml + Dockerfile + relay.py (Pi — deployed via scp + docker compose, LAN-only)

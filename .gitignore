@@ -23,7 +23,6 @@ vikunja/db/
 vikunja/files/
 pi-reverse-proxy/caddy_data/
 pi-reverse-proxy/caddy_config/
-speedtest-tracker/config/
 blog/db/
 blog/content/
 blog/traffic-analytics-data/

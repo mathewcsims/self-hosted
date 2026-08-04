@@ -3,7 +3,7 @@
 # third-party host like GitHub. LAN-only: reachable at
 # https://fj.mathewcsims.uk, gated to private/tailnet source IPs at the
 # Caddy layer (see ../pi-reverse-proxy/Caddyfile) — same pattern as
-# BookStack and Speedtest Tracker.
+# BookStack and Apprise.
 #
 # SQLite, not a DB sidecar: Forgejo/Gitea's own docs treat sqlite3 as a
 # fully supported production backend for low-concurrency, single-user

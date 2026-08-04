@@ -1,6 +1,6 @@
 #!/bin/sh
 # Like pass-deploy.sh, but for apps that run on the Pi (nimbus,
-# speedtest-tracker), not the Mac. Fetches secrets from Proton Pass here
+# uptime-kuma), not the Mac. Fetches secrets from Proton Pass here
 # (where pass-cli/the agent session live), then pipes the export statements
 # and the remote `docker compose up -d` invocation over SSH via stdin — the
 # secret values never appear in the SSH command line/argv, only inside the
