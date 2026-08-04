@@ -5809,6 +5809,31 @@ itself on first boot — no need to pre-create them.
   bypasses the file-cleanup signal, orphaning blobs on the share. Empty the
   trash through the UI instead.
 
+### Monitoring
+
+Uptime Kuma monitor, added by hand at `https://status.mathewcsims.uk` —
+monitors are UI state in `uptime-kuma/data/`, not anything this repo can
+deploy:
+
+| Field | Value |
+|-------|-------|
+| Monitor type | `HTTP(s) - Keyword` |
+| Friendly name | `Paperless` |
+| URL | `https://paperless.mathewcsims.uk/api/remote_version/` |
+| Keyword | `version` |
+
+`/api/remote_version/` is the right target: it answers **unauthenticated**
+with `{"version":"v3.0.5","update_available":false}`, unlike `/api/status/`
+and `/api/ui_settings/` which both 401. A plain `http` check of `/` would
+also "work", but only proves Caddy is up — `/` merely 302s to the login
+page, which it would do with a broken database behind it. The keyword check
+proves Django is actually serving.
+
+Verified that this passes the LAN gate before setting it up: Kuma runs on
+the Pi (`10.0.1.19`), which is in `private_ranges`, so the `@lan` matcher
+admits it. Confirmed by curling the endpoint from the Pi itself and getting
+a 200 with the expected body.
+
 ### Paperless depends on the NAS being up
 
 A consequence of putting the media root on a share, and worth knowing before
@@ -5960,6 +5985,23 @@ Every Mac app so far follows the same shape — copy it for the next one:
 6. DNS: public `A` record (registrar) for cert issuance, plus a NextDNS
    rewrite so LAN devices resolve straight to the Pi.
 7. Copy the Caddyfile to the Pi, `docker compose restart caddy`.
+8. **Back it up.** Add the app's data directory to `kopia-mac/backup.sh`'s
+   `SOURCES`, and if it uses a database, add it to
+   `scripts/dump-databases.sh` too — a live SQLite/Postgres/MariaDB file
+   copied while the service runs can capture torn pages. Take one snapshot
+   by hand (`kopia snapshot create <path>`) rather than waiting for 02:00:
+   it protects the data immediately and registers the source with
+   `verify-backups.sh`, which discovers sources from the snapshot list and
+   therefore cannot see one that has never been snapshotted.
+9. **Add an Uptime Kuma monitor** at `https://status.mathewcsims.uk`. Every
+   public hostname in this repo has one, and decommissioning an app
+   explicitly removes it — but this step was practice rather than checklist
+   until Paperless got deployed without one, so it is written down now.
+   Prefer a `keyword` monitor against an unauthenticated health endpoint
+   over a plain `http` check of `/`. Monitors are UI state living in
+   `uptime-kuma/data/`, not code, so this cannot be scripted from this repo.
+   Kuma runs on the Pi, whose LAN IP is in `private_ranges`, so monitors
+   work against LAN-gated hostnames without any special handling.
 
 **If the app needs a database** (copyparty/Memos didn't, but some apps will):
 add it as a second service in the same `compose.yaml`. Give it **no `ports:`**
