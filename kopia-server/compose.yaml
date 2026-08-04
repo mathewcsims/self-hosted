@@ -52,8 +52,10 @@ services:
       - ./tmp:/tmp:shared
       # Pi app data directories, read-only — each becomes its own Kopia
       # snapshot source (see entrypoint.sh's bootstrap loop over /data/*/).
-      - ../nimbus/db:/data/nimbus-db:ro
-      - ../nimbus/uploads:/data/nimbus-uploads:ro
+      # Nimbus decommissioned 2026-08-04 — its mounts are gone, but the
+      # /data/nimbus-db and /data/nimbus-uploads snapshots stay in the
+      # repository (their policies were set to manual so the scheduler
+      # stops trying to re-snapshot a path that no longer exists).
       - ../uptime-kuma/data:/data/uptime-kuma:ro
       - ../speedtest-tracker/config:/data/speedtest-tracker:ro
       - ../apprise/config:/data/apprise:ro

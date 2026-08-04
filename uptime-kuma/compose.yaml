@@ -1,6 +1,6 @@
 # Uptime Kuma (https://github.com/louislam/uptime-kuma) — self-hosted status
 # page and uptime monitoring for every public hostname in this repo. Runs
-# HERE on the Pi, not the Mac — same resilience reasoning as ../nimbus/: if
+# HERE on the Pi, not the Mac — the usual resilience reasoning: if
 # the Mac is down for maintenance, the thing telling you an app is down needs
 # to still be up itself.
 #

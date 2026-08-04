@@ -4,7 +4,7 @@
 # can POST to /notify/<key> to fan a message out to every target registered
 # under that key, without the caller ever needing to know the underlying
 # webhook itself. Runs HERE on the Pi (not the Mac) for the same resilience
-# reason as ../nimbus/ and ../speedtest-tracker/ — a notifier can't depend on
+# reason as ../speedtest-tracker/ — a notifier can't depend on
 # the Mac being up, since the Mac going down is exactly the kind of thing
 # you want a notification about.
 #

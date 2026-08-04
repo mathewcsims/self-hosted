@@ -4,7 +4,8 @@
 # The DrayTek forwards WAN 80/443 -> this Pi; Caddy routes by hostname to the
 # right backend and obtains/renews Let's Encrypt certificates automatically.
 #
-# `pi-shared` is a Docker network other Pi-resident app stacks (e.g. ../nimbus/)
+# `pi-shared` is a Docker network other Pi-resident app stacks (e.g.
+# ../speedtest-tracker/, ../uptime-kuma/)
 # join to be reachable from Caddy by container name, without publishing a port
 # to the host at all. This compose project creates it (as a normal network);
 # the other stacks reference it as `external: true`. Bring this stack up

@@ -37,12 +37,11 @@ follow the same recipe — see "Adding another app" near the end.
        │   container name over `pi-shared` — no host       │
        │   port published):                                │
        │     Mac:    mathewcsims.uk, cp, prospect-ukri-    │
-       │             tus, vikunja, blog, karakeep, time,   │
-       │             owl, marque, author*, fj*             │
-       │             (time → oauth2-proxy, not the app     │
-       │             directly; author/fj are BookStack/    │
-       │             Forgejo, LAN/tailnet-gated)            │
-       │     Pi:     dashboard (Nimbus), status (Kuma),    │
+       │             tus, vikunja, blog, karakeep, owl,    │
+       │             author*, fj*                          │
+       │             (author/fj are BookStack/Forgejo,     │
+       │             LAN/tailnet-gated)                    │
+       │     Pi:     status (Kuma),                        │
        │             speedtest*, apprise*, vikunja-relay*, │
        │             backup* (Kopia)                       │
        │     slarti: immich*  (third host, 10.0.1.11)      │
@@ -60,9 +59,6 @@ follow the same recipe — see "Adding another app" near the end.
                        blog (Ghost)  :2368  (MySQL)
                        landing-page  :3080  (static)
                        karakeep  :3000  (sqlite + Meilisearch)
-                       timetagger's oauth2-proxy  :4180  (TimeTagger
-                         itself has NO published port — internal-network
-                         only, see the TimeTagger section below)
 
                      slartibartfast 10.0.1.11 — Ubuntu box,
                      docker-compose (NOT podman):
@@ -112,10 +108,6 @@ section below says which.
 | `owl/owl-logo.svg` | **Mac** | source asset for the instance logo (tracked; the deployed logo itself is a data URI in Memos' own DB) |
 | `owl/owl-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
 | `owl/document-viewer/` | **Mac** | client-side attachment preview feature — source (`src/`), esbuild config, and a separate Caddy sidecar (`compose.yaml`, own `Caddyfile`) serving the built bundle; deployed via `scripts/pass-deploy-owl-document-viewer.sh`, see the Owl section below |
-| `marque/compose.yaml` | **Mac** | Memos, container `marque` — a third, unrelated instance (private work notes), closed registration, Infomaniak SSO only, fresh install (no migration) |
-| `marque/data/` | **Mac** | this instance's notes (sqlite DB + attachments) |
-| `marque/marque-logo.svg` | **Mac** | source asset for the instance logo (tracked; deployed as a data URI in Memos' own DB) |
-| `marque/marque-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
 | `vikunja/compose.yaml` | **Mac** | Vikunja, pinned by digest to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
 | `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
 | `vikunja/files/` | **Mac** | task attachments |
@@ -155,9 +147,6 @@ section below says which.
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
 | `pi-reverse-proxy/.env` | **Pi** | domain, email, Mac IP — gitignored; see `.env.example` |
-| `nimbus/compose.yaml` | **Pi** | Nimbus: `nimbus` app + `nimbus-db` (Postgres); joins `pi-shared`; reads secrets from Proton Pass |
-| `nimbus/db/` | **Pi** | **your monitoring config/history lives here** (Postgres datadir) |
-| `nimbus/uploads/` | **Pi** | Nimbus file uploads (e.g. custom icons) |
 | `speedtest-tracker/compose.yaml` | **Pi**, LAN-only | periodic speed tests, charted over time; reads secrets from Proton Pass |
 | `speedtest-tracker/config/` | **Pi** | **your speed test history lives here** |
 | `apprise/compose.yaml` | **Pi**, LAN-only | generic Discord notification relay for any script to `curl`; no secrets in the compose file itself |
@@ -169,11 +158,8 @@ section below says which.
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data + the NAS share |
-| `timetagger/compose.yaml` | **Mac** | TimeTagger + oauth2-proxy sidecar (Infomaniak SSO — TimeTagger has no native OAuth); reads secrets from Proton Pass |
-| `timetagger/data/` | **Mac** | **your time-tracking entries live here** |
-| `timetagger/oauth2-proxy/authenticated-emails.txt` | **Mac** | **gitignored** — the one-address login allowlist, written at deploy time by `pass-deploy-timetagger.sh` |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
-| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, `pass-create-timetagger-secrets.sh`, `pass-deploy-timetagger.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
+| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
 | `pi-sshd/` | **Pi** | drop-in `sshd_config.d` file disabling password auth (deployed manually, not via a compose stack) |
 | `pi-unattended-upgrades/` | **Pi** | security-only auto-patching config + a daily reboot-required notifier (deployed manually) |
@@ -253,7 +239,7 @@ pass-cli login   # your normal Proton Pass login
 # Mac-hosted apps (vikunja, blog, karakeep, copyparty, landing-page)
 ./scripts/pass-deploy.sh <app-dir>
 
-# Apps on ANY remote host — the Pi (nimbus, speedtest-tracker) or
+# Apps on ANY remote host — the Pi (speedtest-tracker, uptime-kuma) or
 # slartibartfast (immich). Fetches locally, pipes the export +
 # `docker compose up -d` over SSH via stdin, so secret values never appear
 # in the SSH command line itself. NOTE: it does NOT copy the app folder —
@@ -964,7 +950,17 @@ smoke-test one attachment per format after any future Memos upgrade.
 
 ---
 
-## Marque (https://marque.mathewcsims.uk)
+## Marque (https://marque.mathewcsims.uk) — DECOMMISSIONED
+
+> **DECOMMISSIONED 2026-08-04.** Torn down for lack of use (2 memos, 1
+> user). Containers, images, volumes, networks, the Caddy site block, the
+> Uptime Kuma monitor and the DNS records are all gone; `marque/` was
+> removed from this repo and survives only in git history. The section below
+> is kept verbatim as the rebuild recipe. A final database dump and a cold
+> `tar.gz` of the whole data directory live in `db-dumps/decommissioned/` on
+> the Mac, and the **Marque** Proton Pass item was deliberately retained —
+> between them, everything needed to stand this back up still exists.
+
 
 A third, unrelated Memos instance — a private, work-focused notes space.
 Unlike Owl, this was a **fresh instance**, not a migration: name chosen from
@@ -1077,7 +1073,17 @@ Prospect's registration zone) requests succeed before `429`s start.
 
 ---
 
-## Nimbus (https://dashboard.mathewcsims.uk) — runs on the Pi, not the Mac
+## Nimbus (https://dashboard.mathewcsims.uk) — DECOMMISSIONED (ran on the Pi, not the Mac)
+
+> **DECOMMISSIONED 2026-08-04.** Torn down for lack of use. Containers,
+> images, volumes, networks, the Caddy site block, the Uptime Kuma monitor
+> and the DNS records are all gone; `nimbus/` was removed from this repo and
+> survives only in git history. The section below is kept verbatim as the
+> rebuild recipe. A final database dump and a cold `tar.gz` of the whole
+> data directory live in `db-dumps/decommissioned/` on the Pi, and the
+> **Nimbus** Proton Pass item was deliberately retained — between them,
+> everything needed to stand this back up still exists.
+
 
 [Nimbus](https://github.com/Turbootzz/Nimbus) monitoring dashboard — the one
 deliberate exception to "everything runs on the Mac": it's on the **Pi**
@@ -3398,6 +3404,19 @@ Both write to a gitignored `db-dumps/` (keeping the last 7 per database;
 Kopia keeps the real history), and both alert via **Apprise on failure** —
 a dump that fails silently is the whole problem restated.
 
+**`db-dumps/decommissioned/` is exempt from that rotation, deliberately.**
+When an app is torn down (see the decommissioned sections above), its final
+dump and a cold `tar.gz` of its whole data directory go in there rather than
+at the top level. Two reasons. First, rotation only globs
+`db-dumps/<label>-*.gz` — it never descends into a subdirectory, so nothing
+in there is ever pruned. Second, a torn-down app's *source* directory stops
+being snapshotted, and Kopia's retention is counted per source, so relying
+on the old snapshots alone means trusting a dormant source's history;
+`db-dumps/` is itself a live Kopia source, so an archive parked there is
+re-included in every future backup indefinitely. Set the dead source's
+policy to `--manual` at the same time, or the scheduler keeps trying to
+snapshot a path that no longer exists.
+
 **Per-engine method, and why:**
 - **Postgres** — `pg_dump` run *inside* the container, so no credential
   ever reaches the host or a command line (local socket auth is trusted
@@ -3850,7 +3869,18 @@ provides audit evidence and helps track test frequency.
 
 ---
 
-## TimeTagger (https://time.mathewcsims.uk)
+## TimeTagger (https://time.mathewcsims.uk) — DECOMMISSIONED
+
+> **DECOMMISSIONED 2026-08-04.** Torn down for lack of use (zero time
+> records logged). Containers, images, volumes, networks, the Caddy site
+> block, the Uptime Kuma monitor and the DNS records are all gone;
+> `timetagger/` was removed from this repo and survives only in git history.
+> The section below is kept verbatim as the rebuild recipe. A final database
+> dump and a cold `tar.gz` of the whole data directory live in
+> `db-dumps/decommissioned/` on the Mac, and the **TimeTagger** Proton Pass
+> item was deliberately retained — between them, everything needed to stand
+> this back up still exists.
+
 
 Tag-based time tracker (https://github.com/almarklein/timetagger), Mac-resident.
 
@@ -5407,7 +5437,7 @@ at all — it only needs to be reached by the app container over the private
 compose network (by service name), never by the Pi or the host. Only the app
 service gets the LAN-IP-bound port.
 
-### Pi-resident app (Nimbus — for resilience, when the app should stay up even
+### Pi-resident app (for resilience, when the app should stay up even
 if the Mac is down)
 
 1. `mkdir self-hosted/<app>` on the Mac (still the source of truth), with its
@@ -5415,7 +5445,8 @@ if the Mac is down)
    and run it there with `docker compose`, not `podman compose`.
 2. **No `ports:` published at all.** Have the app's service join `pi-shared`
    (defined in `pi-reverse-proxy/compose.yaml`, referenced as `external: true`
-   in the new app's `compose.yaml` — see `nimbus/compose.yaml`), and proxy to
+   in the new app's `compose.yaml` — see `speedtest-tracker/compose.yaml`),
+   and proxy to
    it from `pi-reverse-proxy/Caddyfile` by **container name**
    (`reverse_proxy <container-name>:<port>`), not an IP. `127.0.0.1` would NOT
    work here — Caddy runs in its own container, so its own loopback isn't the
@@ -5543,12 +5574,12 @@ After editing just the **Caddyfile** (no Dockerfile change): `docker compose
 restart caddy` is enough — it's bind-mounted, not baked into the image. After
 editing the **Dockerfile**: `docker compose up -d --build`.
 
-**Pi (Nimbus):**
+**Pi app (e.g. speedtest-tracker):**
 ```sh
 docker compose ps | logs -f | restart | down
-# Update: bump the digest in nimbus/compose.yaml first (deliberate, see
+# Update: bump the digest in the app's compose.yaml first (deliberate, see
 # Security notes below — not `pull`+`latest`), then:
-docker compose pull nimbus && docker compose up -d
+docker compose pull <service> && docker compose up -d
 ```
 
 ---
@@ -5606,10 +5637,9 @@ raise the allocation again before adding the next service.
   these if under your home dir). That's all your actual data.
 - The Pi's `caddy_data` volume holds the TLS certs/account — nice to keep, but
   Caddy re-issues automatically if lost.
-- **`nimbus/db/` on the Pi** holds your monitoring config and history — the Pi
-  isn't covered by Time Machine, so back this up separately if you care about
-  keeping it (losing it just means reconfiguring which services Nimbus tracks,
-  not losing anything irreplaceable).
+- **`uptime-kuma/data/` on the Pi** holds your monitor config and history —
+  the Pi isn't covered by Time Machine, so back this up separately if you
+  care about keeping it (Kopia does; see the Kopia section).
 
 ---
 

@@ -1,12 +1,13 @@
 # Speedtest Tracker (https://github.com/alexjustesen/speedtest-tracker) —
 # periodic internet speed tests, charted over time.
 #
-# Runs ON THE PI (like Nimbus, not the Mac-resident apps) for the same
-# resilience reason, AND because it makes more sense architecturally: it's
+# Runs ON THE PI (not the Mac-resident apps) for the usual resilience
+# reason, AND because it makes more sense architecturally: it's
 # measuring the Pi's own internet connection, so it should run on the box
 # that's actually online 24/7 regardless of the Mac's state.
 #
-# Deploy this folder to the Pi exactly like ../nimbus/:
+# Deploy this folder to the Pi the same way as every other Pi-resident
+# stack here:
 #   scp -r self-hosted/speedtest-tracker mathew@babel:~/
 #   ssh mathew@babel
 #   mkdir -p ~/speedtest-tracker/config   # must exist with the right owner
@@ -130,7 +131,7 @@ services:
     volumes:
       - ./config:/config
     # No `ports:` — reached only by Caddy, over `pi-shared`, by container
-    # name, same pattern as ../nimbus/. Nothing outside these two containers
+    # name — no host port published at all. Nothing outside these two containers
     # ever touches this app directly.
     networks:
       - pi-shared

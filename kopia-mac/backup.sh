@@ -110,6 +110,14 @@ fi
 # backup is Syncthing -> Proton Drive, off this repo's infrastructure
 # entirely. Don't wire it in. See SETUP.md's HealthLog section for the
 # full reasoning (incl. why the copyparty route would cost vague-403).
+#
+# No marque/data or timetagger/data either — both decommissioned 2026-08-04
+# along with Nimbus (see SETUP.md). Their existing snapshots stay in the
+# repository, and a final cold archive of each lives permanently in
+# db-dumps/decommissioned/ (which IS snapshotted below, so the archives ride
+# along with every future backup rather than ageing out of a dormant
+# source's retention). Their Kopia policies were set to manual so nothing
+# keeps trying to snapshot a path that no longer exists.
 SOURCES="
 $REPO_ROOT/db-dumps
 $REPO_ROOT/karakeep/data
@@ -126,9 +134,7 @@ $REPO_ROOT/copyparty/data
 $REPO_ROOT/copyparty/public
 $REPO_ROOT/copyparty/inbox
 $REPO_ROOT/copyparty/cfg/accounts.conf
-$REPO_ROOT/timetagger/data
 $REPO_ROOT/owl/data
-$REPO_ROOT/marque/data
 $REPO_ROOT/bookstack/config
 $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data
