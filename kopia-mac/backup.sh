@@ -43,10 +43,21 @@ set -eu
 REPO_ROOT="/Users/mathewcsims/self-hosted"
 LOG="$REPO_ROOT/kopia-mac/backup.log"
 APPRISE_URL="https://apprise.mathewcsims.uk/notify/self-hosted"
-# No single source may wedge the whole job again — see the header. 90
-# minutes is ~9x the slowest healthy source observed here (copyparty/data),
-# so it cannot fire on a merely slow night, only on a genuine hang.
-SOURCE_TIMEOUT_SECS=5400
+# The readable, high-value parts of ~/Library, snapshotted individually
+# because /Library/ as a whole is excluded from the home source above
+# (TCC). Thunderbird is the real mail store on this Mac; Keychains and
+# Preferences are small and painful to lose.
+HOME_LIB="/Users/mathewcsims/Library"
+# No single source may wedge the whole job again — see the header.
+#
+# 3 hours, not the 90 minutes this started at: the home directory is a
+# ~12.7 GB source, and a day that adds several GB (a big download, a video
+# project) can legitimately take well over an hour on domestic upstream —
+# the initial seed was estimated at 2h49m at 10 Mbit/s. Too tight a limit
+# would kill honest work and cry wolf, which trains you to ignore the
+# alert. Still far short of the 40-hour wedge this exists to stop, and the
+# verifier runs at 06:00 so even a worst-case run finishes first.
+SOURCE_TIMEOUT_SECS=10800
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG"
@@ -129,7 +140,47 @@ fi
 # along with every future backup rather than ageing out of a dormant
 # source's retention). Their Kopia policies were set to manual so nothing
 # keeps trying to snapshot a path that no longer exists.
+# ── THE WHOLE HOME DIRECTORY (added 2026-08-04) ──────────────────────────
+# Everything in ~ is backed up here, media included, so that nothing on this
+# Mac relies on Time Machine as its only copy. The per-app sources below are
+# kept as well as this, not instead of it: they give granular, obvious
+# restore targets, and Kopia dedupes content, so covering them twice costs
+# essentially nothing in B2.
+#
+# WHAT IS EXCLUDED, AND WHY (`kopia policy show ~` for the live list):
+#   /nas-mounts/        The SMB mount of the NAS. NOT this Mac's data, and
+#                       it is where the Time Machine sparsebundle lives —
+#                       re-including it would recreate the exact 40-hour
+#                       hang this file's header describes.
+#   /Library/           macOS TCC blocks 127 directories under here for any
+#                       process without Full Disk Access, and a snapshot
+#                       cannot read what the OS refuses to open. Excluded
+#                       WHOLESALE rather than per-path: the blocked set
+#                       changes with macOS releases, so a hand-maintained
+#                       list would rot and start failing nightly. The
+#                       readable, irreplaceable parts are added back as
+#                       their own sources below.
+#   Photos Library      Same TCC restriction.
+#   Caches, package stores, model downloads, container VM images
+#                       (~60 GB of .cache, .npm, .ollama, .minutes/models,
+#                       go/pkg, .local/share/containers): regenerable
+#                       machine state, not data. The podman VM images alone
+#                       are 31 GB and are rebuilt from the compose files
+#                       plus the app data directories already backed up.
+#   /Library/CloudStorage/
+#                       128 GB APPARENT, 7.9 MB on disk — Proton Drive
+#                       placeholders. Reading them would make macOS hydrate
+#                       the lot from the cloud. Already offsite in Proton
+#                       Drive regardless.
+#
+# TO COVER Photos, Mail, Messages and the rest of ~/Library: grant Full
+# Disk Access to kopia (System Settings ▸ Privacy & Security ▸ Full Disk
+# Access ▸ + ▸ /opt/homebrew/bin/kopia), then drop the two TCC exclusions:
+#   kopia policy set ~ --remove-ignore '/Library/' \
+#                      --remove-ignore '/Pictures/Photos Library.photoslibrary/'
+# See SETUP.md. Until then, those specific things have Time Machine only.
 SOURCES="
+/Users/mathewcsims
 $REPO_ROOT/db-dumps
 $REPO_ROOT/karakeep/data
 $REPO_ROOT/karakeep/meilisearch-data
@@ -151,6 +202,9 @@ $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data
 $REPO_ROOT/wanderer/data
 /Users/mathewcsims/contact-sync
+$HOME_LIB/Thunderbird
+$HOME_LIB/Keychains
+$HOME_LIB/Preferences
 "
 # Extra, deliberately-untracked sources (one absolute path per line) — for
 # folders whose existence shouldn't be documented in the public repo. The

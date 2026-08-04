@@ -1,10 +1,12 @@
 #!/bin/sh
 # Nightly proof that the backups actually happened AND are readable, then
 # one notification saying so. Run by uk.mathewcsims.kopia-verify (LaunchAgent)
-# at 04:00 — after all three hosts have finished:
+# at 06:00 — after all three hosts have finished:
 #
 #   babel (Pi)        01:00 kopia-server's own scheduler; 01:30 db-dumps.timer
-#   mathews-mac       02:00 kopia-mac/backup.sh
+#   mathews-mac       02:00 kopia-mac/backup.sh (may run to 05:00 worst case:
+#                           the home directory is a ~12.7 GB source and any
+#                           one source is allowed 3 hours before being killed)
 #   slartibartfast    03:00 kopia-immich.timer
 #
 # ── WHY THIS EXISTS ───────────────────────────────────────────────────────

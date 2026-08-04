@@ -9,12 +9,15 @@
         <string>/bin/sh</string>
         <string>/Users/mathewcsims/self-hosted/kopia-mac/verify-backups.sh</string>
     </array>
-    <!-- 04:00, deliberately AFTER all three hosts have finished:
+    <!-- 06:00, deliberately AFTER all three hosts have finished:
            babel          01:00 kopia-server scheduler, 01:30 db-dumps.timer
-           mathews-mac    02:00 kopia-mac/backup.sh (~2 min now the NAS
-                                source is gone; it used to run for hours)
+           mathews-mac    02:00 kopia-mac/backup.sh
            slartibartfast 03:00 kopia-immich.timer
-         An hour of headroom after the last of them. This is a SEPARATE job
+         Moved 04:00 -> 06:00 when the whole home directory became a source:
+         backup.sh allows any one source up to 3 hours before killing it, so
+         a worst-case Mac run can finish at 05:00. Verifying before the
+         backup has finished would report the home source as stale and fire
+         a false alarm every heavy night. This is a SEPARATE job
          from the backup rather than a step at the end of backup.sh, on
          purpose: if the backup wedges or is skipped entirely, the verifier
          still runs and is exactly what tells you so. Chaining it would mean
@@ -22,7 +25,7 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>4</integer>
+        <integer>6</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>

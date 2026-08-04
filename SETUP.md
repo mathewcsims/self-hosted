@@ -154,7 +154,7 @@ section below says which.
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data, 02:00 |
-| `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 04:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
+| `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 06:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
 | `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh` (legacy — no job mounts the NAS since 2026-08-04), `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
@@ -3577,7 +3577,7 @@ have proven themselves in anger.
   repository directly, but has no long-running process. A launchd job
   (`uk.mathewcsims.kopia-mac-backup`, matching the `autostart/` pattern)
   triggers `kopia snapshot create` daily. A second launchd job
-  (`uk.mathewcsims.kopia-verify`, 04:00) verifies the night's backups
+  (`uk.mathewcsims.kopia-verify`, 06:00) verifies the night's backups
   across ALL THREE hosts afterwards and sends the success notification —
   see "Nightly verification" below.
 
@@ -3607,7 +3607,7 @@ which are silent by construction:
    `kopia snapshot create` exited 0 throughout. Partial success is
    indistinguishable from success to the caller.
 
-`kopia-mac/verify-backups.sh` (launchd, 04:00) exists to catch both. It
+`kopia-mac/verify-backups.sh` (launchd, 06:00) exists to catch both. It
 ignores what the jobs claim and interrogates the repository — all three
 hosts write into one B2 repository, so a single verifier on the Mac sees
 every source on every host. Four checks, in order:
@@ -3655,6 +3655,64 @@ DEEP_VERIFY_DOW=$(date +%u) VERIFY_FILES_PERCENT=1 ./kopia-mac/verify-backups.sh
 At 1% that re-downloaded 117 files / 0.9 GB in ~73s, so the configured 2%
 is roughly 1.8 GB of B2 egress per week — comfortably inside B2's free
 allowance (3x stored bytes per month) for a ~36 GB repository.
+
+### The whole home directory is a source (added 2026-08-04)
+
+`/Users/mathewcsims` is itself a Kopia source, media included, so **nothing
+on the Mac has Time Machine as its only backup**. The per-app sources are
+kept as well as this, not instead of it — they are obvious granular restore
+targets, and Kopia dedupes content, so covering the same bytes twice costs
+essentially nothing in B2. Roughly 12.7 GB / 57k files after exclusions.
+
+**Exclusions, and why each one is there** (`kopia policy show ~` for the
+live list):
+
+| Excluded | Why |
+|---|---|
+| `/nas-mounts/` | The SMB mount of the NAS — not this Mac's data, and where the Time Machine sparsebundle lives. Re-including it recreates the 40-hour hang described above. |
+| `/Library/` | macOS TCC blocks **127 directories** under here from any process without Full Disk Access. See below. |
+| `/Pictures/Photos Library.photoslibrary/` | Same TCC restriction. |
+| `/Library/CloudStorage/` | **128 GB apparent, 7.9 MB on disk** — Proton Drive placeholders. Reading them makes macOS hydrate the lot from the cloud. Already offsite in Proton Drive anyway. |
+| `.cache`, `.npm`, `.ollama`, `.minutes/models`, `go/pkg`, `.local/share/containers`, `.Trash` | ~60 GB of regenerable machine state. The podman VM images alone are 31 GB and are rebuilt from the compose files plus the app data already backed up. |
+
+**Why `/Library/` is excluded wholesale rather than per-path.** The blocked
+set is 127 directories scattered through `Application Support`, `Group
+Containers`, `Containers` and the rest, and it changes with macOS releases.
+A hand-maintained exclusion list would rot, and the failure mode is a job
+that starts erroring every night on a directory that did not exist last
+month. One rule that is obviously true beats 127 that quietly go stale.
+
+The readable, irreplaceable parts are added back as their own sources —
+confirmed to contain no blocked subdirectories:
+
+- `~/Library/Thunderbird` (5.1 GB) — the actual mail store on this Mac
+- `~/Library/Keychains` (14 MB)
+- `~/Library/Preferences` (2.8 MB)
+
+#### Closing the TCC gap (needs one manual step)
+
+Photos, Apple Mail, Messages and Safari are **not** in Kopia and have Time
+Machine as their only backup. Time Machine can read them because Apple
+grants it a private entitlement; ordinary tools get `operation not
+permitted`. To close it:
+
+1. System Settings ▸ Privacy & Security ▸ **Full Disk Access** ▸ `+`
+2. Add `/opt/homebrew/bin/kopia` (⌘⇧G to type the path), and enable it.
+3. Drop the two TCC exclusions:
+   ```sh
+   kopia policy set ~ --remove-ignore '/Library/' \
+                      --remove-ignore '/Pictures/Photos Library.photoslibrary/'
+   ```
+4. Re-check nothing is still unreadable, then seed the bigger snapshot by
+   hand (the first run after this will be large — do it outside the nightly
+   job so the 3-hour per-source timeout does not kill it):
+   ```sh
+   kopia snapshot estimate ~     # must finish without "operation not permitted"
+   kopia snapshot create ~
+   ```
+
+This is a security setting, so it is deliberately left as a manual step
+rather than automated.
 
 ### Why there is no NAS source any more (removed 2026-08-04)
 
@@ -3882,7 +3940,7 @@ shell run.
    launchctl load ~/Library/LaunchAgents/uk.mathewcsims.kopia-verify.plist
    ```
    Backup runs daily at 02:00 (see `kopia-mac/backup.sh` for the exact
-   source list); verification at 04:00, after the Pi and slartibartfast have
+   source list); verification at 06:00, after the Pi and slartibartfast have
    finished too. Neither needs Pass access at run time — `kopia repository
    connect`, done once above, persists locally, and no job mounts the NAS
    any more.
