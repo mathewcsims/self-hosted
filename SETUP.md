@@ -153,9 +153,10 @@ section below says which.
 | `vikunja-webhook-relay/compose.yaml` + `Dockerfile` + `relay.py` | **Pi**, LAN-only | bridges Vikunja's webhook payload shape to Apprise's `/notify` shape; reads `WEBHOOK_SECRET` from Proton Pass |
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
-| `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data + the NAS share |
+| `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data, 02:00 |
+| `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 04:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
-| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh`, `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
+| `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh` (legacy — no job mounts the NAS since 2026-08-04), `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
 | `pi-sshd/` | **Pi** | drop-in `sshd_config.d` file disabling password auth (deployed manually, not via a compose stack) |
 | `pi-unattended-upgrades/` | **Pi** | security-only auto-patching config + a daily reboot-required notifier (deployed manually) |
@@ -3381,8 +3382,8 @@ notification only ever reports the *delta*.
 
 ## Kopia backups (https://backup.mathewcsims.uk) — server on the Pi, LAN-only
 
-[Kopia](https://kopia.io) backs up every app's own data — both Mac and Pi —
-plus a Time Machine share on the NAS, to Backblaze B2. Client-side encryption
+[Kopia](https://kopia.io) backs up every app's own data across all three
+hosts to Backblaze B2. Client-side encryption
 is on by default (not optional, unlike rclone which needs `crypt` bolted on),
 snapshots are content-defined-chunked so repeat backups only upload what
 changed, and scheduling is automatic.
@@ -3575,7 +3576,10 @@ have proven themselves in anger.
 - **`kopia-mac/` (Mac, no persistent daemon)** — connects to the SAME B2
   repository directly, but has no long-running process. A launchd job
   (`uk.mathewcsims.kopia-mac-backup`, matching the `autostart/` pattern)
-  triggers `kopia snapshot create` daily, mounting the NAS share first.
+  triggers `kopia snapshot create` daily. A second launchd job
+  (`uk.mathewcsims.kopia-verify`, 04:00) verifies the night's backups
+  across ALL THREE hosts afterwards and sends the success notification —
+  see "Nightly verification" below.
 
 Both instances writing directly to the same repository is safe — Kopia
 designates one `user@hostname` as maintenance owner automatically (the Pi,
@@ -3584,6 +3588,125 @@ host to own garbage collection). The web UI shows snapshots from **both**
 hosts, since Kopia stores snapshot manifests in the repository itself, not
 per-server — connect any client to the shared repo and it sees everyone's
 history.
+
+### Nightly verification, and why failure-only alerting wasn't enough
+
+**Added 2026-08-04, after two silent failures.**
+
+Until this, every backup job alerted only when *it* believed it had broken.
+That misses the two failure modes that actually happened here, both of
+which are silent by construction:
+
+1. **The job that never ran.** The Mac's 2026-08-03 02:00 run wedged on the
+   NAS source (below) and never exited. launchd will not start a job whose
+   previous instance is still alive, so **the next night's backup never
+   started at all**. Nothing alerted, because nothing had failed — the job
+   simply had not been allowed to run. It was found by hand, 40 hours later.
+2. **The snapshot that "succeeded".** That same NAS source had been
+   completing with `errors:30`, capturing 44 MB of a 16 TB source, while
+   `kopia snapshot create` exited 0 throughout. Partial success is
+   indistinguishable from success to the caller.
+
+`kopia-mac/verify-backups.sh` (launchd, 04:00) exists to catch both. It
+ignores what the jobs claim and interrogates the repository — all three
+hosts write into one B2 repository, so a single verifier on the Mac sees
+every source on every host. Four checks, in order:
+
+| Check | Catches |
+|-------|---------|
+| **Freshness** — every active source has a complete snapshot < 30h old | the silently skipped night |
+| **Cleanliness** — that snapshot has zero errors and zero failed entries | the partial success |
+| **Structure** — `kopia snapshot verify --max-errors=0` over those snapshots | missing/corrupt blobs and index entries |
+| **Content** (Sundays) — `--verify-files-percent=2`, re-downloading real files from B2 | data that is referenced but no longer readable |
+
+Only when all of them pass does the nightly ✅ notification go out, via the
+same Apprise endpoint as everything else (which fans out to ntfy and
+Discord). **A green message means the data was verified tonight, not that a
+script finished.** Any failure sends a specific 🚨 instead, and the four
+cases are worded distinctly — "a source is stale" points at that host's
+timer, "structure failed" points at the repository, and they should not be
+confused with each other.
+
+**Which sources count as "active" is derived, never hardcoded.** A source is
+active unless its Kopia policy sets `scheduling.manual` — precisely the flag
+set when an app is decommissioned. So retired apps drop out of verification
+automatically while keeping their snapshots, and a newly added source is
+picked up with no edit to the verifier. A hardcoded list would rot on the
+first app added or removed, which for a backup checker is the failure mode
+that matters most.
+
+**Gotcha, found by testing this against the real repository rather than
+assuming it worked:** incomplete snapshots must be excluded explicitly.
+Kopia checkpoints long-running snapshots periodically and marks interrupted
+ones, via an `incomplete` field (`"checkpoint"`, `"canceled"`). These are
+real manifest entries with recent timestamps and `errorCount: 0`. The first
+version of the freshness check treated the newest of them as the latest
+snapshot — and so reported the wedged NAS source, which had not completed
+since 2026-08-01, as verified for tonight. That is exactly the
+partial-success-looks-like-success bug the script exists to catch,
+reproduced inside the checker itself.
+
+To exercise the weekly deep path on demand instead of waiting for a Sunday:
+
+```sh
+DEEP_VERIFY_DOW=$(date +%u) VERIFY_FILES_PERCENT=1 ./kopia-mac/verify-backups.sh
+```
+
+At 1% that re-downloaded 117 files / 0.9 GB in ~73s, so the configured 2%
+is roughly 1.8 GB of B2 egress per week — comfortably inside B2's free
+allowance (3x stored bytes per month) for a ~36 GB repository.
+
+### Why there is no NAS source any more (removed 2026-08-04)
+
+`kopia-mac/backup.sh` used to mount the NAS's `AppleBackups` share and
+snapshot it. That share contains exactly one thing:
+`heartofgold.sparsebundle` — the Mac's **live Time Machine destination**.
+This could never have worked:
+
+- Its own `Info.plist` declares a **16 TB** image in **1.35 GiB bands**. It
+  is held under a `lock` file, and Time Machine writes into it roughly 20
+  hours a day (confirmed live: `tmutil status` showed `BackupPhase =
+  Copying` with ~20h remaining). Copying bands file-by-file over SMB while
+  they mutate cannot produce a consistent image — a restored bundle would
+  not mount. It was never a usable backup, only an expensive one.
+- It hung, in uninterruptible I/O (`state U`, frozen CPU time), taking the
+  whole nightly job — and every subsequent night — down with it. Clearing
+  the 40-hour hang needed `kill -9`; `SIGTERM` was not enough.
+- Even its "successful" runs reported errors and captured a fraction of the
+  source.
+
+**This is not a coverage gap.** Time Machine still protects the Mac locally,
+and Kopia already backs up the real data from the source directories
+themselves. Removing it deleted a backup-of-a-backup that could not restore.
+If an offsite copy of Time Machine history is ever wanted, it belongs on the
+NAS itself — replicating that share on its own schedule, where the bundle
+can be quiesced — not on a client copying a live image over SMB.
+
+Removing it also removed the only use of Proton Pass in `backup.sh` (the
+"NAS Eddie" item held the SMB password). The item itself is retained; Kopia
+needs no secrets, and `scripts/dump-databases.sh` reads database credentials
+from each container's own environment.
+
+**Two guards were added so no future source can repeat this:**
+
+- **A single-instance lock.** If a previous run is still alive, tonight's
+  run alerts instead of exiting quietly — because while that process lives,
+  launchd will not start the job again, so backups stay stopped. A stale
+  lock (holder killed, as happened clearing the hang) is detected by PID
+  liveness and reclaimed, so a crash cannot lock out every future run.
+- **A per-source timeout** (90 minutes, ~9x the slowest healthy source), so
+  one bad source is killed and *recorded as failed* rather than blocking
+  every source after it. macOS ships no `timeout(1)`, so this backgrounds
+  kopia and arms a killer process; the killer leaves a marker file before
+  killing, because after `wait` reaps the child a kill and an ordinary
+  failure are indistinguishable.
+
+Honest limitation: a process stuck in uninterruptible I/O does not die on
+`SIGKILL` until the I/O returns, so the timeout alone cannot guarantee
+escape. That is why this is layered — the source that could do that is gone,
+the timeout catches ordinary hangs, and the single-instance guard means an
+unkillable wedge is *reported the next night* rather than silently costing
+weeks of backups.
 
 **Real access control on the web UI is a username+password** (`--server-username`/
 `--server-password`, HTTP basic auth against Kopia's own auth, not the
@@ -3642,10 +3765,11 @@ one-item-per-app convention):
   `scripts/pass-import-b2-credentials.sh`, which prompts interactively
   (`read -s` for the hidden fields) — nothing passed as a script argument.
 - **"NAS Eddie"** — `NAS_HOST`, `NAS_SHARE`, `NAS_USER`, `NAS_PASSWORD` for
-  the SMB share holding the NAS content to back up. Created via
-  `scripts/pass-import-nas-credentials.sh`, same interactive-prompt pattern.
-  `kopia-mac/backup.sh` fetches this item directly at mount time — see below
-  for why, after an earlier Keychain-based approach turned out unreliable.
+  the NAS's SMB share. Created via `scripts/pass-import-nas-credentials.sh`,
+  same interactive-prompt pattern. **No longer used by any job** — the NAS
+  source was removed from `kopia-mac/backup.sh` on 2026-08-04 (see "Why
+  there is no NAS source any more" above). Retained because the credential
+  is still the NAS's, and mounting that share by hand still needs it.
 
 **`pass-cli item create --from-template` echoes the created item — including
 every field value — back to stdout.** `pass-create-kopia-secrets.sh`'s final
@@ -3685,47 +3809,41 @@ existing bootstrap-if-missing logic (see below) sees no config, runs `kopia
 repository connect b2` fresh against the already-rotated repository, and
 comes back up clean — a `connect`, not a `create`, so no data is touched.
 
-**NAS mount fetches the password from this Pass item directly — not the
-macOS Keychain, despite an earlier version of this doc (and this repo)
-recommending exactly that.** `mount_smbfs` only ever takes credentials via
-its URL argument — there's no piped-input alternative — so a Keychain
-lookup was tried first specifically to avoid the password ever appearing in
-`ps` output. That worked perfectly when tested by hand in a real Terminal
-session (no prompt, no password on any command line) — but the first two
-actual overnight `launchd` runs both failed with the exact same
-"Authentication error" a plain non-interactive shell gets. macOS's Keychain
-access control apparently treats a launchd-spawned process differently from
-a Terminal-attached one, and there's no reliable way found to grant a
-headless launchd job the same access consistently.
+**Historical: how the NAS mount handled its password.** Kept because the
+launchd lesson generalises to every scheduled job here, even though the
+mount itself is gone (see "Why there is no NAS source any more" above).
 
-Given `mount_smbfs`'s interface leaves no fully-safe option either way,
-`backup.sh` now fetches `NAS_USER`/`NAS_PASSWORD` from Pass and builds the
-mount URL directly — accepted, not overlooked: the password is briefly
-visible in `ps` output once a day during this run, on a single-user Mac,
-which is a materially smaller concern than what a real compromise of this
-machine would already expose. The "NAS Eddie" Pass item is the one already
-storing this credential either way.
+`mount_smbfs` only ever takes credentials via its URL argument — there is no
+piped-input alternative — so a macOS Keychain lookup was tried first,
+specifically to keep the password out of `ps` output. It worked perfectly
+by hand in a real Terminal session, then failed on the first two actual
+overnight `launchd` runs with the same "Authentication error" a plain
+non-interactive shell gets: macOS's Keychain access control treats a
+launchd-spawned process differently from a Terminal-attached one, and no
+reliable way was found to grant a headless job the same access. `backup.sh`
+therefore fetched `NAS_USER`/`NAS_PASSWORD` from Pass instead, accepting a
+once-daily appearance in `ps` on a single-user Mac.
 
-**Other quirks found while actually testing this, now handled in
-`backup.sh`:**
-- The mount point is `~/nas-mounts/AppleBackups`, not `/Volumes/AppleBackups`
-  — macOS only lets a privileged process (Finder's own mount helper,
-  effectively) create new directories directly under `/Volumes`; a plain
-  `mkdir` there fails with "Permission denied", confirmed directly. A path
-  under `$HOME` has no such restriction, so `backup.sh` creates it with a
-  normal `mkdir -p` before mounting.
+**The transferable lesson: test scheduled jobs by triggering them through
+launchd, not by running them in a terminal.** The same class of difference
+bit the `PATH` in this job's own plist (podman not found, so three database
+dumps silently produced nothing) and would have bitten the verifier's plist
+too — which is why that one was proved with `launchctl start` rather than a
+shell run.
+
 - `backup.sh` auto-logs-in to `pass-cli` the same way the deploy scripts do
   (`SECRET_ACCESS_TOKEN` from the repo-root `.env`) if no session is
   already active, since a scheduled 2am job can't assume one.
 
 **To bring the Pi side up on a fresh machine:**
-1. Generate the three Kopia secrets and import the B2 + NAS credentials —
+1. Generate the three Kopia secrets and import the B2 credentials —
    run these yourself, under your own personal `pass-cli` session:
    ```
    ./scripts/pass-create-kopia-secrets.sh
    ./scripts/pass-import-b2-credentials.sh
-   ./scripts/pass-import-nas-credentials.sh
    ```
+   (`pass-import-nas-credentials.sh` is no longer part of this setup —
+   nothing mounts the NAS any more. It still exists for the item itself.)
 2. **Pi:** copy the `kopia-server/` folder over (`scp -r`), then deploy with
    secrets merged from both Pass items:
    ```
@@ -3755,21 +3873,25 @@ storing this credential either way.
    ```
    (`--override-hostname` gives this Mac's snapshots a clean, stable name in
    the shared repository, instead of whatever macOS calls the machine.)
-3. Nothing to configure for the NAS mount itself — `backup.sh` fetches
-   `NAS_USER`/`NAS_PASSWORD` from the "NAS Eddie" Pass item directly at
-   mount time (see above for why this isn't Keychain-based, despite that
-   being the more obviously "safe-looking" option at first).
-4. Install the LaunchAgent:
+3. Install **both** LaunchAgents — the backup and the thing that proves it
+   worked:
    ```
    cp kopia-mac/uk.mathewcsims.kopia-mac-backup.plist ~/Library/LaunchAgents/
+   cp kopia-mac/uk.mathewcsims.kopia-verify.plist     ~/Library/LaunchAgents/
    launchctl load ~/Library/LaunchAgents/uk.mathewcsims.kopia-mac-backup.plist
+   launchctl load ~/Library/LaunchAgents/uk.mathewcsims.kopia-verify.plist
    ```
-   Runs daily at 02:00 — see `kopia-mac/backup.sh` for the exact source
-   list. The Kopia repository connection itself needs no Pass access at run
-   time (`kopia repository connect`, done once above, persists locally) —
-   but the NAS mount step does, auto-logging in via `SECRET_ACCESS_TOKEN`
-   from the repo-root `.env` the same way the deploy scripts do, if no
-   `pass-cli` session is already active.
+   Backup runs daily at 02:00 (see `kopia-mac/backup.sh` for the exact
+   source list); verification at 04:00, after the Pi and slartibartfast have
+   finished too. Neither needs Pass access at run time — `kopia repository
+   connect`, done once above, persists locally, and no job mounts the NAS
+   any more.
+
+   **Prove the agents work by triggering them through launchd**, not by
+   running the scripts in a terminal — `launchctl start <label>`, then check
+   the exit status in `launchctl list`. A launchd job gets a minimal `PATH`
+   and a different security context; both differences have caused real
+   silent failures here (see the historical note above).
 
 **Offline copy on an external HDD:** `scripts/mirror-backup-to-external-drive.sh`
 mirrors the entire B2 bucket (already encrypted by Kopia — no extra
@@ -3864,7 +3986,6 @@ rm -rf "$TEST_RESTORE_DIR"
 **What to test:**
 - Every backed-up application directory, at least once per year
 - Critical data (Vikunja, Forgejo repos, Ghost content) every quarter
-- NAS share (if mounted) every quarter
 - Pi-resident app data at least annually
 
 **Automating the check:** add a `test-restore` target to `kopia-mac/backup.sh`

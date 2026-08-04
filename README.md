@@ -116,18 +116,38 @@ this repo is infrastructure-as-code only, never the data the apps hold.
 
 ## Backups
 
-Every app's own data — Mac and Pi — plus a Time Machine share on the NAS,
-gets backed up by [Kopia](https://kopia.io): encrypted client-side before it
-ever leaves either machine, deduplicated so repeat backups only upload
-what changed, and scheduled automatically. The Pi runs an always-on Kopia
-server (`kopia-server/`) that also hosts a web UI at
-`backup.mathewcsims.uk` (LAN-only) for browsing and restoring snapshots
-from every host. The Mac (`kopia-mac/`) has no persistent daemon — a
-launchd job triggers scheduled snapshots directly, mirroring the pattern
-`autostart/` already uses for podman. Backblaze B2 is the actual storage
-backend; see [SETUP.md](SETUP.md)'s Kopia section for the full architecture,
-retention policy, and how to periodically mirror the whole (already
-encrypted) B2 bucket onto an offline external drive.
+Every app's own data — across all three hosts — gets backed up by
+[Kopia](https://kopia.io): encrypted client-side before it ever leaves the
+machine, deduplicated so repeat backups only upload what changed, and
+scheduled automatically. The Pi runs an always-on Kopia server
+(`kopia-server/`) that also hosts a web UI at `backup.mathewcsims.uk`
+(LAN-only) for browsing and restoring snapshots from every host. The Mac
+(`kopia-mac/`) has no persistent daemon — a launchd job triggers scheduled
+snapshots directly, mirroring the pattern `autostart/` already uses for
+podman. Backblaze B2 is the actual storage backend; see
+[SETUP.md](SETUP.md)'s Kopia section for the full architecture, retention
+policy, and how to periodically mirror the whole (already encrypted) B2
+bucket onto an offline external drive.
+
+**Backups are verified, and say so.** A separate nightly job
+(`kopia-mac/verify-backups.sh`, 04:00, after all three hosts have finished)
+checks the repository rather than trusting any job's own report: every
+active source must have a complete snapshot from within the last 30 hours,
+with zero errors, whose contents actually resolve in B2. On Sundays it goes
+further and re-downloads a sample of real files to prove the bytes come
+back, not just the metadata. It then sends **one notification confirming
+the backups completed and were verified** — so a silent night is
+conspicuous rather than invisible. Which sources count as "active" is read
+from Kopia's own policies, so decommissioned apps drop out automatically
+and new ones are picked up with no edit here.
+
+This replaced a failure-only model that missed the failures that mattered.
+On 2026-08-03 the Mac's run wedged on a NAS source and never exited;
+because launchd will not start a job whose previous instance is alive, the
+next night's backup never ran, and nothing alerted — it was found by hand
+40 hours later. That source (a live 16 TB Time Machine sparsebundle, which
+could never be copied consistently over SMB) has been removed, no source
+can wedge the job indefinitely any more, and a skipped run now alerts.
 
 ## Layout
 
