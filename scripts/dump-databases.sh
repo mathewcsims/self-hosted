@@ -239,6 +239,12 @@ dump_sqlite "$REPO_ROOT/vikunja/db/vikunja.db"                     vikunja
 dump_sqlite "$REPO_ROOT/forgejo/data/gitea/gitea.db"               forgejo
 dump_sqlite "$REPO_ROOT/karakeep/data/db.db"                       karakeep
 dump_sqlite "$REPO_ROOT/wanderer/data/pb_data/data.db"             wanderer
+# Paperless runs SQLite in WAL mode (db.sqlite3 + -wal + -shm all present on
+# a live instance), which is exactly the torn-pages case this file's header
+# describes. The document blobs are NOT here — they live on Eddie's
+# Paperless share and are covered separately — so this dump plus the
+# paperless/data snapshot is what makes the metadata restorable.
+dump_sqlite "$REPO_ROOT/paperless/data/db.sqlite3"                 paperless
 
 # Marque and TimeTagger were decommissioned 2026-08-04 (see SETUP.md), so
 # neither is dumped here any more. Their final dumps and cold archives live

@@ -1,0 +1,311 @@
+# Paperless-ngx (https://github.com/paperless-ngx/paperless-ngx) — personal
+# document store: official letters, medical documentation, receipts,
+# certificates. OCRs everything on ingest so scans become searchable text.
+#
+# LAN-only at https://paperless.mathewcsims.uk, gated to private/tailnet
+# source IPs at the Caddy layer (see ../pi-reverse-proxy/Caddyfile) — same
+# @lan/abort idiom as BookStack and Apprise.
+#
+# DELIBERATELY NOT WIRED TO LiteLLM. That proxy fronts the employer-funded
+# Gemini Enterprise Agent Platform; this instance holds personal medical and
+# legal documents, which have no business traversing an employer's GCP
+# project. The work document store is a separate deployment on
+# slartibartfast. Nothing is shared between them — not a container, not a
+# volume, not a Pass item. If an AI layer is ever added here it points at a
+# paid-tier public API, never at ../litellm/.
+#
+# No AI layer at all yet, on purpose: OCR + full-text search + tags answers
+# "find the MOT certificate" completely. The RAG layer only earns its keep
+# for "what did the consultant say about the medication change", and that
+# decision is easier to make once there are real documents in here.
+#
+# ── SQLite, NOT Postgres ─────────────────────────────────────────────────
+# Paperless-ngx uses SQLite whenever PAPERLESS_DBHOST is unset. For a
+# single-user personal instance that removes a whole container and its
+# credentials for no functional loss. Redis is NOT optional the same way —
+# it is Celery's broker, and there is no supported configuration without
+# it, so this is two containers rather than one.
+#
+# ── STORAGE SPLIT, AND WHY IT IS NOT NEGOTIABLE ──────────────────────────
+# Document blobs live on the NAS. The database and search index do NOT.
+#
+#   ./data        LOCAL. SQLite db + the Tantivy full-text index + the
+#                 trained classifier. SQLite over SMB/CIFS is a documented
+#                 corruption vector — network filesystems do not provide
+#                 the locking semantics it needs, and it fails by silently
+#                 mangling the database rather than erroring. This stays on
+#                 the Mac's own disk permanently. Do not "tidy" it onto
+#                 Eddie later.
+#   NAS volume    Originals, archived PDFs, the consume drop-folder and
+#                 exports. Size-dominant, written once at ingest, read
+#                 sequentially. Textbook NAS workload.
+#
+# Latency barely matters here: OCR reads each blob exactly once, at ingest.
+# Queries hit the local Tantivy index, never the share. The NAS is only
+# touched again when a document is actually opened.
+#
+# ── HOW THE NAS IS MOUNTED, AND WHY IT IS NOT A BIND MOUNT ───────────────
+# VERIFIED ON THIS MAC, not assumed. The obvious approach — mount the share
+# in Finder at /Volumes/<share> and bind-mount it into the container — CANNOT
+# WORK. podman-machine runs containers inside a libkrun VM which does not
+# share /Volumes, and an SMB mount made on the macOS side does not propagate
+# across virtiofs into the VM regardless. Tested directly:
+#
+#   $ podman run --rm -v /Volumes/Public:/test:ro alpine:3 ls /test
+#   Error: statfs /Volumes/Public: no such file or directory
+#
+# So the mount is performed by the VM's own kernel instead, via the local
+# volume driver with type=cifs (below). Also verified inside the VM:
+#   * Fedora CoreOS 43, kernel 6.19.7 — cifs.ko present, /usr/sbin/mount.cifs
+#     present.
+#   * eddie.nas resolves to 10.0.1.12 and TCP 445 is reachable from the VM.
+#
+# CONSEQUENCE FOR CREDENTIALS: because the Linux VM performs the mount, the
+# Mac's Keychain is not reachable at the point it is needed. The Keychain
+# copy is what Finder uses for the /Volumes mounts and should stay. But this
+# deployment REQUIRES NAS_USER/NAS_PASSWORD as fields on the "Paperless"
+# Proton Pass item — that is not an optional convenience here, it is the
+# only way the mount can authenticate. See ../scripts/pass-create-paperless-secrets.sh.
+#
+# Deliberately NOT reusing the existing "NAS Eddie" Pass item: pass-deploy.sh
+# fetches exactly one item per app and exports its fields, so the NAS
+# credentials have to sit alongside this app's own secrets in its own item.
+# That matches the repo's one-item-per-app rule rather than bending it.
+#
+# ── DEPLOY ───────────────────────────────────────────────────────────────
+# Never `podman compose up` directly — that leaves every ${VAR} blank and
+# would silently deploy with an empty SECRET_KEY and no NAS credentials:
+#
+#   ./scripts/pass-deploy.sh paperless
+name: paperless
+
+volumes:
+  # The NAS share, mounted by the VM's kernel over CIFS. One mount, not
+  # three: media/, consume/ and export/ are subdirectories underneath it
+  # (set via PAPERLESS_* env vars below) rather than three separate CIFS
+  # mounts of subpaths, which keeps this to a single authentication and a
+  # single point of failure.
+  #
+  # Mount options, each of which is load-bearing:
+  #   uid/gid=1000    Must match USERMAP_UID/USERMAP_GID below. CIFS has no
+  #                   shared user namespace with the NAS, so ownership is
+  #                   assigned at mount time; get this wrong and Paperless
+  #                   cannot write to its own media root.
+  #   noserverino     Use client-generated inode numbers. Many NAS firmwares
+  #                   report inode numbers that are unstable across
+  #                   reconnects or collide outright, which surfaces as
+  #                   bizarre "file exists / file missing" behaviour.
+  #   vers=3.1.1      Modern SMB. If Eddie's firmware is older and the mount
+  #                   fails with a protocol error, drop to vers=3.0 — check
+  #                   the message before changing anything else.
+  #
+  # IP rather than eddie.nas deliberately: the name does resolve from inside
+  # the VM (verified), but the VM's resolver configuration is podman's to
+  # change on any machine reset, and every other host in this repo is
+  # referenced by fixed LAN IP for exactly that reason.
+  paperless-nas:
+    driver: local
+    driver_opts:
+      type: cifs
+      # Share name is capital-P `Paperless` — matched exactly as the NAS
+      # reports it (`smbutil view -g //eddie.nas`) rather than relying on
+      # SMB's usual case-insensitivity, which not every server implements.
+      device: "//10.0.1.12/Paperless"
+      o: "username=${NAS_USER},password=${NAS_PASSWORD},uid=1000,gid=1000,file_mode=0664,dir_mode=0775,vers=3.1.1,noserverino"
+
+services:
+  broker:
+    # Redis 8, alpine variant. Celery broker only — Paperless keeps no
+    # durable state here, so this volume is a convenience (avoids replaying
+    # a queue on restart), not something that needs backing up.
+    image: docker.io/library/redis@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
+    container_name: paperless-broker
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 64
+    volumes:
+      - ./redisdata:/data
+    # No `ports:` — reached only by the webserver service, by container
+    # name, over this project's own default network.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  webserver:
+    # Paperless-ngx 3.0.5, the current stable release. Pinned to an exact
+    # version + digest, not :latest, so ../trivy-scan/ has something stable
+    # to scan and an upgrade is always a deliberate commit.
+    #
+    # 3.0.x is a recent major. For a brand-new install that is the right
+    # place to start (no migration to get wrong), but if it proves rough the
+    # conservative fallback is the mature 2.20 line:
+    #   2.20.15 -> sha256:6c86cad803970ea782683a8e80e7403444c5bf3cf70de63b4d3c8e87500db92f
+    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:65a4cabf0169ea7fbd90ab7bb28ba3f8b5909613635acda1a03ad606f34b456b
+    container_name: paperless
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+    # Hardening consistent with the rest of the repo. LAN/tailnet-gated at
+    # the proxy, so this is defence in depth rather than the primary control.
+    #
+    # The capability set is dictated by the image, not chosen: paperless-ngx
+    # starts as root, fixes ownership on its data directories, then drops to
+    # USERMAP_UID/GID. A bare `cap_drop: ALL` breaks this class of image —
+    # same lesson as the nimbus and BookStack notes in SETUP.md. VERIFY ON
+    # FIRST BOOT: if it crash-loops on permissions, that is this block, not
+    # the CIFS mount. Check `podman logs paperless` before touching the
+    # volume options.
+    #
+    # No CAP_SYS_ADMIN needed anywhere here — that is the real prize of
+    # doing the CIFS mount via the volume driver rather than inside the
+    # container. A container that mounts its own SMB share needs to be
+    # near-privileged; this one does not.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    # OCR is the memory-hungry part — a large scanned PDF can spike well
+    # above idle. 2 GiB against the VM's 11.18 GiB total leaves plenty of
+    # headroom for everything else on this Mac.
+    mem_limit: 2g
+    pids_limit: 256
+    environment:
+      USERMAP_UID: 1000
+      USERMAP_GID: 1000
+      PAPERLESS_TIME_ZONE: Europe/London
+      PAPERLESS_OCR_LANGUAGE: eng
+
+      PAPERLESS_REDIS: redis://broker:6379
+      # No PAPERLESS_DBHOST — its absence is what selects SQLite. Setting it
+      # to anything, including an empty string, would switch this to
+      # Postgres and fail. See the SQLite note in the header.
+
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
+      # Django needs to know its own public origin for CSRF and
+      # ALLOWED_HOSTS. Requests arrive from Caddy on the Pi bearing this
+      # hostname, so this must match the Caddy site block exactly.
+      PAPERLESS_URL: https://paperless.mathewcsims.uk
+
+      # Seeded on first boot only. Unlike BookStack — which ships a fixed,
+      # publicly-documented admin/password and no env-var override, needing
+      # a manual post-install fix — Paperless creates this account itself,
+      # so there is never a window where a well-known default is live.
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
+      PAPERLESS_ADMIN_MAIL: ${PAPERLESS_ADMIN_MAIL}
+
+      # ── Paths. The whole storage split, made explicit. ────────────────
+      # DATA_DIR is not listed here because it stays at its default
+      # (/usr/src/paperless/data) which is bind-mounted to local disk below.
+      # The three that move onto the NAS are named explicitly so the split
+      # is visible at the point of use rather than inferred from volumes:.
+      PAPERLESS_MEDIA_ROOT: /usr/src/paperless/nas/media
+      PAPERLESS_CONSUMPTION_DIR: /usr/src/paperless/nas/consume
+      PAPERLESS_EXPORT_DIR: /usr/src/paperless/nas/export
+
+      # ── inotify DOES NOT WORK OVER CIFS ───────────────────────────────
+      # This is the single most likely thing to waste an afternoon. With the
+      # consume directory on a network share, no filesystem event ever
+      # fires, so Paperless simply never notices new files — it does not
+      # error, it silently does nothing. Polling is mandatory here, not a
+      # tuning preference.
+      #
+      # 60s is a deliberate compromise: a scan dropped on the share appears
+      # within a minute, without hammering the NAS with directory scans.
+      PAPERLESS_CONSUMER_POLLING: 60
+      # A file copied over SMB can be visible before it is fully written.
+      # These retries stop Paperless ingesting a half-written PDF and then
+      # filing a corrupt document — retry 5 times, 3s apart, before giving up.
+      PAPERLESS_CONSUMER_POLLING_RETRY_COUNT: 5
+      PAPERLESS_CONSUMER_POLLING_DELAY: 3
+
+      # Drop a whole folder of scans in at once and have the subdirectory
+      # names become tags — the fastest way to file a backlog.
+      PAPERLESS_CONSUMER_RECURSIVE: "true"
+      PAPERLESS_CONSUMER_SUBDIRS_AS_TAGS: "true"
+
+      # Because the media root lives on a share that gets browsed in Finder,
+      # the on-disk layout should be readable by a human, not just by the
+      # database. This produces e.g. 2026/DVLA/V5C registration document.pdf
+      # instead of an opaque UUID tree. Paperless still finds documents via
+      # its index; this only governs how they are laid out underneath.
+      #
+      # DOUBLE braces, not single: 3.x moved this to Jinja templating and
+      # warns on every startup check if given the old single-brace form.
+      # Caught on first boot — the old syntax still works today but is
+      # deprecated, and there is no reason to start out on it. Compose does
+      # not interpolate {{ }} (only ${ }), so this passes through untouched.
+      PAPERLESS_FILENAME_FORMAT: "{{ created_year }}/{{ correspondent }}/{{ title }}"
+
+      # ── METADATA SUGGESTION: classifier YES, LLM NO ───────────────────
+      # Two separate capabilities in 3.x, easily conflated.
+      #
+      # THE CLASSIFIER (this setting) is what suggests tags, correspondent,
+      # document type and storage path. scikit-learn, entirely local, no
+      # external calls. It is on by default; stated explicitly here because
+      # it IS the metadata-suggestion feature and should be visible at the
+      # point of use rather than inherited silently — same reasoning as
+      # karakeep's INFERENCE_ENABLE_AUTO_TAGGING.
+      #
+      # It learns from your own filing, so it does nothing until there is a
+      # corpus to learn from. Hourly at :05 is upstream's default and is
+      # frequent enough that newly-filed documents start influencing
+      # suggestions the same day.
+      PAPERLESS_TRAIN_TASK_CRON: "5 */1 * * *"
+
+      # THE LLM LAYER is deliberately OFF (this is also upstream's default,
+      # stated explicitly because it is a decision here, not an oversight).
+      # 3.x ships a full paperless_ai package — embeddings, vector store,
+      # document chat — and it would work from the first document rather
+      # than needing a corpus like the classifier does.
+      #
+      # It stays off because this instance holds personal medical and legal
+      # documents, and the classifier already covers what this store is
+      # actually for. Revisit once there are enough documents to know what
+      # the classifier is genuinely missing — not before.
+      #
+      # If it is ever enabled: PAPERLESS_AI_LLM_BACKEND accepts `ollama` or
+      # `openai-like`, and PAPERLESS_AI_LLM_EMBEDDING_BACKEND additionally
+      # accepts `huggingface`, which runs embeddings locally in this
+      # container with no external calls whichever LLM backend is chosen.
+      # There is already an Ollama on this Mac (qwen3.5:4b) — but it binds
+      # 127.0.0.1 only, so it is NOT reachable from the podman VM without
+      # setting OLLAMA_HOST=0.0.0.0, which exposes an unauthenticated Ollama
+      # to the whole LAN. Weigh that before reaching for it.
+      # An employer-funded endpoint (../litellm/) is NOT an option here at
+      # any point — see the header.
+      PAPERLESS_AI_ENABLED: "false"
+    volumes:
+      # LOCAL — SQLite database, Tantivy index, classifier model. See header.
+      - ./data:/usr/src/paperless/data
+      # NAS — blobs, drop-folder, exports.
+      - paperless-nas:/usr/src/paperless/nas
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. 8000 is
+      # Paperless's own documented default and is unused on this Mac
+      # (checked against every compose.yaml in this repo and against
+      # netstat). The router does NOT forward 8000, so this is never
+      # directly internet-facing even before the Caddy LAN-gate.
+      - "10.0.1.14:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "-S", "--max-time", "2", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s

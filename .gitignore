@@ -56,6 +56,12 @@ bookstack/db/
 bookstack/config/
 forgejo/data/
 wanderer/data/
+# Paperless: the SQLite database, Tantivy full-text index and trained
+# classifier. Deliberately local disk, never the NAS — see
+# paperless/compose.yaml for why that split is not negotiable. The document
+# blobs themselves are not here at all; they live on Eddie's Paperless share.
+paperless/data/
+paperless/redisdata/
 
 # ── Tool-local / editor state ───────────────────────────────────────────
 # Claude Code's own local session cache — unrelated to this project, and
