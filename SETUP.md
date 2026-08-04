@@ -2269,7 +2269,7 @@ above), same pattern as `scripts/pass-create-vikunja-relay-secret.sh`.
    toggle alone. Only remove any setup-time IP-allowlist in the Caddyfile
    after that's confirmed.
 
-**Medications are moving off this app to MedTimer (decided 2026-08-04).**
+**Medications moved off this app to MedTimer (2026-08-04).**
 Accumulated rough edges and bugs — the 15-minute reminder loop above, plus
 enough smaller ones to erode confidence — but the deciding factor was that
 a medication's dose can't be altered after it's created. The upstream
