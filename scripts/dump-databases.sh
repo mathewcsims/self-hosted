@@ -173,7 +173,51 @@ dump_sqlite() {
     # running application's own view is left completely untouched. This is
     # what the Pi script does via Python's read-only URI, and the two are
     # now consistent.
-    if sqlite3 "file:$_src?mode=ro" "VACUUM INTO '$_tmp'" 2>/dev/null \
+    #
+    # THE STOPPED-CONTAINER CASE. A read-only open of a WAL-mode database
+    # needs the -shm WAL index, and cannot create one. While the app runs
+    # that file exists and the plain open above works. But a clean shutdown
+    # checkpoints and REMOVES both -wal and -shm, and the read-only open
+    # then fails outright:
+    #
+    #     Error: stepping, unable to open database file (14)
+    #
+    # So any app stopped for maintenance overnight produced a spurious
+    # FAILED here — an Apprise alert and a dump-failure warning in
+    # kopia-mac/backup.sh for a database that is perfectly healthy. False
+    # alarms are how real ones get ignored.
+    #
+    # `immutable=1` tells SQLite the file cannot change, which lets it skip
+    # the WAL index entirely. That is only TRUE when nothing has the
+    # database open, so it is a guarded fallback and never the first
+    # choice.
+    #
+    # THE GUARD IS THE ABSENCE OF -wal, NOT OF -shm. Measured, because the
+    # obvious version of this check is wrong: with -shm deleted but a -wal
+    # still holding committed transactions (a hard kill), the plain
+    # read-only open SUCCEEDS — SQLite just rebuilds the -shm — while
+    # `immutable=1` silently returns the last-checkpointed state and
+    # `PRAGMA integrity_check` still says "ok". A test on a 9-row database
+    # in that state: plain read-only 9 rows, immutable 3 rows, both "ok".
+    # Keying off a missing -shm, or blindly retrying on any failure, would
+    # therefore have written a truncated dump and called it a success —
+    # exactly the class of silent lie the rest of this script exists to
+    # prevent. With no -wal present there is no such content to lose.
+    #
+    # The Pi script is NOT affected and deliberately not changed: Python's
+    # sqlite3 creates the -shm itself on a read-only open, verified on
+    # babel (python 3.11.2 / sqlite 3.40.1). This is specific to the
+    # sqlite3 CLI (3.51.0 on the Mac).
+    _dumped=0
+    if sqlite3 "file:$_src?mode=ro" "VACUUM INTO '$_tmp'" 2>/dev/null; then
+        _dumped=1
+    elif [ ! -e "$_src-wal" ]; then
+        rm -f "$_tmp"
+        if sqlite3 "file:$_src?mode=ro&immutable=1" "VACUUM INTO '$_tmp'" 2>/dev/null; then
+            _dumped=1
+        fi
+    fi
+    if [ "$_dumped" = 1 ] \
        && [ "$(sqlite3 "file:$_tmp?mode=ro" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
         gzip -c "$_tmp" > "$OUT/$_l-$STAMP.db.gz" && rm -f "$_tmp"
         echo "ok  $(du -h "$OUT/$_l-$STAMP.db.gz" | cut -f1)"
