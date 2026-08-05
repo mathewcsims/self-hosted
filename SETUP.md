@@ -5815,19 +5815,37 @@ The email *body* is frequently the substantive content here, not just a
 wrapper around an attachment, so both need to arrive — and to be readable
 rather than merely searchable.
 
-**How it actually works:** Thunderbird (already connected to Proton Mail
+**The interface is the consume folder, not any particular application.**
+That is the design, and it is worth stating plainly because it is what makes
+every other decision below fall out the way it does. Anything that can write
+to the NAS `Paperless/consume/` share is an ingestion source: a mail client,
+a phone, a scanner, another machine, a script. Producers are swappable and
+can be added on any device without touching this deployment at all.
+
+**The current producer** is Thunderbird (already connected to Proton Mail
 Bridge on the Mac) with two add-ons — **FiltaQuilla**, which adds
 filesystem-writing actions to message filters, and **PrintingTools NG**,
 which renders a message to PDF. A filter saves the message as a **PDF**,
-and attachments separately, into the NAS `Paperless/consume/` share.
-Paperless picks them up within the polling interval and needs no conversion
-services at all.
+and attachments separately, into the share. Paperless picks them up within
+the polling interval and needs no conversion services at all.
 
-**Neither add-on is in this repo, and neither is the filter configuration.**
-That is the one real gap in this setup: rebuild that Mac and the document
-store comes back perfectly while the ingestion path silently does not.
-Re-installing both add-ons and recreating the filter is a manual step with
-nothing here to automate it.
+Neither add-on nor the filter configuration is in this repo, so rebuilding
+that Mac means re-installing both and recreating the filter by hand. That is
+a chore rather than a hole: the ingestion *path* is the share, which is
+backed up and reachable from anything, and the mail client is one
+interchangeable front-end onto it. A different producer — or the same one on
+a different machine — feeds the same folder with no changes here.
+
+Two consequences worth exploiting:
+
+- **`PAPERLESS_CONSUMER_SUBDIRS_AS_TAGS` is already on.** Dropping into
+  `consume/Scanner/` or `consume/Phone/` tags by source automatically,
+  composing with the Inbox tag the workflow applies rather than conflicting
+  with it.
+- **The polling-retry settings earn their keep with more than one
+  producer.** A file copied over SMB can be visible before it is fully
+  written, which is a nicety with one source and real protection when a
+  phone is pushing a large scan over wifi.
 
 Two routes were tried first and rejected. Both are worth recording, because
 the second looks obviously right and is not.
@@ -5891,15 +5909,29 @@ Chromium, so `--chromium-disable-javascript=true` and
 `--chromium-allow-list=file:///tmp/.*` are a security control rather than
 tuning.
 
-A third route remains open and unexplored: Paperless's own IMAP mail rules
-against Proton Bridge. Messages fetched over IMAP never carry Mozilla
+#### Why not Paperless's own IMAP rules
+
+Scoped and parked rather than rejected outright, but it looks weaker the
+more clearly the consume folder is understood as *the* interface.
+
+Its genuine attractions: messages fetched over IMAP never carry Mozilla
 headers, and consumption scope 2 ("full Mail with embedded attachments as
 `.eml`") would produce a single document rather than a message and its
-attachments needing to be linked. It was scoped and parked — see the
-`host.containers.internal` section for why Bridge is reachable, and note the
-obstacles: Bridge's certificate has `SAN=['127.0.0.1']` only, so a relay
-inside the container's network namespace is needed for hostname
-verification to pass, and a Bridge password is a full-mailbox credential.
+attachments needing linking afterwards.
+
+Against that, it would not replace the consume folder — it would run
+*alongside* it as a second, Paperless-specific ingestion path, reachable
+only from this deployment and useful only for email. That is the opposite
+of the property that makes the current design worth having. It also needs a
+relay inside the container's network namespace, because Bridge's certificate
+carries `SAN=['127.0.0.1']` only and Paperless verifies hostnames with no
+option to disable it, and it needs a Bridge password — a full-mailbox
+credential — living in the same container that write-mounts the document
+store.
+
+See the `host.containers.internal` section for why Bridge is reachable from
+a container at all, which is the one part of this that was genuinely
+surprising.
 
 ### Triage: the "Consume to Inbox" workflow
 
