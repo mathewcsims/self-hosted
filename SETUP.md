@@ -5809,11 +5809,132 @@ itself on first boot — no need to pre-create them.
   bypasses the file-cleanup signal, orphaning blobs on the share. Empty the
   trash through the UI instead.
 
+### Getting email into Paperless
+
+The email *body* is frequently the substantive content here, not just a
+wrapper around an attachment, so both need to arrive — and to be readable
+rather than merely searchable.
+
+**How it actually works:** Thunderbird (already connected to Proton Mail
+Bridge on the Mac) with two add-ons — **FiltaQuilla**, which adds
+filesystem-writing actions to message filters, and **PrintingTools NG**,
+which renders a message to PDF. A filter saves the message as a **PDF**,
+and attachments separately, into the NAS `Paperless/consume/` share.
+Paperless picks them up within the polling interval and needs no conversion
+services at all.
+
+**Neither add-on is in this repo, and neither is the filter configuration.**
+That is the one real gap in this setup: rebuild that Mac and the document
+store comes back perfectly while the ingestion path silently does not.
+Re-installing both add-ons and recreating the filter is a manual step with
+nothing here to automate it.
+
+Two routes were tried first and rejected. Both are worth recording, because
+the second looks obviously right and is not.
+
+#### Why not save the messages as `.eml`
+
+Because Paperless will not recognise them. It sniffs content with
+**libmagic** rather than trusting the file extension, and Thunderbird
+prepends its own headers to a saved message. Measured directly:
+
+| File begins with | libmagic reports | Paperless routes to |
+|------------------|------------------|---------------------|
+| Standard `Subject:` / `From:` | `message/rfc822` | mail parser |
+| `X-Mozilla-Status:` … | **`text/plain`** | text parser |
+| mbox `From ` line | `application/mbox` | — |
+
+So a Thunderbird-saved `.eml`, correctly named and perfectly valid, is
+classified as plain text and never reaches the mail parser.
+
+**`PAPERLESS_PRE_CONSUME_SCRIPT` cannot fix this**, which is the
+counter-intuitive part — a script that strips the offending headers is the
+obvious remedy and it does not work. In `documents/consumer.py` the mime
+type is detected and the parser class chosen *before* the hook runs:
+
+```python
+mime_type = magic.from_file(self.working_copy, mime=True)   # ~line 418
+parser_class = ...                                          # locked in here
+...
+self.run_pre_consume_script()                               # ~line 476, too late
+```
+
+Any fix has to happen before the file reaches `consume/`.
+
+Worse, the failure is lossy. With no renderer available Paperless does not
+skip conversion — it **converts the email to plain text at ingest and stores
+that as the original**, so the stored file becomes `<subject>.txt` and the
+`.eml` is gone. `document_archiver` cannot repair those afterwards: it
+dispatches on the recorded mime type, correctly picks the text parser, and
+silently produces nothing. Documents imported that way have to be re-saved
+from the mail client and re-consumed.
+
+#### Why not Tika + Gotenberg
+
+Paperless supports both natively (`PAPERLESS_TIKA_ENABLED` adds
+`paperless_tika` to `INSTALLED_APPS`) and together they render `.eml` to
+PDF properly. This was deployed, verified working — a test email produced a
+valid 63 KB, 3-page PDF and the logs showed `paperless.parsing.mail:
+Sending content to Tika server` — and then **removed again**.
+
+It worked, but it cost **~2.1 GB of images** (Gotenberg 1.72 GB, bundling
+Chromium *and* LibreOffice; Tika 422 MB) on an install that is otherwise two
+lean containers. And it did not actually solve the problem, because the
+`X-Mozilla-*` headers meant Thunderbird's `.eml` files never reached the
+mail parser to be converted in the first place. Solving it at the source —
+having Thunderbird emit PDFs — removed the need for both services entirely.
+
+If it is ever revisited: neither service has **any** authentication, so
+neither may be published; reach them by service name over the project
+network. Gotenberg renders arbitrary inbound email HTML in a headless
+Chromium, so `--chromium-disable-javascript=true` and
+`--chromium-allow-list=file:///tmp/.*` are a security control rather than
+tuning.
+
+A third route remains open and unexplored: Paperless's own IMAP mail rules
+against Proton Bridge. Messages fetched over IMAP never carry Mozilla
+headers, and consumption scope 2 ("full Mail with embedded attachments as
+`.eml`") would produce a single document rather than a message and its
+attachments needing to be linked. It was scoped and parked — see the
+`host.containers.internal` section for why Bridge is reachable, and note the
+obstacles: Bridge's certificate has `SAN=['127.0.0.1']` only, so a relay
+inside the container's network namespace is needed for hostname
+verification to pass, and a Bridge password is a full-mailbox credential.
+
+### Triage: the "Consume to Inbox" workflow
+
+Everything arriving needs tagging, so a Paperless **workflow** marks it on
+the way in:
+
+| Field | Value |
+|-------|-------|
+| Name | `Consume to Inbox` |
+| Sort order | `0` |
+| Trigger | `Consumption Started` |
+| Action | `Assignment` → assign tag `Inbox` |
+
+**Sort order is not optional and the form does not prefill it** — it is an
+`IntegerField`, `null=False`, default `0`, so leaving it empty fails
+validation with "This field may not be null". It only matters when several
+workflows could act on the same document, running low to high.
+
+Set the `Inbox` tag's matching algorithm to **none**, not `auto`. The other
+tags here are on `auto`, meaning the classifier learns when to apply them —
+correct for `Health & Wellbeing`, wrong for a tag a workflow applies
+unconditionally, where it would only feed noise into a classifier that has
+just started producing useful suggestions.
+
+Paperless also has a native alternative, `Tag.is_inbox_tag`, which applies a
+tag to every new document regardless of source and drives the dashboard's
+inbox count. The workflow was chosen instead because it can be scoped by
+source (`ConsumeFolder`, `ApiUpload`, `MailFetch`, `WebUI`) if that ever
+becomes useful.
+
 ### Monitoring
 
-Uptime Kuma monitor, added by hand at `https://status.mathewcsims.uk` —
-monitors are UI state in `uptime-kuma/data/`, not anything this repo can
-deploy:
+Uptime Kuma monitor at `https://status.mathewcsims.uk` — monitors are UI
+state in `uptime-kuma/data/`, not anything this repo deploys, though they
+can be written straight into `kuma.db` (see the app recipe's step 9):
 
 | Field | Value |
 |-------|-------|
@@ -5821,6 +5942,14 @@ deploy:
 | Friendly name | `Paperless` |
 | URL | `https://paperless.mathewcsims.uk/api/remote_version/` |
 | Keyword | `version` |
+| Tags | `Homelab`, `Heart of Gold` |
+| Status page | `Services`, position 14 |
+
+Tags follow the convention every other monitor uses: `Homelab` plus a host
+tag, `Heart of Gold` being the Mac. `Services` is ordered alphabetically, so
+Paperless sits between `Owl document-viewer` and `Rep's Notes` — weight 15
+was free (a gap left by a decommissioned app), so `Rep's Notes` moved 14→15
+and Paperless took 14 rather than renumbering the whole group.
 
 `/api/remote_version/` is the right target: it answers **unauthenticated**
 with `{"version":"v3.0.5","update_available":false}`, unlike `/api/status/`
@@ -6033,10 +6162,29 @@ Every Mac app so far follows the same shape — copy it for the next one:
    explicitly removes it — but this step was practice rather than checklist
    until Paperless got deployed without one, so it is written down now.
    Prefer a `keyword` monitor against an unauthenticated health endpoint
-   over a plain `http` check of `/`. Monitors are UI state living in
-   `uptime-kuma/data/`, not code, so this cannot be scripted from this repo.
-   Kuma runs on the Pi, whose LAN IP is in `private_ranges`, so monitors
-   work against LAN-gated hostnames without any special handling.
+   over a plain `http` check of `/`. Kuma runs on the Pi, whose LAN IP is in
+   `private_ranges`, so monitors work against LAN-gated hostnames without any
+   special handling.
+
+   Monitors are UI state in `uptime-kuma/data/` rather than anything this
+   repo deploys, but they **can** be written directly into `kuma.db` when
+   the UI is inconvenient — an earlier version of this line wrongly said
+   they could not be. Kuma loads monitors into memory at startup, so a row
+   inserted this way does nothing until the container restarts. Back the
+   database up first, copy the column values from an existing monitor of the
+   same type rather than guessing defaults, and remember there are three
+   tables involved, not one:
+
+   | Table | Holds |
+   |-------|-------|
+   | `monitor` | the check itself |
+   | `monitor_tag` | tags — convention here is `Homelab` plus a host tag |
+   | `monitor_group` | status-page placement, `weight` ordering within a group |
+
+   The `Services` group on the status page is ordered alphabetically, and
+   its weights are non-contiguous because decommissioned apps left gaps —
+   check for a free weight in the right position before renumbering
+   anything.
 
 **If the app needs a database** (copyparty/Memos didn't, but some apps will):
 add it as a second service in the same `compose.yaml`. Give it **no `ports:`**
