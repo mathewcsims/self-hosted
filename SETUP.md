@@ -6098,6 +6098,79 @@ Two things to watch when testing this:
   STARTTLS, which would greet first. Complete the handshake before
   concluding anything.
 
+### Keep novels (and anything novel-sized) out
+
+Learned the hard way on 2026-08-05, and the diagnosis that looks obvious is
+wrong.
+
+Every hourly `Train Classifier` task began failing with `Worker exited
+prematurely: signal 9 (SIGKILL)` — a cgroup OOM kill. That reads as an
+under-sized `mem_limit`, but raising it from 2 GiB to 4 GiB did **not** fix
+it; training still died, peaking at 3.89 GiB.
+
+The cause was the corpus. A batch of novels had been uploaded — 19 documents
+totalling 8.17M characters, **98.6% of all text in the instance**. Paperless
+vectorises with `CountVectorizer(ngram_range=(1,2), min_df=0.01)`, hardcoded
+in `documents/classifier.py` with no setting exposing it, then feeds that to
+`MLPClassifier`, whose first layer scales with the feature count. Novels
+share almost no vocabulary with each other or with a clinic letter, so
+nearly every bigram survived `min_df`. Measured on the real data:
+
+| Corpus | Features | Peak memory | Outcome |
+|--------|---------:|------------:|---------|
+| 35 docs, 8.28M chars (with novels) | 508,023 | 3.89 GiB | **OOM killed** |
+| 17 docs, 432k chars | 33,846 | 2.27 GiB | ✓ 4.2s |
+| 14 docs, 88k chars (cleaned) | 9,372 | 1.86 GiB | ✓ 3.2s |
+
+A 54× reduction in features, achieved by deleting documents rather than by
+tuning anything. **If training ever OOMs again, look at total text volume
+and outsized single documents before touching `mem_limit`.**
+
+It was not only a memory problem. Those 19 documents were 98.6% of what the
+classifier was learning from, so it was mostly learning to recognise
+fiction — the suggestions it produced for actual correspondence were being
+drowned out. A single 319k-character conference programme had the same
+effect in miniature and was removed for the same reason.
+
+Paperless is built around correspondence and records: things with
+correspondents, dates and reference numbers. A novel has none of those. Keep
+libraries in something built for them.
+
+### The classifier model is excluded from backups
+
+`data/classification_model.pickle` is **86 MiB and regenerated hourly**.
+Left alone it would push ~86 MB of genuinely new data into every nightly
+Kopia snapshot, because retrained float weights do not dedupe against the
+previous run's.
+
+It is regenerable machine state, exactly like the `.cache/`, `.ollama/` and
+`.minutes/models/` exclusions already in the home-directory policy — restore
+from backup and it rebuilds within the hour from documents that *are* backed
+up. So it is ignored, on **both** sources that cover it:
+
+```
+kopia policy set ~/self-hosted/paperless/data --add-ignore '/classification_model.pickle'
+kopia policy set ~                            --add-ignore '/self-hosted/paperless/data/classification_model.pickle'
+```
+
+Both are needed: `paperless/data` is its own source *and* sits inside the
+home-directory source, so excluding it in one place alone leaves the other
+still uploading it. Verified by snapshotting and listing the result — the
+snapshot contains `db.sqlite3`, `index` and `log`, and not the model.
+
+### Orphaned files after deleting documents
+
+`document_sanity_checker` reports orphaned blobs but **cannot remove them**
+— it has no cleanup flag. Deleting through the UI and emptying the trash
+there does clean up properly; what leaves orphans is `hard_delete()` from
+the Django shell, which drops the database rows and bypasses the
+file-cleanup signal.
+
+Seven such files (1.3 MB) were left behind by earlier shell deletions and
+removed by hand. If the checker ever reports orphans, compare the files on
+the share against `Document.source_path` / `archive_path` /
+`thumbnail_path` rather than parsing the checker's wrapped table output.
+
 ### Backups — deliberately half a source
 
 `kopia-mac/backup.sh` snapshots `paperless/data` (SQLite database, Tantivy

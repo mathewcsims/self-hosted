@@ -178,10 +178,47 @@ services:
       - FOWNER
       - SETGID
       - SETUID
-    # OCR is the memory-hungry part — a large scanned PDF can spike well
-    # above idle. 2 GiB against the VM's 11.18 GiB total leaves plenty of
-    # headroom for everything else on this Mac.
-    mem_limit: 2g
+    # 4 GiB, raised from 2 GiB on 2026-08-05. CLASSIFIER TRAINING runs inside
+    # this container alongside everything else, and it is the memory peak
+    # here — not OCR, which was what the original 2 GiB was sized against.
+    #
+    # WHAT ACTUALLY HAPPENED, because the obvious diagnosis was wrong. Every
+    # hourly `Train Classifier` task started being cgroup-OOM-killed:
+    #
+    #   oom-kill:constraint=CONSTRAINT_MEMCG ... task=[celeryd: celer
+    #   Memory cgroup out of memory: Killed process ([celeryd: celer)
+    #
+    # That looks like an under-sized limit, and raising it to 4 GiB did not
+    # fix it — training still died, peaking at 3.89 GiB. The real cause was
+    # the CORPUS. A batch of novels had been uploaded: 19 documents totalling
+    # 8.17M characters, i.e. 98.6% of all text in the instance.
+    #
+    # Paperless vectorises with CountVectorizer(ngram_range=(1,2),
+    # min_df=0.01) — hardcoded, no setting exposes it — and feeds the result
+    # to MLPClassifier, whose first layer scales with the feature count.
+    # Novels share almost no vocabulary with each other or with a clinic
+    # letter, so nearly every bigram survived min_df. Measured on the real
+    # data:
+    #
+    #   35 docs, 8.28M chars (with novels)   508,023 features   OOM at 3.89 GiB
+    #   17 docs,  432k chars                  33,846 features   peak 2.27 GiB
+    #   14 docs,   88k chars (cleaned)         9,372 features   peak 1.86 GiB
+    #
+    # The fix was removing documents Paperless was never meant to hold, not
+    # tuning or more memory. Novels are a library, not correspondence; they
+    # belong somewhere else. If training ever OOMs again, look at total text
+    # volume and outsized single documents BEFORE touching this limit.
+    #
+    # 4 GiB is nonetheless still correct: post-cleanup training peaks at
+    # 1.86 GiB, so the old 2 GiB ceiling would sit at 93% and clip again on
+    # any growth. OCR of a large scan is the other spike. Against the VM's
+    # 11.18 GiB total this still leaves ample room for every other app.
+    #
+    # The failure mode is quiet in the worst way: the app stays up and
+    # serving, only the task dies, so it surfaces as tag suggestions silently
+    # going stale. Check Tasks ▸ Needs attention for "Worker exited
+    # prematurely: signal 9 (SIGKILL)" if suggestions stop improving.
+    mem_limit: 4g
     pids_limit: 256
     environment:
       USERMAP_UID: 1000
