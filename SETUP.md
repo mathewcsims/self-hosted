@@ -6166,6 +6166,61 @@ Two things to watch when testing this:
   STARTTLS, which would greet first. Complete the handshake before
   concluding anything.
 
+### Task-failure alerts (`notify-failed-tasks.py`)
+
+Added 2026-08-05, directly because of the classifier OOM below: nine hours
+of hourly failures produced no alert of any kind, and were noticed only by
+chance from a badge in the web UI.
+
+**Paperless cannot do this itself.** Its workflow system has a Webhook
+*action*, but the only triggers are Consumption Started / Document Added /
+Document Updated / Scheduled — none fires on task failure. So this polls,
+the same shape as `kopia-mac/verify-backups.sh`.
+
+Runs hourly at :20 via `uk.mathewcsims.paperless-task-alert`, deliberately
+after the :05 classifier training so a failure is caught in the same hour.
+Install:
+
+```
+cp paperless/uk.mathewcsims.paperless-task-alert.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/uk.mathewcsims.paperless-task-alert.plist
+```
+
+It covers **every** task type, not just `train_classifier` — a failed
+`consume_file` means a document was dropped in the consume folder and never
+became a document, which is indistinguishable from "not scanned yet" until
+you go looking. Failures are grouped by type so nine identical OOM kills
+read as one problem rather than nine notifications.
+
+Three design decisions worth not undoing:
+
+- **It reads `db.sqlite3` directly, read-only**, rather than going through
+  `podman exec`. That means it still works when the container is unhealthy
+  or stopped — which is exactly when failures matter. An alerting path that
+  depends on the thing it monitors is not much of an alerting path.
+  Precedent: `scripts/dump-databases.sh` already opens these databases the
+  same way, and WAL mode permits concurrent readers.
+- **State is a high-water-mark file, not the `acknowledged` column.** That
+  column is the UI's Dismiss button. Reading it would mean staying silent
+  about failures not yet dismissed, which is backwards; setting it would
+  dismiss tasks in the UI on your behalf, destroying the very signal that
+  surfaced the OOM problem. The two stay independent.
+- **The first run is deliberately silent**, recording the current maximum
+  task id without alerting. Otherwise deployment's first act would be a
+  false alarm about historical, already-resolved failures — and an alerting
+  system that cries wolf immediately gets ignored.
+
+The notification body is capped at 3500 characters for the same reason
+recorded in `trivy-scan/scan.py`: Discord embed descriptions cap at 4096,
+and exceeding it 400s the entire Apprise fan-out, taking the ntfy copy down
+with it rather than just the Discord one.
+
+Runs under macOS's `/usr/bin/python3` (3.9), matching the trivy-scan agent,
+so the file carries `from __future__ import annotations` — 3.9 evaluates
+annotations eagerly and `int | None` in a signature raises `TypeError` at
+import. `py_compile` does *not* catch this, because compiling never
+evaluates annotations; only actually running it does.
+
 ### Keep novels (and anything novel-sized) out
 
 Learned the hard way on 2026-08-05, and the diagnosis that looks obvious is

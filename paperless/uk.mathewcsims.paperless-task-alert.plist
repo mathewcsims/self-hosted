@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Hourly at :20. The classifier trains at :05 (PAPERLESS_TRAIN_TASK_CRON)
+    and completes in seconds, so :20 is comfortably after it has either
+    succeeded or died, without being so late that a failure sits unreported
+    for most of an hour.
+
+    Install:
+      cp paperless/uk.mathewcsims.paperless-task-alert.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/uk.mathewcsims.paperless-task-alert.plist 2>/dev/null
+      launchctl load  ~/Library/LaunchAgents/uk.mathewcsims.paperless-task-alert.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>uk.mathewcsims.paperless-task-alert</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/mathewcsims/self-hosted/paperless/notify-failed-tasks.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/mathewcsims</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mathewcsims/self-hosted/paperless/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mathewcsims/self-hosted/paperless/launchd.log</string>
+</dict>
+</plist>

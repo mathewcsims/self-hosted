@@ -62,6 +62,10 @@ wanderer/data/
 # blobs themselves are not here at all; they live on Eddie's Paperless share.
 paperless/data/
 paperless/redisdata/
+# High-water mark for notify-failed-tasks.py — the highest task id already
+# alerted on. Runtime state, regenerated on first run (which deliberately
+# stays silent), and machine-specific.
+paperless/.notify-state
 
 # ── Tool-local / editor state ───────────────────────────────────────────
 # Claude Code's own local session cache — unrelated to this project, and
