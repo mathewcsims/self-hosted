@@ -582,10 +582,12 @@ resolved the hostname.
 The Pi runs Tailscale, configured as both a subnet router (advertising the
 LAN) and an exit node — meaning devices elsewhere can reach this network
 through it, including while off any physical LAN entirely. Every LAN-gated
-app in this repo (`mc37`, `apprise`, `vikunja-relay`, `backup`)
-needs two separate things to actually be reachable this way, and both were
-missing until this was diagnosed directly (bug report → root-caused → fixed
-→ verified working, not assumed):
+app in this repo (`mc37`, `apprise`, `vikunja-relay`, `backup`, `author`,
+`paperless`, `fj`, `healthlog`, `docs`)
+needs **three** separate things to actually be reachable this way. Each is
+necessary and none is sufficient, which is what makes this so awkward to
+debug: with any one missing, every check you can run on the server comes
+back clean.
 
 1. **Caddy has to trust the connection's source IP.** Every LAN-gated block
    uses `@lan remote_ip private_ranges 100.64.0.0/10` — the appended CIDR is
@@ -609,9 +611,57 @@ missing until this was diagnosed directly (bug report → root-caused → fixed
    subdomains (rather than a per-domain split-DNS rule), this works
    correctly without any further Tailscale-side configuration.
 
-With both of these true, a LAN-gated app is reachable over Tailscale exactly
-as if you were on the physical LAN — confirmed working end-to-end, not just
-theorized.
+3. **The tailnet ACL has to grant the LAN subnet as a destination, by CIDR.**
+   This is the one that is easiest to miss, because three *other* things look
+   like they cover it and none of them does. The Pi advertising
+   `10.0.1.0/24`, that route being approved in the admin console, and the
+   client having "use subnet routes" enabled are all necessary — and all
+   three can be true while the traffic is still dropped. A subnet route is a
+   **separate ACL destination** from the tailnet IPs of the devices; a grant
+   like `tag:personal → tag:personal` covers `100.x` addresses only and says
+   nothing about the LAN behind a subnet router. The policy file needs an
+   explicit grant:
+
+   ```json
+   { "src": ["tag:personal"], "dst": ["10.0.1.0/24"], "ip": ["*"] }
+   ```
+
+   Manage the policy with `./scripts/tailscale-acl.sh get|put` (validates
+   before applying, and sends `If-Match` so a concurrent console edit is a
+   412 rather than a silent clobber).
+
+   To check this directly rather than guessing, dump the Pi's own view of
+   the enforced filter — it is the receiving node that drops the packets:
+
+   ```bash
+   ssh mathew@babel 'sudo tailscale debug netmap' | grep -A2 '"Net": "10\.'
+   ```
+
+   If `10.0.1.0/24` is absent, this is the fault. The symptom without it is
+   confusing enough to be worth recording: with an exit node the connection
+   *times out* (Tailscale deliberately keeps RFC1918 destinations off the
+   exit path, so the packet leaves via the local interface and dies), and
+   without one it is *refused* (the browser falls back to the public A
+   record, reaches Caddy from the internet, and hits `handle { abort }`).
+   Neither symptom points at an ACL, and neither leaves any trace on the Pi
+   — a full `tcpdump` of the client's traffic shows no connection attempt
+   toward the LAN address at all.
+
+   `tcpdump` is **not** installed on the Pi (`sudo apt-get install -y
+   tcpdump` if needed, and remove it again afterwards). Worth knowing before
+   you write a capture command and get a silent `timeout` failure with an
+   empty output file, as happened here. When capturing, watch the interface
+   column: tailnet traffic arrives on `tailscale0` from a `100.x` source,
+   while anything arriving on `eth0` came in off the internet — that
+   distinction is what identifies this class of fault.
+
+Diagnosed 2026-08-06, when `docs.mathewcsims.uk` was unreachable from an
+Android client on mobile data. Items 1 and 2 had been in place for months
+and item 3 never had been — so despite this section previously claiming the
+arrangement was "confirmed working end-to-end", no LAN-gated app had ever
+actually been reachable from a genuinely off-LAN tailnet device. Anything
+tested from a device sitting on the physical LAN at the time would have
+passed regardless, which is how it went unnoticed.
 
 ---
 
@@ -6953,6 +7003,18 @@ one-off manual commands:
   from a test IP through the actual monitored log file triggered a real
   ban (confirmed in both `fail2ban-client status caddy-abuse` and
   `iptables -L f2b-caddy-abuse`), then cleanly unbanned.
+  - **Correction (2026-08-06): the global `log {}` block above did not
+    actually produce access logs**, and this jail was therefore watching a
+    file that only ever received error-level entries. Caddy's global `log`
+    option configures the **default logger's sink** — where log lines are
+    written — but requests are logged only for site blocks carrying the
+    `log` **directive**, and none had it. Every verification quoted above
+    still holds, because all three test lines were fed into the file by
+    hand; that is exactly why it went unnoticed, and why the jail's lifetime
+    counter stood at precisely 3 (one synthetic + two fed) nine days later.
+    Fixed by adding an `(access_log)` snippet imported by all 25 site
+    blocks. Re-verified afterwards: a probe with a unique path now appears
+    in `logs/access.log`, and `fail2ban-regex` matches the emitted format.
 
 **Manual action items — out of scope for this repo, worth doing
 separately:**

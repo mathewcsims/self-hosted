@@ -41,6 +41,27 @@
 	}
 }
 
+# Access logging. Caddy does NOT emit access logs merely because the global
+# `log` block above exists — that configures the DEFAULT logger's SINK (the
+# file it writes to) and nothing more. Requests are logged only for site
+# blocks that carry the `log` directive, so every block below imports this.
+#
+# Verified, not assumed: before this snippet existed, a probe request with a
+# unique path appeared in neither logs/access.log nor `docker logs caddy`,
+# and the only `request`-bearing lines in the file were error-level entries
+# (which carry a request object too, and are easy to mistake for access
+# logs). The consequence was that the caddy-abuse fail2ban jail
+# (../pi-fail2ban/), whose failregex matches
+# `"request":{"remote_ip":"<HOST>"..."uri":"..."}` against this exact file,
+# was being fed almost nothing — its lifetime counter stood at 3, i.e. the
+# stray error-level line, rather than the request stream it was written to
+# watch. Found 2026-08-06 while debugging tailnet access. After this change,
+# `fail2ban-regex` matches the emitted format (checked against a synthetic
+# /wp-login.php line: 1 matched, 0 missed).
+(access_log) {
+	log
+}
+
 # General-purpose per-site, per-IP request budget — coarse abuse/DoS
 # protection, not a substitute for each app's own auth-specific limits
 # (copyparty has --ban-pw/--ban-403 built in and enabled by default; Vikunja
@@ -99,6 +120,7 @@
 # correct https links and logs real client IPs (it trusts the Pi's private
 # LAN IP by default).
 {$CP_DOMAIN} {
+	import access_log
 	import security_headers
 	import general_ratelimit cp
 	reverse_proxy http://{$MAC_IP}:3923
@@ -119,6 +141,7 @@
 # used here instead of a second hardcoded IP, for a single source of truth if
 # the Mac's LAN IP ever changes.
 prospect-ukri-tus.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit memos
 
@@ -178,6 +201,7 @@ prospect-ukri-tus.mathewcsims.uk {
 # rate-limit zone is needed — no signup zone,
 # unlike prospect-ukri-tus.mathewcsims.uk above.
 owl.mathewcsims.uk {
+	import access_log
 	# Wrapped in an explicit route{} block: without it, Caddyfile's adapter
 	# reorders top-level directives by its own fixed precedence rather than
 	# source order (confirmed live via `caddy adapt`).
@@ -273,6 +297,7 @@ owl.mathewcsims.uk {
 # sharing off, trusted-proxy config so it can tell real clients from the
 # podman gateway) — see vikunja/compose.yaml for the reasoning.
 vikunja.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit vikunja
 	reverse_proxy http://{$MAC_IP}:3456
@@ -285,6 +310,7 @@ vikunja.mathewcsims.uk {
 # creates an infinite HTTPS redirect loop — Caddy's reverse_proxy sets this
 # by default, so nothing extra is needed here for that specifically.
 blog.mathewcsims.uk {
+	import access_log
 	import security_headers
 	# Ghost admin's own "View site" panel (/ghost/#/site) embeds the live
 	# site in a same-origin iframe — security_headers' blanket DENY blocks
@@ -337,6 +363,7 @@ blog.mathewcsims.uk {
 # zone needed (nothing here to brute-force or abuse), but the shared
 # security-headers snippet costs nothing to keep on.
 ways-of-working.mathewcsims.uk {
+	import access_log
 	import security_headers
 	redir https://blog.mathewcsims.uk/ways-of-working/ permanent
 }
@@ -350,6 +377,7 @@ ways-of-working.mathewcsims.uk {
 # — nothing to brute-force or abuse — but it's cheap to keep on for
 # consistency with every other site.
 mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit landing
 	reverse_proxy http://{$MAC_IP}:3080
@@ -362,6 +390,7 @@ mathewcsims.uk {
 # proxies to plain-HTTP Karakeep. Registration is closed
 # (DISABLE_SIGNUPS=true in ../karakeep/compose.yaml) now that this is public.
 karakeep.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit karakeep
 
@@ -390,6 +419,7 @@ karakeep.mathewcsims.uk {
 # own README) — this LAN-gate is its only access control, since there's no
 # in-app auth option to layer on top of instead. See ../apprise/compose.yaml.
 apprise.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit apprise
 
@@ -413,6 +443,7 @@ apprise.mathewcsims.uk {
 # (see every other app above) doesn't apply here — 2FA in Kuma's own Settings
 # is the compensating control instead. See ../uptime-kuma/compose.yaml.
 status.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit status
 	reverse_proxy uptime-kuma:3001
@@ -427,6 +458,7 @@ status.mathewcsims.uk {
 # relay; the general per-IP rate limit covers brute-force. Caddy upgrades
 # WebSocket automatically (subscriber connections) — nothing extra needed.
 ntfy.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit ntfy
 	reverse_proxy ntfy:80
@@ -440,6 +472,7 @@ ntfy.mathewcsims.uk {
 # inside the relay itself (Tailscale-Webhook-Signature header) is the real
 # access control — see ../tailscale-webhook-relay/compose.yaml.
 tailscale-relay.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit tailscale_relay
 	reverse_proxy tailscale-webhook-relay:8080
@@ -455,6 +488,7 @@ tailscale-relay.mathewcsims.uk {
 # not this LAN-gate — but every other machine-to-machine app in this repo
 # gets one anyway, so this does too, for consistency and defense in depth.
 vikunja-relay.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit vikunja_relay
 
@@ -484,6 +518,7 @@ vikunja-relay.mathewcsims.uk {
 # a self-signed cert over the trusted `pi-shared` network, same reasoning
 # as the mc37 router-admin block below.
 backup.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit backup
 
@@ -510,6 +545,7 @@ backup.mathewcsims.uk {
 # "LAN DNS" entry (mc37.mathewcsims.uk → 10.0.1.19) so LAN devices reach the Pi
 # directly and their source IP is private (passing the check below).
 mc37.mathewcsims.uk {
+	import access_log
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
 		reverse_proxy https://10.0.1.1:8443 {
@@ -539,6 +575,7 @@ mc37.mathewcsims.uk {
 # neither, so this one targets its actual login POST directly, same
 # defense-in-depth reasoning as Karakeep's NextAuth zone.
 author.mathewcsims.uk {
+	import access_log
 	import security_headers
 
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
@@ -585,6 +622,7 @@ author.mathewcsims.uk {
 # so a mismatch surfaces as a 400 on every form submission, not as a
 # routing error.
 paperless.mathewcsims.uk {
+	import access_log
 	import security_headers
 
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
@@ -625,6 +663,7 @@ paperless.mathewcsims.uk {
 # dedicated tighter zone for it rather than assuming the app already
 # covers it.
 fj.mathewcsims.uk {
+	import access_log
 	import security_headers
 
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
@@ -668,6 +707,7 @@ fj.mathewcsims.uk {
 # control from this point on is: registration closed + passkey-only login
 # (no password fallback configured) + the rate limit below.
 healthlog.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit healthlog
 
@@ -710,6 +750,7 @@ healthlog.mathewcsims.uk {
 # just trusted from the UI toggle. Real, permanent access control from here
 # on: registration closed + the rate limit below.
 wanderer.mathewcsims.uk {
+	import access_log
 	import security_headers
 	import general_ratelimit wanderer
 
@@ -749,6 +790,7 @@ wanderer.mathewcsims.uk {
 # is deliberately NOT used here — it's reserved for a possible future
 # public gallery-sharing tool, which would need the opposite posture.
 immich.mathewcsims.uk {
+	import access_log
 	import security_headers
 
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
@@ -797,6 +839,7 @@ immich.mathewcsims.uk {
 # prefix), so it doesn't catch /admin/manage/ (the actual management UI)
 # or real short-link slugs.
 msims.link {
+	import access_log
 	import security_headers
 
 	@bare_root path /
@@ -850,6 +893,7 @@ msims.link {
 # (The Etherpad instance this replaces needed SAMEORIGIN for exactly that
 # reason — a useful contrast, not a precedent to copy.)
 docs.mathewcsims.uk {
+	import access_log
 	import security_headers
 
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
@@ -897,10 +941,12 @@ docs.mathewcsims.uk {
 # SNI/Host — including a bare-IP scan of the public address — gets a closed
 # connection, revealing nothing.
 :80 {
+	import access_log
 	abort
 }
 
 :443 {
+	import access_log
 	tls internal
 	abort
 }
