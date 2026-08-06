@@ -1,0 +1,124 @@
+/*
+ * Etherpad settings for pads.mathewcsims.uk.
+ *
+ * This is deliberately MINIMAL rather than a copy of Etherpad's shipped
+ * settings.json.docker. Etherpad merges what it finds here over its built-in
+ * defaults (storeSettings() only overwrites the keys actually present), so
+ * listing only what differs keeps this file reviewable — the alternative is a
+ * ~30 KB template where the handful of real decisions are invisible.
+ *
+ * ${VAR} placeholders are substituted by Etherpad at load time from the
+ * process environment, which is how the admin password hash gets in from
+ * Proton Pass without ever being committed. Deploy with
+ * ./scripts/pass-deploy.sh pads — never a bare `podman compose up -d`, or
+ * PADS_ADMIN_HASH resolves to empty and the admin account silently breaks.
+ */
+{
+  "title": "Pads",
+
+  /*
+   * Bind inside the container. The published port is restricted to the Mac's
+   * LAN IP in compose.yaml; this is the container-internal listener.
+   */
+  "ip": "0.0.0.0",
+  "port": 9001,
+
+  /*
+   * SQLite, matching the repo's dominant pattern (Vikunja, Karakeep, Forgejo,
+   * Paperless). Etherpad's default driver is "dirty", which its own settings
+   * template warns is not for production — a single append-only file with no
+   * compaction.
+   *
+   * The database deliberately does NOT live in Etherpad's var/ (its default
+   * location). var/ also holds installed_plugins.json — the manifest Etherpad
+   * reads at boot to know which plugins exist — so bind-mounting a host
+   * directory over var/ masks that file and every build-time plugin silently
+   * disappears ("Loaded 1 plugins", empty "Installed plugins:"). Found by
+   * running exactly that configuration. Pointing the database at its own
+   * directory keeps var/ intact inside the image.
+   */
+  "dbType": "sqlite",
+  "dbSettings": { "filename": "/opt/etherpad-lite/data/etherpad.sq3" },
+
+  /*
+   * Behind Caddy on the Pi, so the client IP and protocol arrive in
+   * X-Forwarded-* headers. Without this Etherpad attributes every connection
+   * to the podman gateway and treats the (internally plain-HTTP) connection as
+   * insecure, which breaks secure-cookie handling. Same class of setting as
+   * Vikunja's TRUSTEDPROXIES and copyparty's xff-src.
+   */
+  "trustProxy": true,
+
+  /*
+   * Authentication is the whole point of this instance: it is LAN/tailnet
+   * gated at the proxy, but that gate is shared with anyone on the tailnet,
+   * so pads still sit behind per-user accounts.
+   *
+   * requireAuthorization stays FALSE deliberately. Etherpad has no per-pad
+   * ACL (padAuthorizations exists but would need a config entry per user per
+   * pad), so this is an intentionally shared space: everyone who can log in
+   * can open every pad, including via /list. Decided explicitly — see the
+   * Pads section in SETUP.md.
+   */
+  "requireAuthentication": true,
+  "requireAuthorization": false,
+
+  /*
+   * Accounts.
+   *
+   * The admin account lives here because settings.json is the only place
+   * is_admin can be set for a named user, and its hash comes from Pass.
+   * Changing it needs a redeploy.
+   *
+   * Everyone else is added as a file under ./users (see ep_hash_auth below) —
+   * those are read at authentication time, so adding or removing a person
+   * needs no restart and no change to this file.
+   *
+   * Hashes are bcrypt. ep_hash_auth also accepts sha512-hex, which is its
+   * documented default, but sha512 is unsalted and unstretched and has no
+   * business hashing a password.
+   */
+  "users": {
+    "mathew": {
+      "hash": "${PADS_ADMIN_HASH}",
+      "is_admin": true
+    }
+  },
+
+  /*
+   * Filesystem user store. Each account is a directory:
+   *   /var/etherpad/users/<username>/.hash         (bcrypt, required)
+   *   /var/etherpad/users/<username>/.displayname  (optional)
+   *   /var/etherpad/users/<username>/.adm          (optional, grants admin)
+   *
+   * hash_adm:false means a file-based account is NOT an admin unless it has
+   * its own .adm file — the safe default, and what keeps family accounts from
+   * inheriting admin rights.
+   */
+  "ep_hash_auth": {
+    "hash_dir": "/var/etherpad/users",
+    "hash_adm": false
+  },
+
+  /*
+   * Outbound calls, all off. Three separate controls, all documented in
+   * Etherpad's PRIVACY.md:
+   *   updates.tier         — periodic check against the GitHub Releases API.
+   *                          "off" also stops the "update available" banner.
+   *   privacy.updateCheck  — the hourly version check in UpdateCheck.ts.
+   *   privacy.pluginCatalog— the admin plugin browser's catalogue fetch.
+   *
+   * None of them are wanted: the version is pinned deliberately in the
+   * Dockerfile, plugins are installed at build time rather than through the
+   * admin UI, and a LAN-only instance has no business making scheduled calls
+   * out to the internet. Partial blocks are fine — Etherpad merges nested
+   * settings objects over its defaults rather than replacing them.
+   */
+  "updates": { "tier": "off" },
+  "privacy": {
+    "updateCheck": false,
+    "pluginCatalog": false
+  },
+
+  "loglevel": "INFO"
+}

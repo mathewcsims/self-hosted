@@ -1,0 +1,104 @@
+# Etherpad (https://etherpad.org) — personal document-authoring space at
+# pads.mathewcsims.uk. Real-time collaborative pads, a pad directory at /list,
+# and per-user accounts.
+#
+# Same architecture as every other Mac app here: this container serves plain
+# HTTP on the LAN only, and the Caddy reverse proxy on the Pi terminates HTTPS
+# and forwards to MAC_IP:9001 (see ../pi-reverse-proxy/). Unlike most of them,
+# this one is LAN/tailnet-gated at the proxy AND has its own login — see below.
+#
+# ── Why this is a custom image ────────────────────────────────────────────
+# Etherpad installs plugins at BUILD time; the official image has no runtime
+# plugin mechanism. So ./Dockerfile derives from the pinned upstream image and
+# runs Etherpad's own installer. Build it before the first deploy:
+#   podman compose -f pads/compose.yaml build
+#
+# ── Why per-user accounts as well as the LAN gate ─────────────────────────
+# The Caddy gate admits anything on the LAN or the tailnet. That's the right
+# availability (family on the tailnet may get access later) but it is not an
+# identity: it can't tell one tailnet device from another, and pads here are
+# personal writing. So Etherpad's own `requireAuthentication` is on, with
+# bcrypt-hashed accounts via ep_hash_auth. See ./settings.json.
+#
+# Deliberately a SHARED space: Etherpad has no per-pad ACL, so every account
+# can open every pad, including through /list. That is an accepted decision,
+# not an oversight — MyPads was the only plugin offering per-pad access and it
+# does not run on Etherpad 3.x (see ether/etherpad#8109 and the plan notes).
+#
+# ── Not to be confused with the parked colabpads plan ─────────────────────
+# A second, separate Etherpad for public review links was scoped and parked
+# pending upstream fixes. Its auth model (anonymous, gated by one shared
+# basic-auth password) is incompatible with requireAuthentication here, so if
+# it is ever built it gets its own stack and its own port — 9001 is taken.
+#
+# Secrets live in Proton Pass, not a .env file (see ./.env.example). Deploy
+# with ./scripts/pass-deploy.sh pads — never a bare `podman compose up -d`, or
+# PADS_ADMIN_HASH resolves to empty and the admin login silently breaks.
+name: pads
+
+services:
+  pads:
+    # Built locally from ./Dockerfile, which pins etherpad 3.3.3 by tag AND
+    # digest. No `image:` from a registry, so Trivy picks this up via the
+    # Dockerfile's FROM line instead (scan.py reads both).
+    build:
+      context: .
+    image: localhost/pads-etherpad:3.3.3
+    container_name: pads
+    restart: unless-stopped
+    # Do NOT set `user:` — on podman-machine (macOS) the container's root maps
+    # to your host user, giving sane ownership on the bind mounts below. Same
+    # reasoning as vikunja/copyparty; the upstream image already runs as its
+    # own unprivileged `etherpad` user (uid 5001) internally.
+    #
+    # Hardening: this image is a plain node process that never needs to change
+    # ownership or bind a privileged port, so a bare `cap_drop: ALL` is safe
+    # here — unlike the linuxserver images (bookstack), whose s6 init boots as
+    # root and needs CHOWN/SETUID/etc. Limits are ~4x observed steady state
+    # (measured after first boot; see SETUP.md).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    pids_limit: 256
+    environment:
+      TZ: Europe/London
+      # Substituted into ./settings.json by Etherpad at load time. Sourced from
+      # the "Pads" Proton Pass item by scripts/pass-deploy.sh.
+      PADS_ADMIN_HASH: ${PADS_ADMIN_HASH}
+    volumes:
+      # The SQLite database, in its OWN directory — deliberately not Etherpad's
+      # var/, which is where it would live by default. var/ also holds
+      # installed_plugins.json, the manifest Etherpad reads at boot; mounting a
+      # host directory over var/ hides it and every build-time plugin vanishes
+      # silently. Verified by doing precisely that: "Loaded 1 plugins" and an
+      # empty "Installed plugins:" line. See ./settings.json.
+      - ./data:/opt/etherpad-lite/data
+      # Filesystem user store for non-admin accounts. Read at authentication
+      # time, so adding a person here needs no restart. Contains password
+      # hashes — gitignored, and backed up by Kopia since git has no copy.
+      - ./users:/var/etherpad/users
+      # Read-only: nothing should rewrite our config at runtime. Etherpad's
+      # admin UI can edit settings.json, which we do not want here.
+      - ./settings.json:/opt/etherpad-lite/settings.json:ro
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address. 9001 is Etherpad's own
+      # documented default and was free across this repo. The router does NOT
+      # forward 9001, so this is never directly internet-facing even before
+      # the Caddy LAN-gate is considered.
+      - "10.0.1.14:9001:9001"
+    healthcheck:
+      # requireAuthentication is on, so an unauthenticated GET / returns 401,
+      # not 200 — a plain wget check against / would report the container as
+      # permanently unhealthy. /health is Etherpad's own endpoint
+      # (src/node/hooks/express/specialpages.ts) and is served without a
+      # session; confirmed live before relying on it (see SETUP.md).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

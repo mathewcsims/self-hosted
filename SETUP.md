@@ -125,6 +125,10 @@ section below says which.
 | `bookstack/db/` | **Mac** | **BookStack's MariaDB datadir** |
 | `forgejo/compose.yaml` | **Mac** | Forgejo (git + issues), SQLite; LAN-only (`fj.mathewcsims.uk`) plus direct git-over-SSH on port 2222; reads secrets from Proton Pass |
 | `forgejo/data/` | **Mac** | **your repos, SQLite DB, SSH host keys live here** |
+| `pads/compose.yaml` | **Mac** | Etherpad — personal document authoring (`pads.mathewcsims.uk`); LAN/tailnet-only *and* per-user login; built from `pads/Dockerfile` (plugins are build-time); reads the admin hash from Proton Pass |
+| `pads/settings.json` | **Mac** | Etherpad config — auth, SQLite path, plugin settings; `${PADS_ADMIN_HASH}` substituted at load time |
+| `pads/data/` | **Mac** | **your pads (SQLite) live here** — deliberately outside Etherpad's `var/`, see below |
+| `pads/users/` | **Mac** | **bcrypt password hashes for every non-admin account** — gitignored, so Kopia is the only copy |
 | `contact-sync/` | **Mac** | hub-and-spoke contact sync engine (Proton/Google/2× Microsoft) — `sync.py` + per-provider spoke modules; canonical vCard store lives outside the repo at `~/contact-sync/store/` (its own private Forgejo repo); daily launchd job |
 | `ntfy/compose.yaml` | **Pi** | self-hosted push notifications, on trial alongside Discord; auth default-deny, fed by Apprise |
 | `ntfy/data/` | **Pi** | **auth DB, message cache, attachments live here** |
@@ -6340,6 +6344,127 @@ podman exec paperless python3 manage.py document_exporter /usr/src/paperless/nas
 Revisit the scheduling question only if the value of the metadata (the
 tagging and filing work, which is the part *not* recoverable from the raw
 PDFs) ever outgrows the cost of a second copy.
+
+---
+
+## Etherpad / Pads (https://pads.mathewcsims.uk) — LAN-only, runs on the Mac
+
+Personal document-authoring space. Real-time pads, a directory of every pad at
+`/list`, and per-user accounts. Intended for drafting; friends and family on the
+tailnet may be given accounts.
+
+### Why it has BOTH a LAN gate and its own login
+
+Every other LAN-gated app here relies on the gate plus (usually) an app login.
+The reasoning is worth stating explicitly for this one: the Caddy gate admits
+any device on the LAN or the tailnet, which is the availability wanted — but it
+is not an *identity*. It cannot distinguish one tailnet device from another, and
+these are personal drafts. So Etherpad's `requireAuthentication` is on, with
+bcrypt-hashed accounts.
+
+### Deliberately a shared space
+
+`requireAuthorization` is **false**, so every account can open every pad,
+including through `/list`. This is a decision, not an oversight: Etherpad has no
+per-pad ACL. The only plugin that ever offered one, `ep_mypads`, does not run on
+Etherpad 3.x (its `storage.js` passes callbacks to ueberdb2 v6, which is
+promise-only, so startup hangs silently) and stores pad passwords in the URL
+rather than a session. If per-person separation is ever genuinely needed, that
+means separate instances, not a plugin.
+
+### The two gotchas that will bite on a rebuild
+
+**1. Do not bind-mount over Etherpad's `var/`.** That directory holds
+`installed_plugins.json`, the manifest Etherpad reads at boot. Mounting a host
+directory over it hides the file and every build-time plugin silently vanishes —
+the only symptom is `Loaded 1 plugins` and an empty `Installed plugins:` line in
+the log. This is why the database lives at `pads/data/` and `dbSettings.filename`
+is an absolute path outside `var/`, rather than Etherpad's default `var/*.sq3`.
+
+**2. bcrypt hashes must be `$2a$` or `$2b$`, never `$2y$`.** `htpasswd` emits
+`$2y$` by default. Node's `bcrypt`, which `ep_hash_auth` verifies with, does not
+understand that prefix: it returns false for every password, with no error and
+no log line, so the account simply never authenticates. `$2y$` and `$2a$` are
+the same algorithm, so the scripts rewrite the prefix. Verified directly against
+the bcrypt build inside the image: `$2y$` → false, `$2a$` → true, same password
+and cost.
+
+### Accounts
+
+| Who | Where | Restart needed |
+|---|---|---|
+| `mathew` (admin) | `users` block in `pads/settings.json`, hash from Proton Pass | yes — it is substituted at load time |
+| everyone else | `pads/users/<name>/.hash` | **no** — read at authentication time |
+
+Add someone with:
+
+```
+./scripts/pads-add-user.sh alice "Alice Example"
+```
+
+That prints a generated password once and does not store it. The account is
+non-admin: `settings.json` sets `hash_adm: false`, so a file-based user is only
+an admin if it also has a `.adm` file. Don't create one casually — an admin can
+delete pads and reach `/admin`.
+
+**A non-admin can still load the `/admin` page, and that is not a hole.**
+Etherpad computes its admin gate as `req.path.startsWith('/admin-auth')`, so
+`/admin/*` serves the dashboard's HTML shell to any authenticated user while the
+API behind it refuses them. Confirmed live: `/admin-auth/` returns 200 for the
+admin, **403** for a non-admin, and 401 unauthenticated. The non-admin sees an
+empty dashboard that can load nothing.
+
+### To bring it up on a fresh machine
+
+1. Create the Pass item once, under your own pass-cli session (agent tokens are
+   read-only for item creation):
+   ```
+   ./scripts/pass-create-pads-secrets.sh
+   ```
+2. Build the image — plugins are installed at build time, so this is not
+   optional:
+   ```
+   podman compose -f pads/compose.yaml build
+   ```
+3. Deploy:
+   ```
+   ./scripts/pass-deploy.sh pads
+   ```
+   Never a bare `podman compose up -d`: `PADS_ADMIN_HASH` would resolve to an
+   empty string and the admin login would fail with nothing obviously wrong in
+   the logs.
+4. Add the DNS records and the Caddy block (see the general recipe below), then
+   copy the Caddyfile to the Pi and `docker compose restart caddy`.
+
+### Monitoring
+
+| Field | Value |
+|---|---|
+| Monitor type | `HTTP(s) - Keyword` |
+| Friendly name | `Pads` |
+| URL | `https://pads.mathewcsims.uk/health` |
+| Keyword | `pass` |
+
+`/health` is Etherpad's own endpoint (`src/node/hooks/express/specialpages.ts`)
+and is served **without** authentication — confirmed live returning 200 while
+`/`, `/list` and `/admin` all return 401. That is what makes a keyword monitor
+possible here at all; a check against `/` would sit permanently at 401.
+
+The body is `{"status":"pass","releaseId":"3.3.3"}`, hence the keyword `pass`.
+Note the response also carries the running version, which is a free way to spot
+a rebuild that didn't land the version you expected.
+
+The `dump-databases.sh` post-dump health-check loop needs no special handling:
+it already treats 4xx as healthy ("401/403 are auth gates working correctly")
+and only alerts on 5xx or no response.
+
+### Backups
+
+`pads/data/` (the SQLite database) is dumped nightly by
+`scripts/dump-databases.sh` and is a Kopia source. **`pads/users/` is also a
+Kopia source, and that matters more than it looks**: it holds the bcrypt hash
+for every non-admin account, it is gitignored, and it exists nowhere else. Lose
+it and every family account is gone even after a clean restore.
 
 ---
 

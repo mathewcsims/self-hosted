@@ -245,6 +245,12 @@ dump_sqlite "$REPO_ROOT/wanderer/data/pb_data/data.db"             wanderer
 # Paperless share and are covered separately — so this dump plus the
 # paperless/data snapshot is what makes the metadata restorable.
 dump_sqlite "$REPO_ROOT/paperless/data/db.sqlite3"                 paperless
+# Etherpad keeps its database OUTSIDE its own var/ directory here — var/ also
+# holds installed_plugins.json, and bind-mounting over it silently disables
+# every plugin (see pads/settings.json for the full note). Hence data/, not
+# var/. The password hashes for non-admin accounts are NOT in this dump: they
+# live in pads/users/ and are covered by the Kopia source instead.
+dump_sqlite "$REPO_ROOT/pads/data/etherpad.sq3"                    pads
 
 # Marque and TimeTagger were decommissioned 2026-08-04 (see SETUP.md), so
 # neither is dumped here any more. Their final dumps and cold archives live
@@ -278,7 +284,7 @@ done
 # at all — counts as broken, which is exactly how that incident presented.
 UNHEALTHY=""
 echo "=== post-dump health check ==="
-for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj healthlog blog author; do
+for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj healthlog blog author pads; do
     _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$_host.mathewcsims.uk/" 2>/dev/null || true)
     [ -z "$_code" ] && _code=000
     case "$_code" in

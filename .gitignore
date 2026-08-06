@@ -56,6 +56,14 @@ bookstack/db/
 bookstack/config/
 forgejo/data/
 wanderer/data/
+# Pads (Etherpad): the SQLite database and Etherpad's var/ state, plus the
+# ep_hash_auth filesystem user store. users/ holds bcrypt password hashes for
+# every non-admin account and exists ONLY on this Mac — git has no copy, so
+# kopia-mac/backup.sh is the only thing standing between a disk failure and
+# every family account being gone. See pads/compose.yaml.
+pads/data/
+pads/users/
+
 # Paperless: the SQLite database, Tantivy full-text index and trained
 # classifier. Deliberately local disk, never the NAS — see
 # paperless/compose.yaml for why that split is not negotiable. The document

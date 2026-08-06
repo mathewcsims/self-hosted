@@ -833,6 +833,51 @@ msims.link {
 	}
 }
 
+# ── Pads / Etherpad (running on the Mac, LAN-ONLY) ───────────────────────
+# Clean public URL https://pads.mathewcsims.uk, but only for LAN and tailnet
+# clients — the LAN-gate idiom explained at the top of this file. Personal
+# document-authoring space; see ../pads/.
+#
+# Unlike most LAN-gated apps here, this one has BOTH the gate and its own
+# login, and that is deliberate rather than belt-and-braces for its own sake.
+# The gate admits any device on the LAN or the tailnet, which is the right
+# availability (family on the tailnet may be given accounts later) but is not
+# an identity — it cannot tell one tailnet device from another. Etherpad's
+# `requireAuthentication` supplies the identity, with bcrypt-hashed accounts
+# via ep_hash_auth. See ../pads/settings.json.
+#
+# No path-matched auth rate-limit zone here, unlike every other app above.
+# Etherpad authenticates with HTTP Basic Auth, so credentials ride on every
+# request rather than being POSTed to a login route — there is no path to
+# match on. The compensating controls are the general per-IP budget below and
+# the fail2ban `caddy-abuse` jail (see ../pi-fail2ban/), which tails the
+# access log this proxy already writes and so sees repeated 401s.
+pads.mathewcsims.uk {
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		# Hand-written rather than `import general_ratelimit pads` because
+		# the snippet applies at block level, outside this handle — same
+		# reason BookStack, Paperless, Forgejo and Immich all inline theirs.
+		# 300/min is the standard budget; Etherpad is asset- and
+		# socket-heavy, so raise it and record the observed figure here if
+		# ordinary use ever trips it.
+		rate_limit {
+			zone rl_pads {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+		}
+		reverse_proxy http://{$MAC_IP}:9001
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
 # Only the hostnames explicitly configured above are served. Any other
 # SNI/Host — including a bare-IP scan of the public address — gets a closed
