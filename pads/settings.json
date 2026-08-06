@@ -120,5 +120,26 @@
     "pluginCatalog": false
   },
 
+  /*
+   * Static-asset cache lifetime, in SECONDS. 21600 = 6 hours.
+   *
+   * Etherpad's default is `1000 * 60 * 60 * 6` with the comment "6 hours" —
+   * i.e. computed in milliseconds — and then emitted verbatim into
+   * `Cache-Control: public, max-age=${settings.maxAge}` (static.ts:53 and
+   * specialpages.ts:116). Cache-Control's max-age is in seconds, so the
+   * intended 6 hours ships as 21,600,000 seconds: **250 days**.
+   *
+   * That is not a cosmetic bug. It bit immediately here: a header change at
+   * the proxy (X-Frame-Options DENY -> SAMEORIGIN) did not reach a browser
+   * that had already cached /static/empty.html, because a response cached
+   * with a 250-day max-age is reused without revalidation — so the fix
+   * looked like it had failed. Nothing server-side can invalidate that; the
+   * browser simply never asks again.
+   *
+   * 6 real hours means any future header or asset change propagates the same
+   * day instead of next April.
+   */
+  "maxAge": 21600,
+
   "loglevel": "INFO"
 }
