@@ -1,0 +1,9 @@
+[Unit]
+Description=Check LiteLLM's GCP credential and proxy health (see adc-check.sh)
+# No point running before the network is up — the timer catches up afterwards.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/litellm/adc-check.sh
