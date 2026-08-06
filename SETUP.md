@@ -5687,6 +5687,74 @@ word-level timestamps, speaker diarisation, and streaming recognition. For
 plain "turn this file into text", the chat model is sufficient and needs
 nothing enabling.
 
+### Credential expiry monitor (added 2026-08-06, after it bit)
+
+**The ADC credential expires, silently, and nothing else notices.** It is a
+*user* refresh token — service-account keys are org-blocked — so Google's
+reauth policy kills it. Observed lifetime: **four days** (created 2026-08-02
+14:02, dead by 2026-08-06 12:08).
+
+The failure is nasty because **LiteLLM stays perfectly healthy**: the
+container is up, `/health/liveliness` returns 200, the tailnet sidecar is
+fine. Only the upstream credential is dead, so every completion 500s with
+`RefreshError: Reauthentication is needed`. A conventional uptime check sees
+nothing wrong. The first sign the first time was a stack trace in Goose.
+
+`litellm/adc-check.sh` + `litellm-adc-check.{service,timer}` — a user systemd
+timer on slartibartfast, same pattern as `kopia-immich.*`, every 30 minutes:
+
+1. `gcloud auth application-default print-access-token` — exits non-zero the
+   moment the refresh token needs reauthenticating. A precise leading
+   indicator, and it needs no secrets.
+2. Only if that passes, the unauthenticated liveliness endpoint — so an alert
+   names one cause, not two.
+
+Alerts go to Apprise → ntfy + Discord, on **state transition** plus a daily
+re-nag while still broken (resend-only-on-change, same as the rest of the
+estate). The ADC alert carries the exact reauth command, because that is
+always the fix.
+
+**Needs no LiteLLM API key at all** — the liveliness endpoint is
+unauthenticated and the credential check runs as the credential's owner.
+Nothing secret is read, stored or transmitted.
+
+**Verified both paths, not just the happy one.** `GCLOUD` is overridable
+precisely so the failure branch can be exercised without breaking the real
+credential:
+
+```sh
+GCLOUD=/bin/false ~/litellm/adc-check.sh     # simulates an expired ADC
+```
+
+Delivery was confirmed end-to-end from slartibartfast — Apprise reported
+`Sent ntfy notification` and `Sent Discord notification`. Note `notify()`
+discards the response body, and Apprise reports per-service delivery *there*
+rather than in its container log, so testing delivery means capturing the
+response, not grepping `docker logs`.
+
+`Linger=yes` is set for the user, so the timer runs without an active login
+and survives reboots.
+
+**The fix when it fires** (only Mathew can run it — it authenticates as his
+Google account):
+
+```sh
+ssh mathewcsims@100.68.10.65 '~/google-cloud-sdk/bin/gcloud auth application-default login --no-launch-browser'
+```
+
+No restart needed; LiteLLM reads the credential per request.
+
+**This monitors the symptom, not the cause.** The cause is that a long-running
+workload is authenticating with a human's credential. The proper fix is
+Workload Identity Federation — and the org policy permits it
+(`constraints/iam.workloadIdentityPoolProviders` is `allValues: ALLOW`, and
+the IAM permissions are present). What it needs is an OIDC issuer, which on a
+home box means **self-hosting one**. Deliberately not built: allowed by
+configuration is not the same as sanctioned by the employer, and it would
+create a durable non-expiring path into their project secured by a key in a
+spare room. Ask the platform team what they sanction for long-running
+non-GCP workloads before building it.
+
 ### Gotchas
 
 - **The Pass item must be titled exactly `Litellm`**, not `LiteLLM` — the

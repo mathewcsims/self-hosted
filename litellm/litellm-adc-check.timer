@@ -1,0 +1,16 @@
+[Unit]
+Description=Watch LiteLLM's GCP credential (see litellm-adc-check.service)
+
+[Timer]
+# Every 30 minutes. The credential dies without warning and silently -- the
+# proxy stays healthy -- so this is about shortening the gap between "broken"
+# and "you know it's broken", not about catching a scheduled event. Cheap:
+# one local token mint plus one unauthenticated HTTP GET.
+OnBootSec=5m
+OnUnitActiveSec=30m
+# Small stagger so this never lands exactly alongside the 03:00 Kopia run.
+RandomizedDelaySec=2m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
