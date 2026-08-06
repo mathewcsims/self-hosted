@@ -1,0 +1,154 @@
+# HedgeDoc (https://hedgedoc.org) — personal Markdown authoring space at
+# docs.mathewcsims.uk. Real-time collaborative notes with per-note permissions,
+# a document list, and proper accounts.
+#
+# Same architecture as every other Mac app here: this container serves plain
+# HTTP on the LAN only, and the Caddy reverse proxy on the Pi terminates HTTPS
+# and forwards to MAC_IP:3500 (see ../pi-reverse-proxy/).
+#
+# ── Why BOTH a LAN gate and its own login ────────────────────────────────
+# The Caddy gate admits anything on the LAN or the tailnet, which is the right
+# availability — family on the tailnet may be given accounts later — but it is
+# not an identity: it cannot tell one tailnet device from another, and these
+# are personal drafts. HedgeDoc's own accounts supply the identity, and notes
+# default to PRIVATE (owner-only).
+#
+# ── Why HedgeDoc and not Etherpad ────────────────────────────────────────
+# An Etherpad instance was built for this and torn down the same day. Its
+# `requireAuthentication` is HTTP Basic only — a native browser prompt with
+# browser-cached credentials and no usable logout — it has no per-note
+# permissions at all, and its built-in OIDC provider cannot serve pad login
+# (core only accepts Basic, and the provider's own endpoints sit behind that
+# same gate). None of it was fixable by configuration.
+#
+# Everything claimed below was verified by running it behind a Caddy carrying
+# this repo's real security_headers, not inferred:
+#   * renders correctly under X-Frame-Options: DENY (no iframe editor, unlike
+#     Etherpad, so no per-site header override is needed)
+#   * real login form; with CMD_ALLOW_EMAIL_REGISTER=false the register option
+#     disappears entirely
+#   * real logout that actually ends the session
+#   * a note left PRIVATE returns 403 to a *different signed-in account* and
+#     does not appear in that account's History
+#   * the /socket.io/ upgrade works through Caddy untouched — typed content was
+#     confirmed present in Postgres, not just in the browser
+#
+# ── The trap: HedgeDoc builds ABSOLUTE URLs ──────────────────────────────
+# Every asset URL is constructed from CMD_DOMAIN + CMD_PROTOCOL_USESSL +
+# CMD_URL_ADDPORT, NOT from the incoming request. Set them to the container's
+# own values rather than the public ones and you get a completely unstyled page
+# with every asset 404ing. Hit exactly that during testing. They must describe
+# how a *browser* reaches this, i.e. https://docs.mathewcsims.uk with no port.
+#
+# Secrets live in Proton Pass, not a .env file (see ./.env.example). Deploy
+# with ./scripts/pass-deploy.sh docs — never a bare `podman compose up -d`, or
+# POSTGRES_PASSWORD resolves to empty and Postgres silently initialises with
+# trust auth.
+name: docs
+
+services:
+  postgres:
+    # 17-alpine. Pinned by digest, not the tag alone — tags aren't immutable,
+    # so a bare version tag can still silently move. Same pattern as
+    # ../healthlog/compose.yaml, this repo's other Postgres app.
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    container_name: docs-postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: hedgedoc
+      POSTGRES_DB: hedgedoc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    # No `ports:` — reached only by the hedgedoc service, by container name,
+    # over this project's own default network. Never exposed to the LAN.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hedgedoc"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    pids_limit: 256
+
+  hedgedoc:
+    image: quay.io/hedgedoc/hedgedoc@sha256:14f583bcf248e407a8b95e1c4bbf612543d13d3ad6b103aab8f007a99db5dd17 # 1.11.1
+    container_name: docs
+    restart: unless-stopped
+    # Do NOT set `user:` — on podman-machine (macOS) the container's root maps
+    # to your host user, giving sane ownership on the bind mounts below. Same
+    # reasoning as vikunja and copyparty.
+    #
+    # Hardening: a plain node process that never changes ownership or binds a
+    # privileged port, so a bare `cap_drop: ALL` is safe here (unlike the
+    # linuxserver images, whose s6 init boots as root). Limits are ~4x observed
+    # steady state — measured 120 MiB for HedgeDoc and 30 MiB for Postgres at
+    # idle during testing.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: Europe/London
+      CMD_DB_URL: postgres://hedgedoc:${POSTGRES_PASSWORD}@postgres:5432/hedgedoc
+
+      # See "The trap" in the header. These describe how a BROWSER reaches
+      # this instance, not how the container is addressed internally.
+      CMD_DOMAIN: docs.mathewcsims.uk
+      CMD_PROTOCOL_USESSL: "true"
+      CMD_URL_ADDPORT: "false"
+
+      # Accounts only. No guests at all: the LAN gate already limits *who can
+      # reach* this, and identity is what decides what they can see. Combined
+      # with CMD_ALLOW_FREEURL=false, an unauthenticated visitor cannot read
+      # or create anything.
+      CMD_ALLOW_ANONYMOUS: "false"
+      CMD_ALLOW_FREEURL: "false"
+
+      # Email/password login is on, but self-registration is off — accounts
+      # are created deliberately with ./scripts/docs-add-user.sh, which wraps
+      # HedgeDoc's own `bin/manage_users`. This is what stops the instance
+      # growing accounts you didn't intend.
+      CMD_EMAIL: "true"
+      CMD_ALLOW_EMAIL_REGISTER: "false"
+
+      # New notes are owner-only until deliberately shared. The safe default
+      # for personal drafts, and verified: a private note 403s for another
+      # signed-in account and stays out of its History.
+      CMD_DEFAULT_PERMISSION: private
+    volumes:
+      # Images pasted into notes land here. This is user data with no copy in
+      # git, so Kopia is its only backup — see kopia-mac/backup.sh.
+      - ./uploads:/hedgedoc/public/uploads
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app here): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address. 3000 is HedgeDoc's own default
+      # but karakeep already holds it (the same reason healthlog took 3200),
+      # so 3500. The router does NOT forward 3500, so this is never directly
+      # internet-facing even before the Caddy LAN-gate is considered.
+      - "10.0.1.14:3500:3000"
+    healthcheck:
+      # node, NOT wget: this image ships no wget, curl, nc or python3 —
+      # confirmed by checking inside the running container. A wget healthcheck
+      # would report the container permanently unhealthy while the service was
+      # perfectly fine, which is a mistake already made once on the Etherpad
+      # instance this replaces.
+      #
+      # 127.0.0.1, NOT localhost — localhost can resolve to ::1 first while the
+      # app listens on IPv4, the other half of that same Etherpad mistake.
+      #
+      # /status is served without authentication (verified). Caddy blocks it
+      # from outside; this check never goes through Caddy.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

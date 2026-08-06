@@ -35,6 +35,7 @@ in front of the lot.
 | [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars; posts a Memo to Owl on every new ride via a PocketBase-realtime relay) |
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
 | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `paperless.mathewcsims.uk` | Mac (personal document store — letters, medical, certificates; OCR on ingest, LAN-only. Document blobs live on the NAS over CIFS; the SQLite database and search index stay on local disk. **Deliberately not wired to LiteLLM** — personal medical/legal documents have no business on an employer's GCP project) |
+| [HedgeDoc](https://hedgedoc.org) | `docs.mathewcsims.uk` | Mac (personal Markdown authoring — real-time notes, per-note permissions, document list; LAN/tailnet-only **and** account-based, since the LAN gate admits any tailnet device but isn't an identity. Notes default to owner-only; accounts created deliberately via `scripts/docs-add-user.sh`, no self-registration, no guest access) |
 | [LiteLLM](https://github.com/BerriAI/litellm) | `litellm.possum-prometheus.ts.net` | **slartibartfast** (OpenAI-compatible proxy in front of employer-funded Gemini Enterprise Agent Platform (formerly Vertex AI) — **tailnet-only** via a Tailscale sidecar tagged `personal` — no public hostname, no DNS record, not behind Caddy; ADC auth, no service-account key) |
 
 ### Decommissioned
@@ -79,6 +80,7 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ owl.mathewcsims.uk               → Mac
                                   ├─ author.mathewcsims.uk            → Mac (LAN clients only)
                                   ├─ paperless.mathewcsims.uk         → Mac (LAN clients only)
+                                  ├─ docs.mathewcsims.uk              → Mac (LAN clients only)
                                   └─ fj.mathewcsims.uk                → Mac (LAN clients only;
                                                                           git-over-SSH bypasses
                                                                           Caddy entirely, port 2222)
@@ -208,6 +210,9 @@ forgejo/               compose.yaml and data (Mac — self-hosted git remote, LA
 contact-sync/          cross-provider contact sync engine + launchd job (Mac —
                        data lives at ~/contact-sync, store pushed to Forgejo)
 wanderer/              compose.yaml and data (Mac — GPS trail/cycle-ride log)
+docs/                  compose.yaml, Postgres and uploads (Mac — HedgeDoc,
+                       personal Markdown authoring, LAN-only; uploads/ holds
+                       every pasted image and exists only here + Kopia)
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass

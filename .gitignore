@@ -56,6 +56,13 @@ bookstack/db/
 bookstack/config/
 forgejo/data/
 wanderer/data/
+# HedgeDoc (docs.mathewcsims.uk): its Postgres datadir, and the uploads
+# directory holding every image pasted into a note. uploads/ is user data with
+# no copy anywhere in git, so kopia-mac/backup.sh is its only backup — see
+# docs/compose.yaml.
+docs/pgdata/
+docs/uploads/
+
 # Paperless: the SQLite database, Tantivy full-text index and trained
 # classifier. Deliberately local disk, never the NAS — see
 # paperless/compose.yaml for why that split is not negotiable. The document
