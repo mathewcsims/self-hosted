@@ -6372,7 +6372,7 @@ promise-only, so startup hangs silently) and stores pad passwords in the URL
 rather than a session. If per-person separation is ever genuinely needed, that
 means separate instances, not a plugin.
 
-### The two gotchas that will bite on a rebuild
+### The three gotchas that will bite on a rebuild
 
 **1. Do not bind-mount over Etherpad's `var/`.** That directory holds
 `installed_plugins.json`, the manifest Etherpad reads at boot. Mounting a host
@@ -6388,6 +6388,26 @@ no log line, so the account simply never authenticates. `$2y$` and `$2a$` are
 the same algorithm, so the scripts rewrite the prefix. Verified directly against
 the bcrypt build inside the image: `$2y$` → false, `$2a$` → true, same password
 and cost.
+
+**3. `X-Frame-Options: SAMEORIGIN` is load-bearing, not decoration.** Etherpad's
+editor is nested same-origin iframes (`ace_outer` inside `ace_inner`), and
+`security_headers`' blanket `DENY` blocks *all* framing including same-origin.
+The browser then replaces each editor frame with an opaque-origin error
+document, and the parent's first access to it throws `SecurityError: Blocked a
+frame ... from accessing a cross-origin frame`. The visible symptom is a pad
+stuck on **"Loading…"** with Etherpad's generic red error box — the real cause
+appears only in the Etherpad container log, which collects the client-side
+exception with an `errorId` matching the one shown in the browser.
+
+This was hit in production immediately after the first deploy. Confirmed by
+A/B test: the same image and credentials behind two local proxies differing
+only in this header — `DENY` reproduced the stuck "Loading…" exactly,
+`SAMEORIGIN` loaded the pad. The simple `header` override suffices (rather than
+Owl's `header_down` workaround) because Etherpad sends no `X-Frame-Options` of
+its own; verified with `curl -I` straight at `:9001`.
+
+Note this class of bug is invisible to local testing that hits the container
+directly, because the header is added by Caddy. Test through the proxy.
 
 ### Accounts
 

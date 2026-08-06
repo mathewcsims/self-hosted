@@ -854,6 +854,21 @@ msims.link {
 # access log this proxy already writes and so sees repeated 401s.
 pads.mathewcsims.uk {
 	import security_headers
+	# Etherpad's editor is built from nested same-origin iframes (ace_outer
+	# inside ace_inner). security_headers' blanket DENY blocks ALL framing,
+	# including same-origin, so the browser replaces each editor frame with an
+	# opaque-origin error document — and the parent's first access to it throws
+	# `SecurityError: Blocked a frame with origin "https://pads.mathewcsims.uk"
+	# from accessing a cross-origin frame`. The visible symptom is a pad stuck
+	# on "Loading..." with Etherpad's generic red error box; the real cause is
+	# only in the server log, which collects the client-side exception.
+	#
+	# Same fix as the Ghost block above, and the simple form works here for the
+	# same reason: Etherpad sends no X-Frame-Options of its own (verified with
+	# curl against :9001 directly — only Referrer-Policy), so there is no
+	# upstream value for reverse_proxy's Add-not-Set copy to double up with,
+	# and none of Owl's `header_down` complexity is needed.
+	header X-Frame-Options "SAMEORIGIN"
 
 	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
 	handle @lan {
