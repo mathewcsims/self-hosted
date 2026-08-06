@@ -80,15 +80,28 @@ services:
     # to your host user, giving sane ownership on the bind mounts below. Same
     # reasoning as vikunja and copyparty.
     #
-    # Hardening: a plain node process that never changes ownership or binds a
-    # privileged port, so a bare `cap_drop: ALL` is safe here (unlike the
-    # linuxserver images, whose s6 init boots as root). Limits are ~4x observed
-    # steady state — measured 120 MiB for HedgeDoc and 30 MiB for Postgres at
-    # idle during testing.
+    # Hardening. The capability set is dictated by the image, not chosen: the
+    # entrypoint starts as root and drops to the `hedgedoc` user, so a bare
+    # `cap_drop: ALL` crash-loops it with
+    #   error: failed switching to "hedgedoc": operation not permitted
+    # — the same class of trap the BookStack block records for s6 images.
+    #
+    # SETUID and SETGID are the MINIMAL set, established by probing rather
+    # than copied from BookStack: with cap_drop ALL it fails; +SETUID,SETGID
+    # it starts; adding CHOWN, DAC_OVERRIDE and FOWNER changes nothing. Also
+    # verified with the uploads bind mount attached (the one place a chown
+    # might have been needed) — it starts and the directory is writable.
+    # NET_BIND_SERVICE is not needed either; it binds 3000, not a low port.
+    #
+    # Limits are ~4x observed steady state — measured 120 MiB for HedgeDoc and
+    # 30 MiB for Postgres at idle.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - SETUID
+      - SETGID
     mem_limit: 512m
     pids_limit: 256
     depends_on:
