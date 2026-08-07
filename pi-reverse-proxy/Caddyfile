@@ -889,6 +889,74 @@ docs.mathewcsims.uk {
 	}
 }
 
+# ── organice (running on the Mac, LAN-ONLY) ──────────────────────────────
+# Clean public URL https://org.mathewcsims.uk, but only for LAN and tailnet
+# clients — the LAN-gate idiom explained at the top of this file. Browser-based
+# org-mode editor for the project/task tree; see ../organice/.
+#
+# Unlike BookStack and HedgeDoc, this app has NO login of its own — it is a
+# static SPA with no backend and no accounts. Identity lives entirely in
+# copyparty: organice asks the browser for copyparty's admin credentials and
+# talks WebDAV to https://cp.mathewcsims.uk/orgtasks directly.
+#
+# That is exactly why the LAN gate matters more here, not less. Without it, a
+# credential-entry form for the copyparty admin account would be sitting on the
+# public internet. The gate means the form is only reachable from the LAN or
+# tailnet; copyparty's own auth is what actually protects the data.
+#
+# NOTE: the WebDAV traffic does NOT flow through this block. The browser talks
+# to cp.mathewcsims.uk cross-origin, which is why copyparty carries an
+# `acao: https://org.mathewcsims.uk` CORS allowance (see
+# ../copyparty/cfg/copyparty.conf). If organice ever reports CORS failures,
+# that file is where to look — not here.
+#
+# security_headers' blanket X-Frame-Options: DENY is fine here, established by
+# reading the source rather than eyeballing a page: the ONLY iframe in organice
+# is a YouTube tutorial embed on the landing page
+# (src/components/Landing/index.js). That is organice framing YouTube — an
+# OUTBOUND frame, which DENY does not affect, since DENY only stops *this* site
+# being framed by someone else. Nothing in the editor uses frames, so no
+# per-site SAMEORIGIN override is needed (unlike the Ghost and Owl blocks
+# above, and unlike the Etherpad instance HedgeDoc replaced).
+#
+# Worth knowing: that same landing-page embed means an unauthenticated visit
+# hits youtube.com. It is upstream's markup, not something configured here.
+org.mathewcsims.uk {
+	import access_log
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		# Hand-written rather than `import general_ratelimit organice`
+		# because the snippet applies at block level, outside this handle —
+		# same as the BookStack, Paperless, Forgejo, Immich and HedgeDoc
+		# blocks above.
+		#
+		# 300/min matches HedgeDoc. An SPA fetches many small static assets
+		# on first load, so a tight limit would throttle a legitimate cold
+		# start; subsequent loads come from cache.
+		rate_limit {
+			zone rl_organice {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+		}
+
+		# No `route` block needed here, unlike HedgeDoc and Owl: there is
+		# only one terminal directive, so there is no ordering to pin.
+		#
+		# No path needs blocking either — organice serves nothing but static
+		# assets. It has no /status, /metrics or admin surface, because it
+		# has no backend at all.
+		reverse_proxy http://{$MAC_IP}:3600
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
 # Only the hostnames explicitly configured above are served. Any other
 # SNI/Host — including a bare-IP scan of the public address — gets a closed
