@@ -1335,9 +1335,20 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 
 ---
 
-## Task management: RESOLVED 2026-08-07 — two tools, Tasks.org and organice
+## Task management: UNRESOLVED — organice tried and abandoned 2026-08-08
 
-**The decision, agreed 7 August 2026.** Everything below this block is kept as
+> **STATUS 2026-08-08: no solution in place.** The 7 August decision below is
+> **superseded**. organice was deployed on 7 August and torn down on 8 August;
+> neither it nor Orgzly Revived was good enough in use. See the organice
+> section for the decommissioning record and, more usefully, for what the
+> exercise established about *why* nothing fits — the binding requirement is
+> from-completion recurrence surviving sync with the next occurrence appearing
+> instantly, which forces client-side recurrence, which RFC 5545 cannot carry.
+>
+> Problem A (recurring reminders) was never solved. Problem B (deep project
+> management) is back to unsolved as well.
+
+**The superseded decision of 7 August 2026.** Everything below this block is kept as
 history and as a list of candidates not to re-propose. **Two of its stated
 requirements are wrong** — see *Where the old framing went wrong* — and those
 two are why fifteen candidates failed across four sweeps.
@@ -2568,9 +2579,10 @@ source with no change to `kopia-mac/backup.sh`. Not doing that. Backup is
 **Syncthing → Proton Drive** instead, handled entirely off this repo's
 infrastructure. It keeps phone-originated health data out of the Mac's
 backup path, and the copyparty variant in particular would have cost the
-`vague-403` setting in `copyparty/cfg/copyparty.conf`. (That setting has
-since been removed anyway — see the organice section — because it broke
-Orgzly's WebDAV auth. The reasoning for keeping MedTimer's backup off this
+`vague-403` setting in `copyparty/cfg/copyparty.conf`. (That setting was
+briefly removed on 07-08 because it broke Orgzly's WebDAV auth, and
+**restored on 08-08** when organice was decommissioned and nothing here spoke
+WebDAV again. The reasoning for keeping MedTimer's backup off this
 infrastructure is unchanged and stands on its own.)
 
 So if you're reading `kopia-mac/backup.sh` wondering why there's no
@@ -3094,10 +3106,11 @@ visibility for it.
   added to the Services group. Each group's monitor order is alphabetical
   (case-insensitive) — re-sorted 2026-07-28 after Wanderer landed at the
   end instead; keep new additions sorted into place rather than appended.
-  **Two active monitors are deliberately NOT on the page: Docs and
-  organice.** Being LAN-only is not the reason — BookStack and Paperless are
-  LAN-only and are listed. They are simply personal-authoring surfaces whose
-  existence there adds nothing; add them if that changes. (Counted 2026-08-07;
+  **One active monitor is deliberately NOT on the page: Docs.** Being LAN-only
+  is not the reason — BookStack and Paperless are LAN-only and are listed. It is
+  simply a personal-authoring surface whose existence there adds nothing; add it
+  if that changes. (organice was the other such monitor until it was
+  decommissioned on 2026-08-08. Counted 2026-08-07;
   this line previously said "all 28", which was already drifting.)
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
@@ -6693,264 +6706,61 @@ full of broken images.
 
 ---
 
-## organice (https://org.mathewcsims.uk) — LAN-only, runs on the Mac
+## organice (https://org.mathewcsims.uk) — DECOMMISSIONED
 
-[organice](https://organice.200ok.ch) is a browser-based org-mode editor. It is
-the **Problem B** half of the two-tool task setup decided on 2026-08-07 — deep
-project and life management, arbitrarily nested, with projects and labels. The
-recurring-chores half (Problem A) is Tasks.org on the phone and does not touch
-any of this. See the *Task management* section above for how that was decided.
+> **DECOMMISSIONED 2026-08-08, one day after deployment.** Tried in earnest and
+> abandoned: neither organice on the desktop nor Orgzly Revived on Android was
+> good enough in daily use. Container, image, app directory, Caddy site block,
+> both DNS records and the Uptime Kuma monitor are all gone; the compose project
+> lives on only in git history.
+>
+> **The org files are preserved** at
+> `db-dumps/decommissioned/organice-orgtasks-data-*.tar.gz`, following the same
+> convention as Marque, Nimbus, TimeTagger, Speedtest Tracker and HealthLog — the
+> archive sits in a Kopia source, so it rides along with every future backup.
+>
+> **copyparty was fully reverted**: the `[/orgtasks]` volume, the scoped
+> `orgtasks` account, the `daw` volflag and the `acao`/`acam` CORS allowance are
+> all removed, and **`vague-403` is restored** now that nothing here speaks
+> WebDAV. See the note beside it in `copyparty/cfg/copyparty.conf`.
 
-**It is a static SPA with no backend, no database and no accounts of its own.**
-It runs entirely in the browser and speaks WebDAV directly to copyparty's
-`/orgtasks` volume. The org files are the data; the container serves JavaScript
-and nothing else. There is no state here to back up — Kopia backs up
-`copyparty/orgtasks/`, which is where everything real lives.
+### What was learned, and is worth not re-deriving
 
-### The pieces
+The exercise was a search for a recurring-task system. It failed, but narrowed
+things usefully:
 
-| Piece | Where | What it does |
-|---|---|---|
-| `organice/compose.yaml` | **Mac**, `:3600` | serves the SPA |
-| `copyparty` `[/orgtasks]` volume | **Mac** | stores the `.org` files, admin-only |
-| Caddy `org.mathewcsims.uk` block | **Pi** | TLS + LAN gate |
+- **The binding requirement is from-completion recurrence surviving sync** —
+  "x hours/days/weeks after I last did it", on more than one device, with the
+  next occurrence appearing *instantly* on completion. That last part forces
+  recurrence to be computed client-side, which forces the rule to sync.
+- **RFC 5545 cannot express it.** There is no `VTODO` representation for
+  "recompute from completion", so anything syncing over CalDAV loses it. Apps
+  that support the behaviour carry it in vendor extensions.
+- **Tasks.org** does everything else — both recurrence patterns, `ring_nonstop`
+  nagging, exact alarms, a real desktop build — but never syncs `repeat_from`.
+  Upstream issue [#2009](https://github.com/tasks/tasks/issues/2009) has been
+  open since Sept 2022 with **no maintainer response**, the analogous PR #3782
+  has been open a year, and only three human PRs merged in the last hundred
+  (largest +36 lines). A patch would be a permanent fork.
+- **Super Productivity** satisfies every functional requirement — from-completion
+  in `sync.model.ts`, nagging on all platforms, WebDAV blob sync to copyparty —
+  but its Android client is a **WebView on a URL hardcoded in `BuildConfig`**, so
+  its launch-screen quote cannot be removed without rebuilding the APK.
+- **Mindwtr** syncs its own `strategy: strict|fluid` but does not nag
+  (`loop_sound` hardcoded false, no boot receiver).
+- **Server-owned recurrence is not viable**: Android's `WorkManager` enforces a
+  15-minute floor on periodic sync, so a completed task cannot show its next
+  occurrence promptly.
+- **No mechanism gives an insistent alarm on both Android and macOS.** Android
+  permits alarm-stream audio; macOS notifications do not repeat and a service
+  worker cannot play audio. ntfy does have per-subscription `insistent` and
+  `dedicatedChannels`, which is genuinely alarm-grade **on Android only**.
+- **A physical system fails on travel** — roughly two weeks in four away from
+  home, so anything anchored to the house is unusable half the time.
 
-Sync is **browser → copyparty**, cross-origin. It does **not** flow through
-the organice container or through its Caddy block. If sync breaks, look at
-copyparty's config, not at organice's.
-
-### copyparty changes this required
-
-Three, all in `copyparty/cfg/copyparty.conf`, and each is commented in place:
-
-1. **A new `[/orgtasks]` volume**, `A: admin` only — no anonymous, no `inbox`,
-   no `grady`. Its own volume rather than a folder under `[/]` specifically so
-   the write flag below is scoped to it.
-2. **The `daw` volflag, on that volume only.** Required, not cosmetic:
-   copyparty decides "is this a real WebDAV client?" partly from User-Agent,
-   and `--ua-nodav` defaults to a regex starting `^(Mozilla/`. organice runs in
-   a browser, so it always looks like a non-WebDAV client. `--daw` exists for
-   exactly that case. Its side effect — PUT overwrites rather than inventing a
-   new filename — is what saving an org file needs, and is precisely why it
-   must NOT be global: `/inbox` depends on never silently replacing an upload.
-   Verified scoped after deploy: `up2k` logs `daw` against `/orgtasks/` and
-   against none of `/`, `/pub/`, `/inbox/`, `/Grady's Training/`.
-3. **CORS, as a single named origin** — `acao: https://org.mathewcsims.uk` plus
-   an extended `acam`. Two traps here:
-   - copyparty's default `acao: *` "removes cookies and http-auth" (its
-     `--help`), so under the default organice could never authenticate at all.
-   - **organice's own documentation is wrong and unsafe on this point.** It
-     tells you to set `Access-Control-Allow-Origin: *` together with
-     `Access-Control-Allow-Credentials: true`. That pairing is invalid per the
-     CORS spec — browsers reject `*` when credentials are sent — and would be
-     dangerous if it worked, since any site you visited could then make
-     authenticated requests to copyparty. Naming one origin is both more
-     correct and tighter than the default it replaces.
-
-### The `orgtasks` account (added 2026-08-07)
-
-The clients authenticate as **`orgtasks`**, not `admin`. It has `rwmd` on
-`[/orgtasks]` and nothing else. `admin` would also unlock `[/]`, `[/pub]`,
-`[/inbox]` and Grady's Training, and this credential is typed into a phone and
-into a browser's local storage — a lost device should cost the org files, not
-everything.
-
-`rwmd` rather than `A` (which is `rwmda.`): this drops admin (uploader IPs,
-config-reload) and dotfiles, so copyparty's own `.hist` stays out of client
-listings. **`d` is not optional** — copyparty's `--daw` docs state the delete
-permission must always be given, and overwrite-on-save depends on it.
-
-Confinement verified, not assumed. As `orgtasks`:
-
-| Check | Result |
-|---|---|
-| `/orgtasks` PROPFIND / PUT / overwrite / DELETE | 207 / 201 / in place / 200 |
-| `PROPFIND /` | 207, but the listing contains **only** `/`, `/orgtasks/`, `/pub/` — admin additionally sees `/.keep`, `/inbox/`, Grady's Training. The root listing is filtered per-user; it is navigation, not a leak |
-| `GET /.keep` (real private file) | **404** |
-| `PROPFIND / Depth: infinity` | nothing outside `/orgtasks` and `/pub` |
-| `PUT` to `/` and `/pub/` | **403**, no files created |
-
-`/pub` being visible is by design — it carries `r: *`.
-
-**Two traps, both hit while doing this:**
-
-1. **copyparty needs at least TWO spaces before a `#`.** `rwmd: orgtasks # ...`
-   with one space does not parse — the comment becomes part of the value and
-   startup fails with an explicit warning naming the line. The heavily-padded
-   inline comments throughout `copyparty.conf` are padded for that reason, not
-   for looks.
-2. **A missing account referenced by a volume is FATAL, not ignored.** If
-   `copyparty.conf` grants a user that `accounts.conf` does not define,
-   copyparty exits 1 with `CRIT: you must -a the following users: orgtasks`.
-   Verified in a throwaway container. This matters because `accounts.conf` is
-   re-rendered from Proton Pass before every deploy — so the Pass item and this
-   config must be changed together, or the next deploy takes copyparty down
-   entirely rather than just dropping the account.
-
-**Proton Pass gotcha, learned the hard way — and since guarded against:**
-
-`scripts/pass-import-file.sh` runs `pass-cli item create`, which **creates a
-new item; it does not update an existing one**. Running it against a title that
-already exists leaves two items sharing that title. `pass-cli item view
---item-title` then resolves to the **older** one, so the render silently keeps
-returning stale content.
-
-Three things make that worse than it sounds:
-
-- **Trashing the stale item does not fix it.** A trashed item is still readable
-  and still wins title resolution — verified, including after a fresh login.
-  Only *permanent* deletion removes it from the match set.
-- **The agent token is create-and-read only.** `item trash` and `item update`
-  both return `NotAllowed`, so a script cannot clean up its own duplicate. This
-  is exactly what `pass-import-file.sh`'s "run this under your own personal
-  pass-cli session, not the agent one" caveat exists for — treat it as a hard
-  requirement, not advice.
-- **For copyparty the failure is an outage, not a downgrade** — see the fatal
-  missing-account behaviour above.
-
-**`pass-render-file.sh` now resolves the title to exactly one ACTIVE item id
-and fetches by id**, rather than fetching by title. Zero active matches or more
-than one and it fails closed, writing nothing, with an explicit message. That
-turns this whole class of problem into a loud error at deploy time instead of
-silently stale secrets.
-
-**To edit a whole-file secret**: change the existing item in the Proton Pass
-UI, or run the import under a personal session. Do not re-run
-`pass-import-file.sh` against an existing title with the agent session.
-
-### `vague-403` was removed — it broke Orgzly (2026-08-07)
-
-It was kept at first, on the reasoning that copyparty's "Not compatible with
-WebDAV" warning only concerned 403→404 substitution in permission-denied cases,
-which cannot arise on a volume whose only account has full access. **That was
-wrong**, and the way it was wrong is the useful part.
-
-`vague-403` rewrites the **401** as well as the 403. Orgzly Revived
-(`okhttp/5.3.2`) authenticates `PROPFIND` but sends `GET` **unauthenticated
-first**, expecting `401 + WWW-Authenticate` and retrying with credentials.
-Getting a 404 instead, it never authenticated — every notebook failed with
-"Error contacting … (404)" while the files sat there perfectly readable.
-Caddy's access log is what identified it:
-
-```
-404  PROPFIND  auth=yes  ua=okhttp/5.3.2  /orgtasks/.orgzlyignore
-404  GET       auth=NO   ua=okhttp/5.3.2  /orgtasks/Work.org
-```
-
-**Why the original testing missed it, which is the lesson worth keeping:**
-`curl -u` sends Basic auth **preemptively**, and so does organice's `webdav`
-npm client. Both worked flawlessly while a challenge-based client was totally
-broken. **When verifying auth on a WebDAV volume, assert that an
-UNAUTHENTICATED GET returns 401** — not merely that an authenticated one
-returns 200.
-
-`dav-ua1: (kioworker|okhttp)/` was tried first, as a narrower fix that would
-keep `vague-403` everywhere else. **It does not work**: `vague-403` rewrites
-the response regardless of `dav-ua1` (verified, including bypassing Caddy). And
-once `vague-403` is gone, `dav-ua1` is redundant — `okhttp` already receives a
-401 because it does not match `--ua-nodav`'s browser regex (also verified). So
-it was removed rather than left in as cargo cult.
-
-**What removal costs:** a prober can distinguish 403 from 404 on
-`cp.mathewcsims.uk`. Small here — this instance's volume layout is already
-public in the tracked `copyparty.conf` of a public repo. Authentication, not
-ambiguity, is what protects the data. Anonymous `GET /` still serves only
-copyparty's "you can browse: /pub/" page, naming no other volume (verified).
-
-**Related, and worth knowing generally:** a config **parse error** makes
-copyparty dump the entire config with line numbers to its log — and
-`accounts.conf` is loaded first, so a broken `copyparty.conf` writes **every
-account password** into the container log. That happened here (via the
-two-space comment rule above) and was cleared by recreating the container.
-After any config-parse failure, check
-`podman logs copyparty | grep <a password>` and recreate the container if it
-hits.
-
-### Verified after deploy
-
-Run from the Mac against the live instance, not inferred:
-
-| Check | Result |
-|---|---|
-| unauthenticated `GET /orgtasks/` | **401** + `WWW-Authenticate` (was 404 until `vague-403` was removed — see above) |
-| `PROPFIND` as admin | **207** |
-| `PUT` a file | **201** |
-| `PUT` the same path again | **overwrites in place** — one file on disk, new content. This is `daw` working; without it there would be two files |
-| preflight from `https://org.mathewcsims.uk` | correct `Access-Control-Allow-Origin` + `authorization`, `depth` allowed |
-| preflight from a hostile origin | **no access-control headers at all** — browser blocks it |
-| `https://org.mathewcsims.uk/` | **200**, valid cert (curl verified without `-k`), all four `security_headers` present |
-
-### Traps worth keeping
-
-- **The image is amd64-only.** `twohundredok/organice` publishes no arm64
-  variant (checked against the Docker Hub API), so on this M4 Mac it needs
-  `platform: linux/amd64` and runs emulated — the only emulated container in
-  this repo. Measured rather than assumed: 157 ms cold, 6 ms warm, 137 MiB
-  RSS. Irrelevant overhead for a process that only returns static files, and
-  cheaper than owning a yarn/Node build chain.
-- **The image ships no wget, curl, nc or python3** — only `node`. A `wget`
-  healthcheck would report the container permanently unhealthy while it served
-  fine, which is the same mistake made once on the Etherpad instance HedgeDoc
-  replaced. The healthcheck uses `node -e` with a global `fetch`.
-- **`REACT_APP_WEBDAV_URL` is not the runtime variable**, despite upstream's
-  own `docker-compose.yml` showing it. `bin/transient_env_vars.sh` rewrites
-  every `REACT_APP_*` name to `ORGANICE_*` at build time. Worse, the pinned
-  image's entrypoint substitutes into a `serve/` directory and then runs
-  `serve -p 5000 -s build`, i.e. serves the *unsubstituted* directory — so the
-  mechanism appears to be dead code. Nothing here depends on it; the WebDAV
-  URL is typed into organice's sign-in screen once. Do not add an env var
-  expecting it to work without testing it.
-- **organice never merges on conflict.** It does optimistic concurrency with a
-  Pull/Push modal (`src/actions/org.js`), and force-pushes without the modal
-  while a sync is already in flight. Pull discards local edits, Push discards
-  remote — there is no third option. **Any script that touches these files
-  must be read-only**, keeping its state in a sidecar file, or it will clobber
-  edits made in the browser. This matters for the planned
-  `SCHEDULED:`/`DEADLINE:` → Apprise reminder job.
-- **The landing page embeds a YouTube iframe** (upstream's markup), so an
-  unauthenticated visit reaches youtube.com. `X-Frame-Options: DENY` is
-  unaffected by this — that is an outbound frame, and DENY only stops *this*
-  site being framed by others.
-
-### Deploy
-
-```sh
-cd organice && podman compose up -d
-```
-
-No secrets, so no `pass-deploy.sh` — there is nothing to inject. copyparty,
-by contrast, still needs its render step first:
-
-```sh
-./scripts/pass-render-file.sh Copyparty ACCOUNTS_CONF copyparty/cfg/accounts.conf
-cd copyparty && podman compose up -d
-```
-
-### Monitoring
-
-Uptime Kuma monitor **`organice`** (id 37), added 2026-08-07: keyword type,
-`https://org.mathewcsims.uk/`, keyword `organice`, 60s interval, Discord
-notification linked — matching the `Docs` monitor it was copied from. The
-keyword is matched against the SPA's `<title>`, which is served
-unauthenticated, so no credentials are involved.
-
-Kuma reaches it through the LAN gate because its requests arrive from the Pi's
-own Docker bridge (`172.18.0.1`), which `private_ranges` covers.
-
-Added by writing Kuma's SQLite DB directly rather than through Socket.IO — see
-the Uptime Kuma section for the full recipe **and the restart requirement that
-makes or breaks it**. Deliberately not on the public status page, matching
-`Docs`.
-
-### Backups
-
-**Nothing in `organice/` needs backing up** — it is a stateless container with
-no volumes. `copyparty/orgtasks/` is the real data, is gitignored, and exists
-nowhere else; it is a Kopia source (added to `kopia-mac/backup.sh` alongside
-the other copyparty volumes). The nightly verifier derives its source list
-from the repo, so it picked this up with no change.
-
----
+Do not restart this search from scratch. Screen candidates on: does the sync
+format carry the app's own semantics; is recurrence computed client-side; does
+it nag; is there a usable desktop client.
 
 ## Adding another app (the general recipe)
 
@@ -7333,9 +7143,10 @@ policy, etc.):
     over-limit request never reaches the backend app at all.
 - **copyparty**: added `vague-403` to `[global]` — unauthenticated probes now
   get an identical 404 whether a private path exists or not (not compatible
-  with WebDAV, which this setup didn't use at the time). **SUPERSEDED
-  2026-08-07: removed, because it broke Orgzly by suppressing the 401
-  challenge — see the organice section.** Also made the already-active
+  with WebDAV, which this setup didn't use at the time). **Removed 2026-08-07
+  because it broke Orgzly by suppressing the 401 challenge, then RESTORED
+  2026-08-08 when organice was decommissioned — see the organice section.**
+  Also made the already-active
   defaults `ban-pw: 9,60,1440` and `ban-403: 9,2,1440` explicit in
   `copyparty.conf` rather than leaving them as an unstated default.
   - **Not applied**: `--usernames` (require a username, not just a password,

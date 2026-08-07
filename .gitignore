@@ -28,8 +28,6 @@ kopia-mac/.mirror-state
 copyparty/data/
 copyparty/public/
 copyparty/inbox/
-# org-mode task/project files synced by organice + Orgzly — real personal data
-copyparty/orgtasks/
 # copyparty's own internal state: salts, sessions.db, shares.db, cert.pem, iphash
 copyparty/cfg/copyparty/
 memos-prospect-ukri-tus/data/

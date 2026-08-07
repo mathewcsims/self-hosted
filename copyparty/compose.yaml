@@ -23,10 +23,6 @@ services:
       - ./data:/w           # PRIVATE storage (admin-only, served at /)
       - ./public:/pub       # PUBLIC storage (anonymous read, served at /pub)
       - ./inbox:/inbox      # DROP BOX storage (password write-only, served at /inbox)
-      - ./orgtasks:/orgtasks # ORG FILES over WebDAV (admin-only, served at /orgtasks)
-                            # Synced by organice (../organice/) and by Orgzly on
-                            # Android. User data with no copy in git — Kopia is
-                            # its only backup, see kopia-mac/backup.sh.
     ports:
       # IMPORTANT: podman-machine on macOS will only expose a published port on
       # the *specific* host IP you name here — it cannot bind 0.0.0.0 to the real
