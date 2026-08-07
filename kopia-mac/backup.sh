@@ -231,6 +231,8 @@ $REPO_ROOT/copyparty/public
 $REPO_ROOT/copyparty/inbox
 $REPO_ROOT/copyparty/cfg/accounts.conf
 $REPO_ROOT/owl/data
+$REPO_ROOT/docs/pgdata
+$REPO_ROOT/docs/uploads
 $REPO_ROOT/bookstack/config
 $REPO_ROOT/bookstack/db
 $REPO_ROOT/forgejo/data

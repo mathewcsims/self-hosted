@@ -125,6 +125,9 @@ section below says which.
 | `bookstack/db/` | **Mac** | **BookStack's MariaDB datadir** |
 | `forgejo/compose.yaml` | **Mac** | Forgejo (git + issues), SQLite; LAN-only (`fj.mathewcsims.uk`) plus direct git-over-SSH on port 2222; reads secrets from Proton Pass |
 | `forgejo/data/` | **Mac** | **your repos, SQLite DB, SSH host keys live here** |
+| `docs/compose.yaml` | **Mac** | HedgeDoc — personal Markdown authoring (`docs.mathewcsims.uk`); LAN/tailnet-only *and* per-user login; Postgres sidecar; reads `POSTGRES_PASSWORD` from Proton Pass |
+| `docs/pgdata/` | **Mac** | **your notes live here** (HedgeDoc's Postgres datadir) |
+| `docs/uploads/` | **Mac** | **every image pasted into a note lives here** — gitignored, so Kopia is the only copy |
 | `contact-sync/` | **Mac** | hub-and-spoke contact sync engine (Proton/Google/2× Microsoft) — `sync.py` + per-provider spoke modules; canonical vCard store lives outside the repo at `~/contact-sync/store/` (its own private Forgejo repo); daily launchd job |
 | `ntfy/compose.yaml` | **Pi** | self-hosted push notifications, on trial alongside Discord; auth default-deny, fed by Apprise |
 | `ntfy/data/` | **Pi** | **auth DB, message cache, attachments live here** |
@@ -6340,6 +6343,120 @@ podman exec paperless python3 manage.py document_exporter /usr/src/paperless/nas
 Revisit the scheduling question only if the value of the metadata (the
 tagging and filing work, which is the part *not* recoverable from the raw
 PDFs) ever outgrows the cost of a second copy.
+
+---
+
+## HedgeDoc / Docs (https://docs.mathewcsims.uk) — LAN-only, runs on the Mac
+
+Personal Markdown authoring space. Real-time notes, a document list, per-note
+permissions, and proper accounts. Friends and family on the tailnet can be given
+accounts.
+
+### Why it has BOTH a LAN gate and its own login
+
+The Caddy gate admits any device on the LAN or the tailnet, which is the
+availability wanted — but it is not an *identity*. It cannot distinguish one
+tailnet device from another, and these are personal drafts. HedgeDoc's own
+accounts supply the identity, and notes default to owner-only.
+
+### Why HedgeDoc and not Etherpad
+
+An Etherpad instance was built for this and torn down the same day. Its
+`requireAuthentication` is HTTP Basic only — a native browser prompt, credentials
+cached by the browser, and no usable logout — it has **no per-note permissions
+at all**, and its own OIDC provider cannot serve pad login (core accepts only
+Basic, and the provider's endpoints sit behind that same gate). None of that was
+fixable by configuration. Two bugs found along the way were filed upstream
+([ether/etherpad#8109](https://github.com/ether/etherpad/issues/8109),
+[ether/ep_comments_page#454](https://github.com/ether/ep_comments_page/issues/454)).
+
+### The trap: HedgeDoc builds ABSOLUTE URLs
+
+Every asset URL comes from `CMD_DOMAIN` + `CMD_PROTOCOL_USESSL` +
+`CMD_URL_ADDPORT`, **not** from the incoming request. Set them to the
+container's values instead of the public ones and you get a completely unstyled
+page with every asset 404ing. They must describe how a *browser* reaches this:
+`docs.mathewcsims.uk`, SSL true, no port. This fails loudly and immediately, so
+an unstyled page after a config change means look here first.
+
+### Accounts
+
+Self-registration is off, so accounts only exist because you made them:
+
+```
+./scripts/docs-add-user.sh someone@example.com
+```
+
+That prints a generated password once and stores nothing — put it in Proton
+Pass or hand it over. Remove one with `./scripts/docs-add-user.sh --delete
+someone@example.com` (which does **not** delete their notes).
+
+**The permission model, and its limit.** Each note is owner-controlled with six
+levels: Freely, Editable, Limited, Locked, Protected, and Private. New notes are
+**Private** (`CMD_DEFAULT_PERMISSION=private`) — verified that a private note
+returns **403** to a different signed-in account and does not appear in that
+account's History. But permissions are owner / all-signed-in / guests: there is
+**no per-person sharing**. Sharing a note shares it with everyone who has an
+account.
+
+### /status and /metrics are blocked at the proxy
+
+HedgeDoc serves both without authentication, exposing note counts,
+registered-user counts and who is online. Caddy `abort`s them (verified: 200 for
+`/`, connection closed for `/status` and `/metrics`). Two consequences:
+
+- The container healthcheck reaches `/status` on `127.0.0.1` **inside** the
+  container, so it is unaffected.
+- Uptime Kuma therefore monitors `/` instead — see below.
+
+### Monitoring
+
+| Field | Value |
+|---|---|
+| Monitor type | `HTTP(s) - Keyword` |
+| Friendly name | `Docs` |
+| URL | `https://docs.mathewcsims.uk/` |
+| Keyword | `HedgeDoc` |
+
+`/` returns 200 without authentication and contains that string (verified), so a
+keyword monitor works even though the app is behind a login. Kuma runs on the
+Pi, which is in `private_ranges`, so the LAN gate is not an obstacle.
+
+The `dump-databases.sh` post-dump health-check loop needs no special handling —
+it already treats 4xx as healthy and only alerts on 5xx or no response.
+
+### The healthcheck uses node, not wget
+
+The HedgeDoc image ships **no wget, curl, nc or python3** — only node. A
+wget-based healthcheck would report the container permanently unhealthy while
+the service was fine (a mistake already made once on the Etherpad instance this
+replaces). It also uses `127.0.0.1`, not `localhost`, because localhost can
+resolve to `::1` first while the app listens on IPv4.
+
+### To bring it up on a fresh machine
+
+1. Create the Pass item once, under your own pass-cli session (agent tokens are
+   read-only for item creation):
+   ```
+   ./scripts/pass-create-docs-secrets.sh
+   ```
+2. Deploy:
+   ```
+   ./scripts/pass-deploy.sh docs
+   ```
+   Never a bare `podman compose up -d` — `POSTGRES_PASSWORD` would be empty and
+   Postgres would initialise with trust authentication.
+3. Create your account with `./scripts/docs-add-user.sh`.
+4. Add the DNS records and the Caddy block (see the general recipe below), copy
+   the Caddyfile to the Pi and `docker compose restart caddy`.
+
+### Backups
+
+`docs/pgdata` is dumped nightly by `scripts/dump-databases.sh` (`dump_postgres
+docs-postgres hedgedoc hedgedoc docs`). **`docs/uploads/` is a separate Kopia
+source and matters just as much** — it holds every image pasted into a note, it
+is gitignored, and it exists nowhere else. A restore without it gives you notes
+full of broken images.
 
 ---
 

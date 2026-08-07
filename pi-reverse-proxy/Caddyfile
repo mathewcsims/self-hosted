@@ -833,6 +833,65 @@ msims.link {
 	}
 }
 
+# ── HedgeDoc / Docs (running on the Mac, LAN-ONLY) ───────────────────────
+# Clean public URL https://docs.mathewcsims.uk, but only for LAN and tailnet
+# clients — the LAN-gate idiom explained at the top of this file. Personal
+# Markdown authoring space; see ../docs/.
+#
+# Like BookStack, this has BOTH the gate and its own login, and that is the
+# point rather than belt-and-braces: the gate admits any device on the LAN or
+# the tailnet (right availability — family on the tailnet may get accounts)
+# but it is not an identity. HedgeDoc's own accounts supply that, and notes
+# default to owner-only.
+#
+# No X-Frame-Options override needed here, unlike the Ghost and Owl blocks
+# above: HedgeDoc's editor is not built from iframes, and it was verified
+# rendering correctly under security_headers' blanket DENY before deploying.
+# (The Etherpad instance this replaces needed SAMEORIGIN for exactly that
+# reason — a useful contrast, not a precedent to copy.)
+docs.mathewcsims.uk {
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		# `route` to pin the order: without it Caddyfile's adapter reorders
+		# top-level directives by its own precedence rather than source
+		# order, so the /status block below could end up running AFTER
+		# reverse_proxy had already answered — same reasoning as the Owl
+		# block above, which learned this the hard way.
+		route {
+			# Hand-written rather than `import general_ratelimit docs`
+			# because the snippet applies at block level, outside this
+			# handle — same as BookStack, Paperless, Forgejo and Immich.
+			rate_limit {
+				zone rl_docs {
+					key {remote_host}
+					events 300
+					window 1m
+				}
+			}
+
+			# HedgeDoc serves /status and /metrics WITHOUT authentication,
+			# exposing note counts, registered-user counts and who is
+			# currently online. Harmless to the app but not something every
+			# device on the tailnet needs to see, and HedgeDoc's own docs
+			# suggest restricting them at the proxy. Blocked outright: the
+			# container's healthcheck reaches /status on 127.0.0.1 inside
+			# the container, never through here, and Uptime Kuma monitors
+			# `/` with the keyword "HedgeDoc" instead (verified: `/`
+			# returns 200 unauthenticated and contains that string).
+			@stats path /status /metrics
+			abort @stats
+
+			reverse_proxy http://{$MAC_IP}:3500
+		}
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Refuse every other hostname / bare-IP access ─────────────────────────
 # Only the hostnames explicitly configured above are served. Any other
 # SNI/Host — including a bare-IP scan of the public address — gets a closed

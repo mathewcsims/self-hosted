@@ -229,6 +229,9 @@ dump_sqlite() {
 echo "=== dumping databases -> $OUT ==="
 
 dump_postgres healthlog-postgres healthlog healthlog healthlog
+# HedgeDoc. Note this dump is the notes themselves; images pasted into notes
+# live in docs/uploads/ and are covered by the Kopia source instead, not here.
+dump_postgres docs-postgres     hedgedoc  hedgedoc  docs
 
 dump_mysql blog-db      mysqldump     ghost
 dump_mysql bookstack-db mariadb-dump  bookstack
@@ -278,7 +281,7 @@ done
 # at all — counts as broken, which is exactly how that incident presented.
 UNHEALTHY=""
 echo "=== post-dump health check ==="
-for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj healthlog blog author; do
+for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj healthlog blog author docs; do
     _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$_host.mathewcsims.uk/" 2>/dev/null || true)
     [ -z "$_code" ] && _code=000
     case "$_code" in
