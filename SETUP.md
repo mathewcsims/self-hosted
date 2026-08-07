@@ -3087,11 +3087,16 @@ visibility for it.
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 28 monitors in three groups
-  (Services / Monitoring & infrastructure / Tailnet apps). Wanderer added
-  to the Services group. Each group's monitor order is alphabetical
+- **Status page** (`/status/all`): **27 of the 29 active monitors**, in three
+  groups (Services / Monitoring & infrastructure / Tailnet apps). Wanderer
+  added to the Services group. Each group's monitor order is alphabetical
   (case-insensitive) — re-sorted 2026-07-28 after Wanderer landed at the
   end instead; keep new additions sorted into place rather than appended.
+  **Two active monitors are deliberately NOT on the page: Docs and
+  organice.** Being LAN-only is not the reason — BookStack and Paperless are
+  LAN-only and are listed. They are simply personal-authoring surfaces whose
+  existence there adds nothing; add them if that changes. (Counted 2026-08-07;
+  this line previously said "all 28", which was already drifting.)
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
 read-only endpoints (`/metrics`, badges). ALL write operations (monitors,
@@ -3108,6 +3113,44 @@ here), so the code is generated with a direct RFC 6238 implementation
 subcommand. Storing this closes the loop the agent previously couldn't:
 before this, adding/editing a monitor needed Mathew's live 6-digit code
 pasted in from his phone every time.
+
+**Alternative: writing the SQLite DB directly** (used 2026-08-07 to add the
+organice monitor). Viable, and simpler than the Socket.IO dance when you just
+want one monitor, but it has one trap that makes it silently useless if
+missed:
+
+**Kuma loads monitors into memory at startup. An INSERT alone does nothing —
+the container must be restarted before the new monitor is ever checked.**
+Same class of mistake as the Donetick `sync_version` trap recorded in the
+task-management section: editing an app's database behind its back leaves the
+app's own state stale.
+
+`sqlite3` is not on the Pi, but it IS inside the container, so everything runs
+through `docker exec`. The recipe, all verified:
+
+```sh
+DB=/app/data/kuma.db
+# 1. Consistent backup FIRST — .backup, not cp: the DB is in WAL mode, so a
+#    plain file copy can miss everything sitting in kuma.db-wal.
+docker exec uptime-kuma sqlite3 $DB ".backup /app/data/kuma.db.bak-$(date +%Y%m%d-%H%M%S)"
+# 2. Insert, naming columns explicitly and letting the rest default. NOTE the
+#    column is `maxretries`, not `max_retries`.
+docker exec uptime-kuma sqlite3 $DB "INSERT INTO monitor (name, active, user_id, interval, url, type, keyword, ...) VALUES (...);"
+# 3. Link notifications — a monitor with no monitor_notification row is
+#    monitored but silent, which is worse than not monitoring it.
+docker exec uptime-kuma sqlite3 $DB "INSERT INTO monitor_notification (monitor_id, notification_id) VALUES (<new-id>, 1);"
+# 4. THE STEP THAT MATTERS
+docker restart uptime-kuma
+# 5. Verify it actually runs, rather than assuming
+docker exec uptime-kuma sqlite3 -header $DB "SELECT status,msg,ping FROM heartbeat WHERE monitor_id=<new-id> ORDER BY id DESC LIMIT 3;"
+```
+Status `1` = UP, `0` = DOWN, `2` = PENDING. Also worth running
+`PRAGMA integrity_check;` after any direct write, and confirming no other
+monitor went DOWN across the restart.
+
+Status-page membership is a separate `monitor_group` row, so a monitor
+inserted this way is deliberately absent from the public page until one is
+added.
 
 One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
 `"conditions": []` explicitly or the insert fails a NOT NULL constraint.
@@ -6772,11 +6815,29 @@ by contrast, still needs its render step first:
 cd copyparty && podman compose up -d
 ```
 
+### Monitoring
+
+Uptime Kuma monitor **`organice`** (id 37), added 2026-08-07: keyword type,
+`https://org.mathewcsims.uk/`, keyword `organice`, 60s interval, Discord
+notification linked — matching the `Docs` monitor it was copied from. The
+keyword is matched against the SPA's `<title>`, which is served
+unauthenticated, so no credentials are involved.
+
+Kuma reaches it through the LAN gate because its requests arrive from the Pi's
+own Docker bridge (`172.18.0.1`), which `private_ranges` covers.
+
+Added by writing Kuma's SQLite DB directly rather than through Socket.IO — see
+the Uptime Kuma section for the full recipe **and the restart requirement that
+makes or breaks it**. Deliberately not on the public status page, matching
+`Docs`.
+
 ### Backups
 
 **Nothing in `organice/` needs backing up** — it is a stateless container with
 no volumes. `copyparty/orgtasks/` is the real data, is gitignored, and exists
-nowhere else; it must be a Kopia source like every other copyparty volume.
+nowhere else; it is a Kopia source (added to `kopia-mac/backup.sh` alongside
+the other copyparty volumes). The nightly verifier derives its source list
+from the repo, so it picked this up with no change.
 
 ---
 
