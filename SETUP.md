@@ -6785,17 +6785,36 @@ Confinement verified, not assumed. As `orgtasks`:
    config must be changed together, or the next deploy takes copyparty down
    entirely rather than just dropping the account.
 
-**Proton Pass gotcha, learned the hard way:** `scripts/pass-import-file.sh`
-runs `pass-cli item create`, which **creates a new item — it does not update an
-existing one**. Running it against an existing title leaves two items with the
-same title, and `pass-render-file.sh` resolves by title, so it silently keeps
-reading the old one. Worse, the agent token (`SECRET_ACCESS_TOKEN`) is
-**create-and-read only**: `item trash` and `item update` both return
-`NotAllowed`, so the duplicate cannot be cleaned up from a script. That is what
-the script's "run this under your own personal pass-cli session, not the agent
-one" caveat is protecting against — treat it as a hard requirement. **Editing a
-whole-file secret means editing the existing item in the Proton Pass UI, or
-running the import under a personal session.**
+**Proton Pass gotcha, learned the hard way — and since guarded against:**
+
+`scripts/pass-import-file.sh` runs `pass-cli item create`, which **creates a
+new item; it does not update an existing one**. Running it against a title that
+already exists leaves two items sharing that title. `pass-cli item view
+--item-title` then resolves to the **older** one, so the render silently keeps
+returning stale content.
+
+Three things make that worse than it sounds:
+
+- **Trashing the stale item does not fix it.** A trashed item is still readable
+  and still wins title resolution — verified, including after a fresh login.
+  Only *permanent* deletion removes it from the match set.
+- **The agent token is create-and-read only.** `item trash` and `item update`
+  both return `NotAllowed`, so a script cannot clean up its own duplicate. This
+  is exactly what `pass-import-file.sh`'s "run this under your own personal
+  pass-cli session, not the agent one" caveat exists for — treat it as a hard
+  requirement, not advice.
+- **For copyparty the failure is an outage, not a downgrade** — see the fatal
+  missing-account behaviour above.
+
+**`pass-render-file.sh` now resolves the title to exactly one ACTIVE item id
+and fetches by id**, rather than fetching by title. Zero active matches or more
+than one and it fails closed, writing nothing, with an explicit message. That
+turns this whole class of problem into a loud error at deploy time instead of
+silently stale secrets.
+
+**To edit a whole-file secret**: change the existing item in the Proton Pass
+UI, or run the import under a personal session. Do not re-run
+`pass-import-file.sh` against an existing title with the agent session.
 
 **`vague-403` was kept**, though copyparty's `--help` marks it "Not compatible
 with WebDAV". That was tested rather than assumed: against this exact config
