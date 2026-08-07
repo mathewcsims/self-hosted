@@ -41,8 +41,6 @@ blog/traffic-analytics-data/
 karakeep/data/
 karakeep/meilisearch-data/
 karakeep/meilisearch-data-old-1.11.1/
-healthlog/data/
-healthlog/pgdata/
 apprise/config/
 uptime-kuma/data/
 ntfy/data/

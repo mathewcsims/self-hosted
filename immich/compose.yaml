@@ -32,7 +32,7 @@
 #
 # Exposure: LAN/tailnet-gated behind Caddy (immich.mathewcsims.uk), never
 # internet-reachable. Registration must be closed once the one real account
-# exists — same first-registrant-becomes-admin race as HealthLog/Wanderer.
+# exists — same first-registrant-becomes-admin race as Wanderer.
 #
 # v3.1.0's only breaking change is dropping iOS 14 support — irrelevant for
 # a fresh install. Immich ships breaking changes regularly, so read the
@@ -83,7 +83,7 @@ services:
         condition: service_healthy
     environment:
       # Reached by SERVICE name over the project's default network, same as
-      # HealthLog's postgres sidecar — not container name, not IP.
+      # a postgres sidecar — not container name, not IP.
       DB_HOSTNAME: database
       DB_USERNAME: immich
       DB_DATABASE_NAME: immich
@@ -177,7 +177,7 @@ services:
   database:
     # Immich's OWN Postgres image, not stock postgres — it carries
     # VectorChord + pgvecto.rs, the vector extensions smart search depends
-    # on. Deliberately NOT aligned with HealthLog's postgres:16-alpine;
+    # on. Deliberately NOT aligned with the repo's other postgres pins;
     # substituting stock Postgres breaks Immich outright. Digest is
     # upstream's own pin.
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23

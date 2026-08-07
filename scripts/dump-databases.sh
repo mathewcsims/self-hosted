@@ -5,7 +5,7 @@
 # ── WHY THIS EXISTS ───────────────────────────────────────────────────────
 # Until this script, EVERY database in this repo was backed up by
 # snapshotting its live data directory while the service was running —
-# healthlog/pgdata, blog/db, bookstack/db, plus a pile of SQLite files in
+# blog/db, bookstack/db, plus a pile of SQLite files in
 # WAL mode. That is not a backup. A file-level copy of a running Postgres
 # or MySQL datadir can capture torn pages and a half-written WAL, and a
 # WAL-mode SQLite copy can capture a .db and -wal that disagree. The result
@@ -228,7 +228,9 @@ dump_sqlite() {
 
 echo "=== dumping databases -> $OUT ==="
 
-dump_postgres healthlog-postgres healthlog healthlog healthlog
+# HealthLog decommissioned 2026-08-07 (medication tracking moved to
+# MedTimer, the rest unused) — its final pg_dump and a cold archive of
+# the whole app directory live in db-dumps/decommissioned/.
 # HedgeDoc. Note this dump is the notes themselves; images pasted into notes
 # live in docs/uploads/ and are covered by the Kopia source instead, not here.
 dump_postgres docs-postgres     hedgedoc  hedgedoc  docs
@@ -281,7 +283,7 @@ done
 # at all — counts as broken, which is exactly how that incident presented.
 UNHEALTHY=""
 echo "=== post-dump health check ==="
-for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj healthlog blog author docs; do
+for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj blog author docs; do
     _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$_host.mathewcsims.uk/" 2>/dev/null || true)
     [ -z "$_code" ] && _code=000
     case "$_code" in

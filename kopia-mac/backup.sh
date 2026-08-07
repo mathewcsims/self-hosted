@@ -121,8 +121,8 @@ echo $$ > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
 
 # Dump every database to a consistent, restorable file BEFORE snapshotting
-# anything. Without this, the datadir paths below (healthlog/pgdata,
-# blog/db, bookstack/db, and every SQLite file) are copied while their
+# anything. Without this, the datadir paths below (blog/db, bookstack/db,
+# and every SQLite file) are copied while their
 # services are running, which can capture torn pages or a .db and -wal that
 # disagree — a backup that looks valid until you try to restore it. See
 # scripts/dump-databases.sh for the per-engine reasoning.
@@ -144,7 +144,8 @@ fi
 # it into copyparty/data or the NAS mount below and it would be swept up
 # here with no change to this file. That was considered and declined:
 # backup is Syncthing -> Proton Drive, off this repo's infrastructure
-# entirely. Don't wire it in. See SETUP.md's HealthLog section for the
+# entirely. Don't wire it in. See SETUP.md's (now decommissioned)
+# HealthLog section for the
 # full reasoning (incl. why the copyparty route would cost vague-403).
 #
 # Paperless is deliberately HALF a source. paperless/data (SQLite db, Tantivy
@@ -218,8 +219,6 @@ SOURCES="
 $REPO_ROOT/db-dumps
 $REPO_ROOT/karakeep/data
 $REPO_ROOT/karakeep/meilisearch-data
-$REPO_ROOT/healthlog/data
-$REPO_ROOT/healthlog/pgdata
 $REPO_ROOT/vikunja/db
 $REPO_ROOT/vikunja/files
 $REPO_ROOT/blog/db
