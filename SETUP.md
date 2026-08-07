@@ -2568,8 +2568,10 @@ source with no change to `kopia-mac/backup.sh`. Not doing that. Backup is
 **Syncthing → Proton Drive** instead, handled entirely off this repo's
 infrastructure. It keeps phone-originated health data out of the Mac's
 backup path, and the copyparty variant in particular would have cost the
-`vague-403` setting in `copyparty/cfg/copyparty.conf` — which is only free
-there because nothing currently uses WebDAV.
+`vague-403` setting in `copyparty/cfg/copyparty.conf`. (That setting has
+since been removed anyway — see the organice section — because it broke
+Orgzly's WebDAV auth. The reasoning for keeping MedTimer's backup off this
+infrastructure is unchanged and stands on its own.)
 
 So if you're reading `kopia-mac/backup.sh` wondering why there's no
 MedTimer source: there isn't one, and there shouldn't be.
@@ -6816,15 +6818,53 @@ silently stale secrets.
 UI, or run the import under a personal session. Do not re-run
 `pass-import-file.sh` against an existing title with the agent session.
 
-**`vague-403` was kept**, though copyparty's `--help` marks it "Not compatible
-with WebDAV". That was tested rather than assumed: against this exact config
-`PROPFIND / Depth:1` as admin returns **207** with a valid multistatus body,
-and `OPTIONS` advertises `Dav: 1, 2` with the full method set. The
-incompatibility concerns 403→404 substitution confusing clients in
-permission-denied cases, which cannot arise on a volume whose only account has
-full access. **If organice ever misbehaves against `/orgtasks` — sync silently
-doing nothing, or "not found" on a file that exists — removing `vague-403` is
-the first thing to try.**
+### `vague-403` was removed — it broke Orgzly (2026-08-07)
+
+It was kept at first, on the reasoning that copyparty's "Not compatible with
+WebDAV" warning only concerned 403→404 substitution in permission-denied cases,
+which cannot arise on a volume whose only account has full access. **That was
+wrong**, and the way it was wrong is the useful part.
+
+`vague-403` rewrites the **401** as well as the 403. Orgzly Revived
+(`okhttp/5.3.2`) authenticates `PROPFIND` but sends `GET` **unauthenticated
+first**, expecting `401 + WWW-Authenticate` and retrying with credentials.
+Getting a 404 instead, it never authenticated — every notebook failed with
+"Error contacting … (404)" while the files sat there perfectly readable.
+Caddy's access log is what identified it:
+
+```
+404  PROPFIND  auth=yes  ua=okhttp/5.3.2  /orgtasks/.orgzlyignore
+404  GET       auth=NO   ua=okhttp/5.3.2  /orgtasks/Work.org
+```
+
+**Why the original testing missed it, which is the lesson worth keeping:**
+`curl -u` sends Basic auth **preemptively**, and so does organice's `webdav`
+npm client. Both worked flawlessly while a challenge-based client was totally
+broken. **When verifying auth on a WebDAV volume, assert that an
+UNAUTHENTICATED GET returns 401** — not merely that an authenticated one
+returns 200.
+
+`dav-ua1: (kioworker|okhttp)/` was tried first, as a narrower fix that would
+keep `vague-403` everywhere else. **It does not work**: `vague-403` rewrites
+the response regardless of `dav-ua1` (verified, including bypassing Caddy). And
+once `vague-403` is gone, `dav-ua1` is redundant — `okhttp` already receives a
+401 because it does not match `--ua-nodav`'s browser regex (also verified). So
+it was removed rather than left in as cargo cult.
+
+**What removal costs:** a prober can distinguish 403 from 404 on
+`cp.mathewcsims.uk`. Small here — this instance's volume layout is already
+public in the tracked `copyparty.conf` of a public repo. Authentication, not
+ambiguity, is what protects the data. Anonymous `GET /` still serves only
+copyparty's "you can browse: /pub/" page, naming no other volume (verified).
+
+**Related, and worth knowing generally:** a config **parse error** makes
+copyparty dump the entire config with line numbers to its log — and
+`accounts.conf` is loaded first, so a broken `copyparty.conf` writes **every
+account password** into the container log. That happened here (via the
+two-space comment rule above) and was cleared by recreating the container.
+After any config-parse failure, check
+`podman logs copyparty | grep <a password>` and recreate the container if it
+hits.
 
 ### Verified after deploy
 
@@ -6832,7 +6872,7 @@ Run from the Mac against the live instance, not inferred:
 
 | Check | Result |
 |---|---|
-| unauthenticated `GET /orgtasks/` | **404** (hidden by `vague-403`) |
+| unauthenticated `GET /orgtasks/` | **401** + `WWW-Authenticate` (was 404 until `vague-403` was removed — see above) |
 | `PROPFIND` as admin | **207** |
 | `PUT` a file | **201** |
 | `PUT` the same path again | **overwrites in place** — one file on disk, new content. This is `daw` working; without it there would be two files |
@@ -7292,8 +7332,10 @@ policy, etc.):
     check its rate-limit zones before headers/rewrites/proxying — an
     over-limit request never reaches the backend app at all.
 - **copyparty**: added `vague-403` to `[global]` — unauthenticated probes now
-  get an identical 404 whether a private path exists or not (no compatible
-  with WebDAV, which this setup doesn't use). Also made the already-active
+  get an identical 404 whether a private path exists or not (not compatible
+  with WebDAV, which this setup didn't use at the time). **SUPERSEDED
+  2026-08-07: removed, because it broke Orgzly by suppressing the 401
+  challenge — see the organice section.** Also made the already-active
   defaults `ban-pw: 9,60,1440` and `ban-403: 9,2,1440` explicit in
   `copyparty.conf` rather than leaving them as an unstated default.
   - **Not applied**: `--usernames` (require a username, not just a password,
