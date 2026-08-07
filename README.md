@@ -30,7 +30,6 @@ in front of the lot.
 | Contact sync (this repo) | — (no URL; launchd job) | Mac (cross-provider address-book sync: Proton + Google + 2× Microsoft → one canonical store, git-versioned on Forgejo) |
 | [ntfy](https://github.com/binwiederhier/ntfy) | `ntfy.mathewcsims.uk` | Pi (self-hosted push notifications — on trial alongside Discord; auth default-deny, fed by Apprise) |
 | Trivy scan (this repo) | — (no URL; launchd job) | Mac (weekly vulnerability scan of every pinned image in the repo, notifies on new CVEs) |
-| [HealthLog](https://github.com/MBombeck/HealthLog) | `healthlog.mathewcsims.uk` | Mac (self-hosted health tracking: vitals, sleep, mood questionnaires, Samsung Health sync — **medications moved off to [MedTimer](https://github.com/Futsch1/medTimer) 2026-08-04**, see SETUP.md; PolyForm Noncommercial licensed, passkey-only login, registration disabled after initial setup) |
 | [chhoto-url](https://github.com/SinTan1729/chhoto-url) | `msims.link` | Pi (self-hosted URL shortener on its own short domain — bare root redirects to `mathewcsims.uk` rather than showing the shortener's own login screen) |
 | [Wanderer](https://github.com/open-wanderer/wanderer) | `wanderer.mathewcsims.uk` | Mac (self-hosted GPS trail/cycle-ride log — GPX/FIT/TCX/KML import; Meilisearch + PocketBase sidecars; posts a Memo to Owl on every new ride via a PocketBase-realtime relay) |
 | [Immich](https://immich.app) | `immich.mathewcsims.uk` | **slartibartfast** (self-hosted photo/video library with local CLIP semantic search + face recognition — first app on the third host; LAN/tailnet-only, local accounts, no public sharing) |
@@ -40,7 +39,8 @@ in front of the lot.
 
 ### Decommissioned
 
-Four apps were torn down on **2026-08-04** for not earning their keep:
+Five apps have been torn down for not earning their keep — four on
+**2026-08-04**, and HealthLog on **2026-08-07**:
 
 - **Marque** — a private, work-focused third Memos instance (2 memos, 1 user).
 - **Nimbus** — `dashboard.mathewcsims.uk`, the Pi-resident homelab dashboard.
@@ -48,6 +48,10 @@ Four apps were torn down on **2026-08-04** for not earning their keep:
   Infomaniak SSO (zero time records logged).
 - **Speedtest Tracker** — `speedtest.mathewcsims.uk`, Pi-resident and
   LAN-only, polling every 15 minutes (3,135 results kept).
+- **HealthLog** — `healthlog.mathewcsims.uk`, self-hosted health tracking.
+  Medication tracking had already moved to [MedTimer](https://github.com/Futsch1/medTimer)
+  on 2026-08-04, and a better solution now covers the rest. 38,587
+  measurements and 116 workouts preserved in the final dump.
 
 Containers, images, volumes, networks, Caddy site blocks, Uptime Kuma
 monitors and DNS records are all gone; their compose projects live on only
@@ -59,7 +63,8 @@ on the relevant host — which is itself a Kopia source, so the archives ride
 along with every future backup instead of ageing out of a dormant source's
 retention. Every archive was restore-tested back out of Backblaze B2 and
 matched its source by sha256. Each app's Proton Pass item (OIDC client
-secrets, JWT secret, Nimbus's DB password, Speedtest's `APP_KEY`) was kept
+secrets, JWT secret, Nimbus's DB password, Speedtest's `APP_KEY`,
+HealthLog's database password) was kept
 for the same reason. The rebuild instructions remain in
 [SETUP.md](SETUP.md), retitled as decommissioned rather than deleted.
 

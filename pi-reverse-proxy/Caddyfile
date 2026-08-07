@@ -609,8 +609,9 @@ author.mathewcsims.uk {
 # clients — same @lan/abort idiom as BookStack and Forgejo below.
 #
 # LAN-gating matters more here than for most: this instance holds personal
-# medical documents, official correspondence and identity paperwork. Same
-# priority as HealthLog further down, and for the same reason.
+# medical documents, official correspondence and identity paperwork —
+# access control is the top priority for this app specifically, more so
+# than anywhere else left in this repo.
 #
 # Paperless serves its login form at /accounts/login/ (Django allauth).
 # Rather than assume its built-in throttling is sufficient, this gets the
@@ -689,54 +690,6 @@ fj.mathewcsims.uk {
 	# non-LAN (internet) clients: closed connection, nothing revealed
 	handle {
 		abort
-	}
-}
-
-# ── HealthLog (running on the Mac) ───────────────────────────────────────
-# Clean public URL https://healthlog.mathewcsims.uk. Personal health data
-# (medications, vitals) — access control is the top priority for this app
-# specifically, more so than anywhere else in this repo.
-#
-# Deployed 2026-07-26 with a temporary IP-allowlist (home public IP + LAN
-# range) covering the setup window — HealthLog has no setup token, so
-# whoever registers the very first account becomes admin, and the TLS cert
-# issuance publishes this hostname to public Certificate Transparency logs
-# within minutes regardless of DNS propagation. Removed here once Mathew
-# completed passkey registration as the first (admin) user and disabled
-# registration in HealthLog's own admin panel — the real, permanent access
-# control from this point on is: registration closed + passkey-only login
-# (no password fallback configured) + the rate limit below.
-healthlog.mathewcsims.uk {
-	import access_log
-	import security_headers
-	import general_ratelimit healthlog
-
-	# HealthLog has no documented built-in rate limiting on its passkey/
-	# auth endpoints (confirmed against its docs) — same defense-in-depth
-	# reasoning as every other app's auth endpoint in this repo. Broad
-	# path match since the exact WebAuthn route names aren't documented;
-	# narrow this once confirmed live.
-	rate_limit {
-		zone rl_healthlog_auth {
-			match {
-				path /api/auth/*
-			}
-			key {remote_host}
-			events 15
-			window 1m
-		}
-	}
-
-	# flush_interval -1 disables response buffering — required for
-	# HealthLog's streaming "Coach" feature (documented upstream
-	# requirement); explicit X-Forwarded-* headers match HealthLog's own
-	# reference reverse-proxy example, even though these already match
-	# Caddy's defaults.
-	reverse_proxy http://{$MAC_IP}:3200 {
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
-		header_up Host {host}
-		flush_interval -1
 	}
 }
 

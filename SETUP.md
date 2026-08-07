@@ -117,9 +117,6 @@ section below says which.
 | `karakeep/compose.yaml` | **Mac** | Karakeep + Meilisearch; reads secrets from Proton Pass |
 | `karakeep/data/` | **Mac** | **your bookmarks/assets/archives live here** |
 | `karakeep/meilisearch-data/` | **Mac** | search index |
-| `healthlog/compose.yaml` | **Mac** | HealthLog (medication reminders, vitals) + Postgres sidecar; personal health data — see its own section below; reads secrets from Proton Pass |
-| `healthlog/data/` | **Mac** | **your health data, encrypted at rest, lives here** |
-| `healthlog/pgdata/` | **Mac** | Postgres datadir |
 | `bookstack/compose.yaml` | **Mac** | BookStack + MariaDB sidecar; LAN-only (`author.mathewcsims.uk`); reads secrets from Proton Pass |
 | `bookstack/config/` | **Mac** | **your wiki pages/books/shelves live here** |
 | `bookstack/db/` | **Mac** | **BookStack's MariaDB datadir** |
@@ -583,7 +580,7 @@ The Pi runs Tailscale, configured as both a subnet router (advertising the
 LAN) and an exit node — meaning devices elsewhere can reach this network
 through it, including while off any physical LAN entirely. Every LAN-gated
 app in this repo (`mc37`, `apprise`, `vikunja-relay`, `backup`, `author`,
-`paperless`, `fj`, `healthlog`, `docs`)
+`paperless`, `fj`, `docs`)
 needs **three** separate things to actually be reachable this way. Each is
 necessary and none is sufficient, which is what makes this so awkward to
 debug: with any one missing, every check you can run on the server comes
@@ -2285,7 +2282,22 @@ binaries actually run):
 
 ---
 
-## HealthLog (https://healthlog.mathewcsims.uk)
+## HealthLog (https://healthlog.mathewcsims.uk) — DECOMMISSIONED
+
+> **DECOMMISSIONED 2026-08-07.** Torn down once a better solution covered
+> what was left: medication tracking had already moved to MedTimer on
+> 2026-08-04, and the remaining tracking was not being used. Containers,
+> images, network, the Caddy site block, the Uptime Kuma monitor and the DNS
+> records are all gone; `healthlog/` and
+> `scripts/pass-create-healthlog-secrets.sh` were removed from this repo and
+> survive only in git history. The section below is kept verbatim as the
+> rebuild recipe. THE HEALTH DATA IS KEPT: a final `pg_dump` (133 tables,
+> 38,587 measurements, 116 workouts) and a cold `tar.gz` of the whole app
+> directory including the Postgres datadir live in
+> `db-dumps/decommissioned/` on the Mac, both restore-tested out of
+> Backblaze B2 and matched by sha256. The **HealthLog** Proton Pass item was
+> deliberately retained.
+
 
 [HealthLog](https://github.com/MBombeck/HealthLog) — self-hosted health
 tracker: medication reminders (over ntfy/Web Push/Telegram/APNs), vitals

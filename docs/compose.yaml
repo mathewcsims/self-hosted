@@ -50,7 +50,7 @@ services:
   postgres:
     # 17-alpine. Pinned by digest, not the tag alone — tags aren't immutable,
     # so a bare version tag can still silently move. Same pattern as
-    # ../healthlog/compose.yaml, this repo's other Postgres app.
+    # ../paperless/compose.yaml and the wider repo convention.
     image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     container_name: docs-postgres
     restart: unless-stopped
@@ -144,7 +144,8 @@ services:
       # published port must be bound to the Mac's *actual* LAN IP —
       # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
       # reverse proxy connects to this address. 3000 is HedgeDoc's own default
-      # but karakeep already holds it (the same reason healthlog took 3200),
+      # but karakeep already holds it (the same reason healthlog took 3200
+      # before it was decommissioned),
       # so 3500. The router does NOT forward 3500, so this is never directly
       # internet-facing even before the Caddy LAN-gate is considered.
       - "10.0.1.14:3500:3000"

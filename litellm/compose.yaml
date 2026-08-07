@@ -74,7 +74,8 @@ name: litellm
 
 services:
   db:
-    # Same pin as HealthLog's Postgres — one CVE review covers both, and its
+    # Was the same pin as HealthLog's Postgres (decommissioned 2026-08-07);
+    # kept for continuity, and its
     # position is already documented (15 fixable HIGHs, all Go stdlib in a
     # helper binary, no better alternative — see SETUP.md).
     image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777

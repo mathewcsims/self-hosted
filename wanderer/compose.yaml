@@ -3,7 +3,7 @@
 # import. Upstream calls its own KML support "experimental", but confirmed
 # working directly in real use (2026-07-28) — imports KML rides natively,
 # no gpsbabel/GPX conversion step needed in practice. Runs on the Mac, same
-# pattern as karakeep/healthlog — Caddy on the Pi terminates TLS and
+# pattern as karakeep — Caddy on the Pi terminates TLS and
 # proxies to plain HTTP here.
 #
 # ── Security review before deploying ──────────────────────────────────────
@@ -22,7 +22,8 @@
 #
 # Registration: PUBLIC_DISABLE_SIGNUP defaults to "false" (signup OPEN) in
 # upstream's own reference compose — same "first registrant becomes admin"
-# race as HealthLog's initial setup. Handled the same way: a temporary
+# race as HealthLog's initial setup was (decommissioned 2026-08-07).
+# Handled the same way: a temporary
 # Caddy IP-allowlist during first bring-up (see pi-reverse-proxy/Caddyfile),
 # removed once the one real account is registered and PUBLIC_DISABLE_SIGNUP
 # is flipped to "true" and redeployed.
