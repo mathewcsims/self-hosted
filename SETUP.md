@@ -1349,9 +1349,14 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 > management) is back to unsolved as well.
 
 **The superseded decision of 7 August 2026.** Everything below this block is kept as
-history and as a list of candidates not to re-propose. **Two of its stated
-requirements are wrong** — see *Where the old framing went wrong* — and those
-two are why fifteen candidates failed across four sweeps.
+history and as a list of candidates not to re-propose. **Three of its stated
+requirements are wrong** — see *Where the old framing went wrong* and *Kanban
+was excluded on a false premise* — and between them they are why fifteen
+candidates failed across four sweeps:
+
+> 1. that Problem A is a full task manager rather than a reminder engine;
+> 2. that a server firing the reminders is non-negotiable;
+> 3. that Kanban layouts should be excluded.
 
 ### Problem A — recurring chores with nagging reminders
 
@@ -1417,8 +1422,8 @@ without per-platform builds or a sync protocol.
 
 ### Where the old framing went wrong
 
-Two requirements recorded below are **wrong**, and between them they eliminated
-most of the field:
+Three requirements recorded below are **wrong**, and between them they
+eliminated most of the field:
 
 1. *"Problem A is still a task manager… any claim that it reduces to a scheduler
    and a list is an inference, and it is wrong"* — A **is** just that: recurring
@@ -1427,8 +1432,13 @@ most of the field:
    MedTimer is purely on-device and is trusted for medication, which is
    higher-stakes than bins. Client-scheduled alarms are acceptable. This premise
    alone eliminated Super Productivity, Mindwtr and HamsterBase.
+3. *"List-first, not Kanban"* — **wrong; Kanban is liked.** This removed an
+   entire category from four sweeps. Re-swept 2026-08-08 and it cost little in
+   practice, because self-hosted Kanban tools almost never implement
+   recurrence — but the exclusion should never have been applied. See *Kanban
+   was excluded on a false premise* above.
 
-A third methodological error compounded them: *"Depth is the primary filter —
+A fourth, methodological error compounded them: *"Depth is the primary filter —
 test it first"* was correct for the combined requirement, but A needs no depth,
 so screening on depth first meant A-suitable candidates were binned before
 anything relevant to A was assessed.
@@ -1476,7 +1486,10 @@ candidates keep resurfacing.
 ### The requirements, as they were finally articulated
 
 1. Recurring "chore" tasks **and** genuinely one-off tasks, both handled well
-2. List-first, not Kanban
+2. ~~List-first, not Kanban~~ — **WRONG, corrected 2026-08-08. Mat likes
+   Kanban.** This requirement excluded an entire category across four sweeps
+   and should never have been applied. See *Kanban was excluded on a false
+   premise* below before rejecting anything for its layout.
 3. A clean, modern interface
 4. Cross-platform — Windows, Android, macOS, iOS
 5. Free with full functionality; **no paywall-gated features**
@@ -1495,6 +1508,37 @@ candidates keep resurfacing.
 Requirement 4 means genuinely equal access on every device: a **web interface
 for serious work** and a **mobile app for quick capture on the go**, with the
 mobile side still reaching everything — not a cut-down view.
+
+### Kanban was excluded on a false premise (corrected 2026-08-08)
+
+Requirement 2 said "List-first, not Kanban". **That was wrong — Kanban is
+liked, not disliked**, and the requirement removed an entire category from
+four consecutive sweeps. It is the third premise in this section found to be
+false, alongside "Problem A is still a task manager" and "the server
+requirement is the whole reliability argument".
+
+The category was re-swept on 2026-08-08 to see what the exclusion had cost.
+**Almost nothing, as it turns out** — self-hosted Kanban tools overwhelmingly
+do not implement recurrence at all:
+
+| Tool | Recurrence | Verdict |
+|---|---|---|
+| **Planka** (12.3k⭐, active) | **Pro-only paywall** — `proFeatureRecurringCards: '✨ Recurring Cards & Automation'` in the locale files | out on requirement 5 |
+| **Wekan** (21k⭐, active) | **None.** Its `RRULE` references are in the ICS *import* doc, which explicitly lists recurrence rules, alarms and timezones among what it does **not** convert. "Recurring cards" sits in `Roadmap.md` marked *"Not started yet"* against a Bountysource issue | out |
+| **Kaneo** (7.6k⭐) | none | out |
+| **4gaBoards** (685⭐) | none | out |
+| **Fizzy** (8k⭐, 37signals) | none — no `recur`/`repeat`/`rrule` column in the schema | out |
+| **Taskcafe** (5.2k⭐) | — | **dead**: `pushed_at` says Jul 2023, last real commit **Sept 2022** |
+| **Kanboard** (9.8k⭐) | ✅ **including from-completion** — `RECURRING_TRIGGER_CLOSE` + `RECURRING_BASEDATE_TRIGGERDATE` | interface rejected on sight |
+| **Vikunja** | ✅ including from-completion, **and it has a Kanban view** | interface (the standing objection) |
+
+**The finding worth keeping:** the only two self-hosted Kanban tools that do
+recurrence properly are the two already rejected on their interfaces, and both
+are older and more feature-complete than the modern good-looking ones. Liking
+Kanban does not open a new field — it re-presents the same two tools.
+
+Note also the recurring `pushed_at` trap: Taskcafe looked alive by that field
+and was four years dead. **Always check the actual commit log.**
 
 ### These are two separate problems, not one (established 2026-08-02)
 
@@ -1591,11 +1635,12 @@ editing and reminders.
 | **Super Productivity** | **No server (11)**, and depth (10). See the assessment below — it was the leading answer to Problem A until the sync model was read properly |
 | **Lunatask** | No web interface (4) — desktop and mobile binaries only. Recurrence is paywalled at $6/mo or $300 lifetime (5). Tried directly: too complex and clunky |
 | **SilentSuite** | Longevity (6) — repo created 19 Mar 2026, v0.4.2-beta, 660 of ~670 commits from one person, no native iOS client, GitHub does not detect the claimed AGPL licence. Also does calendar and contacts, which is unwanted scope. E2E via Etebase, self-hostable, real web app — the shape is right, the maturity is not |
-| **Fizzy** (37signals) | Kanban-first (2); **no recurrence code in the repo at all**, and its notifications are activity-based (comment, assignment), not due-date reminders (1, 8) |
+| **Fizzy** (37signals) | ~~Kanban-first (2)~~ — not a valid reason, see requirement 2. Still out: **no recurrence code in the repo at all** (re-checked 2026-08-08 against `basecamp/fizzy` — no `recur`/`repeat`/`rrule` column in the schema; the "recurring" hits are Solid Queue job infrastructure), and its notifications are activity-based (comment, assignment), not due-date reminders (1, 8) |
 
 Assessed and rejected without trial on 2 August: Super Productivity (depth),
 Lunatask (tried directly — no web UI, clunky), SilentSuite (five months old,
-one contributor, unwanted scope), Fizzy (Kanban, no recurrence). Nextcloud
+one contributor, unwanted scope), Fizzy (no recurrence — the "Kanban" half of
+that rejection was invalid, see requirement 2). Nextcloud
 Tasks shipped web-UI recurrence in v0.18.0 (22 Jun 2026), which removes its
 old technical objection — but Nextcloud itself remains **categorically ruled
 out** as a dependency, so this does not reopen it.
@@ -1728,7 +1773,9 @@ candidate:
 
 1. **awesome-selfhosted's canonical Task Management section** — all 42
    entries enumerated. Everything not already assessed was Kanban
-   (4ga Boards, Kan, Kanboard, Nullboard, Wekan, Tasks.md), ticketing
+   (4ga Boards, Kan, Kanboard, Nullboard, Wekan, Tasks.md) — **dismissed on
+   layout alone, which was a false premise; several were re-checked on
+   2026-08-08, see below** — ticketing
    (Bugzilla, Zammad, FreeScout, MantisBT, OTOBO, Request Tracker, Roundup),
    time-tracking (Kimai, solidtime, TimeTagger, Traggo, Wakapi, Ziit,
    ActivityWatch), or single-purpose (Our Shopping List, Listaway,
@@ -1746,7 +1793,7 @@ candidate:
 
 Rejected in this sweep, with reasons: **Will Be Done** (AGPL, self-hosted,
 weekday recurrence, but **zero** notification or reminder code in the repo —
-only a backup scheduler; and Kanban-per-project); **chiri** (CalDAV client,
+only a backup scheduler; the "Kanban-per-project" objection was invalid); **chiri** (CalDAV client,
 active, but desktop-only — no web app); **Zero-Friction Tasks** (E2E, web +
 five platforms, but *deliberately* has no projects, paywalls recurring
 reminders at €5.99/mo, no self-hosting, closed-source so the encryption
