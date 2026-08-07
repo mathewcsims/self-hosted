@@ -6745,6 +6745,58 @@ Three, all in `copyparty/cfg/copyparty.conf`, and each is commented in place:
      authenticated requests to copyparty. Naming one origin is both more
      correct and tighter than the default it replaces.
 
+### The `orgtasks` account (added 2026-08-07)
+
+The clients authenticate as **`orgtasks`**, not `admin`. It has `rwmd` on
+`[/orgtasks]` and nothing else. `admin` would also unlock `[/]`, `[/pub]`,
+`[/inbox]` and Grady's Training, and this credential is typed into a phone and
+into a browser's local storage — a lost device should cost the org files, not
+everything.
+
+`rwmd` rather than `A` (which is `rwmda.`): this drops admin (uploader IPs,
+config-reload) and dotfiles, so copyparty's own `.hist` stays out of client
+listings. **`d` is not optional** — copyparty's `--daw` docs state the delete
+permission must always be given, and overwrite-on-save depends on it.
+
+Confinement verified, not assumed. As `orgtasks`:
+
+| Check | Result |
+|---|---|
+| `/orgtasks` PROPFIND / PUT / overwrite / DELETE | 207 / 201 / in place / 200 |
+| `PROPFIND /` | 207, but the listing contains **only** `/`, `/orgtasks/`, `/pub/` — admin additionally sees `/.keep`, `/inbox/`, Grady's Training. The root listing is filtered per-user; it is navigation, not a leak |
+| `GET /.keep` (real private file) | **404** |
+| `PROPFIND / Depth: infinity` | nothing outside `/orgtasks` and `/pub` |
+| `PUT` to `/` and `/pub/` | **403**, no files created |
+
+`/pub` being visible is by design — it carries `r: *`.
+
+**Two traps, both hit while doing this:**
+
+1. **copyparty needs at least TWO spaces before a `#`.** `rwmd: orgtasks # ...`
+   with one space does not parse — the comment becomes part of the value and
+   startup fails with an explicit warning naming the line. The heavily-padded
+   inline comments throughout `copyparty.conf` are padded for that reason, not
+   for looks.
+2. **A missing account referenced by a volume is FATAL, not ignored.** If
+   `copyparty.conf` grants a user that `accounts.conf` does not define,
+   copyparty exits 1 with `CRIT: you must -a the following users: orgtasks`.
+   Verified in a throwaway container. This matters because `accounts.conf` is
+   re-rendered from Proton Pass before every deploy — so the Pass item and this
+   config must be changed together, or the next deploy takes copyparty down
+   entirely rather than just dropping the account.
+
+**Proton Pass gotcha, learned the hard way:** `scripts/pass-import-file.sh`
+runs `pass-cli item create`, which **creates a new item — it does not update an
+existing one**. Running it against an existing title leaves two items with the
+same title, and `pass-render-file.sh` resolves by title, so it silently keeps
+reading the old one. Worse, the agent token (`SECRET_ACCESS_TOKEN`) is
+**create-and-read only**: `item trash` and `item update` both return
+`NotAllowed`, so the duplicate cannot be cleaned up from a script. That is what
+the script's "run this under your own personal pass-cli session, not the agent
+one" caveat is protecting against — treat it as a hard requirement. **Editing a
+whole-file secret means editing the existing item in the Proton Pass UI, or
+running the import under a personal session.**
+
 **`vague-403` was kept**, though copyparty's `--help` marks it "Not compatible
 with WebDAV". That was tested rather than assumed: against this exact config
 `PROPFIND / Depth:1` as admin returns **207** with a valid multistatus body,
