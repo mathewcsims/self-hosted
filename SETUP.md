@@ -1335,12 +1335,132 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 
 ---
 
-## Task management: three replacements attempted, none adopted (2026-07 → 2026-08)
+## Task management: RESOLVED 2026-08-07 — two tools, Tasks.org and organice
 
-Vikunja is still the task manager. Three attempts were made to replace it —
+**The decision, agreed 7 August 2026.** Everything below this block is kept as
+history and as a list of candidates not to re-propose. **Two of its stated
+requirements are wrong** — see *Where the old framing went wrong* — and those
+two are why fifteen candidates failed across four sweeps.
+
+### Problem A — recurring chores with nagging reminders
+
+- **Tasks.org** ([tasks/tasks](https://github.com/tasks/tasks), GPL). The
+  **F-Droid Android build** does the nagging; the **desktop build**
+  (macOS/Windows/Linux, shipped in GitHub releases) views and edits.
+- **Radicale**, holding **one task collection**, as the sync backend.
+- **Thunderbird's Tasks view comes free** — it already runs as the mail and
+  calendar hub and reads `VTODO` over CalDAV, so the server feeds two surfaces
+  that already exist.
+
+The reference model for the reminder behaviour is **MedTimer**, the Android
+medication app already in daily use: repeating notification until explicitly
+actioned, with actions on the notification itself. Tasks.org matches it —
+`ring_nonstop` / `ring_five_times` ring modes per alarm, Complete and Snooze
+actions, `SCHEDULE_EXACT_ALARM` plus a boot receiver, and RRULE recurrence so
+"Wednesdays and Sundays" is **one task**.
+
+### Problem B — deep project and life management
+
+- **organice** over **copyparty's existing WebDAV** — no new server — plus a
+  small **read-only** script parsing `SCHEDULED:`/`DEADLINE:` and pushing to
+  Apprise.
+
+A web UI is cross-platform by construction, which is what makes this work
+without per-platform builds or a sync protocol.
+
+### Open before deploying
+
+1. **Whether the Tasks.org interface is bearable.** This is the only untested
+   thing that can still kill A, and interface has killed four candidates
+   (Vikunja, Super Productivity, Plane, HamsterBase). Install from F-Droid and
+   look before building anything.
+2. **Whether WebDAV is enabled in `copyparty/cfg/copyparty.conf`.** Both halves
+   of B depend on it.
+
+### Facts established 7 August, worth not re-deriving
+
+- **Tasks.org nagging is Android-only.** `composeApp/src/desktopMain` contains
+  no reminder or alarm implementation at all; desktop is a viewer and editor.
+- **The paywall differs by build.** Android F-Droid is fully unlocked
+  (`Inventory.kt` — `hasPro` returns true when `IS_GENERIC`). The **desktop
+  build is entitlement-gated**: `DesktopEntitlement` defaults `_hasPro` to false
+  and verifies a signed `entitlement.json`, alongside `GitHubSponsorClientImpl`.
+- **Tasks.org cross-platform sync is CalDAV-only.** DecSync and DAVx⁵ are
+  Android *companion-app* integrations with nothing in `jvmCommonMain`; CalDAV
+  has a full implementation there. This is why a server is unavoidable.
+- **Radicale is not a groupware bundle.** `radicale/app/` is organised by HTTP
+  verb (`get.py`, `put.py`, `propfind.py`, `report.py`…), not by feature, and a
+  collection's type is a property set at creation (`tag == "VADDRESSBOOK"`) — so
+  an addressbook exists only if you create one. 89 Python files, 2.3 MB of
+  source, five dependencies, one process, plain files on disk. The objection it
+  answers — "a CalDAV server runs calendar and contacts services I don't need" —
+  describes Nextcloud, not Radicale.
+- **organice never merges.** It does optimistic concurrency with a Pull/Push
+  modal (`src/actions/org.js:157-206`) and force-pushes without the modal while
+  a sync is already in flight. A third writer clobbers edits, which is why the
+  reminder script must stay **read-only**, with its state in a sidecar file.
+- **Org-mode cannot express weekday sets.** `OrgRepeater.Type` is only
+  `+` / `++` / `.+` with an interval unit, and there are **zero** references to
+  weekday, day-of-week or BYDAY anywhere in org-java. "Wednesday and Sunday"
+  needs two headlines. This is why A is not org-mode, despite B being org-mode.
+
+### Where the old framing went wrong
+
+Two requirements recorded below are **wrong**, and between them they eliminated
+most of the field:
+
+1. *"Problem A is still a task manager… any claim that it reduces to a scheduler
+   and a list is an inference, and it is wrong"* — A **is** just that: recurring
+   reminders with a way to tick them off. No projects, labels or nesting.
+2. *"That server requirement is the whole reliability argument"* — **disowned.**
+   MedTimer is purely on-device and is trusted for medication, which is
+   higher-stakes than bins. Client-scheduled alarms are acceptable. This premise
+   alone eliminated Super Productivity, Mindwtr and HamsterBase.
+
+A third methodological error compounded them: *"Depth is the primary filter —
+test it first"* was correct for the combined requirement, but A needs no depth,
+so screening on depth first meant A-suitable candidates were binned before
+anything relevant to A was assessed.
+
+### Also rejected on 7 August — do not re-propose
+
+**HamsterBase Tasks** (a notetaking app with a half-baked tasks concept bolted
+on — though its `ParentRules` does permit arbitrary task nesting, which
+falsifies the "nothing nests past two levels" claim below); **Plane** (too
+heavyweight; Community Edition is also only at Cloud Free-tier parity);
+**Healthchecks** (a cron monitor repurposed as a reminder engine — the per-check
+alert fires **once** on going down, and the `nag` feature is an account-wide
+email-only digest, not per-item re-notification); **Super Productivity**
+(interface "unbearably twee" — note every *technical* objection had collapsed:
+weekday booleans still present, the WebDAV rewrite landed at `src/app/op-log/`,
+and it nags via `CATEGORY_ALARM` plus `setOngoing`); **Tududi** (already binned,
+and redundant in the role it was proposed for).
+
+Verified dead, both with misleading recent `pushed_at` from bot activity:
+**MIND** (last real commit 23 Nov 2024) and **remembear** (6 Dec 2022).
+**Mindwtr**'s security advisory is patched in 1.1.5, but it has **no task
+nesting at all** — only its importers reference `parentId`, and the OmniFocus
+importer flattens hierarchy into a text prefix.
+
+Two corrections to the history below: **Tududi** has since gained a server-side
+`node-cron` scheduler, weekday-set recurrence (`recurrence_weekdays`), and a
+full CalDAV server *and* client — though its scheduler fires on `due_date`, not
+`reminder_at`, so "no time-of-day reminders" still holds in substance. And
+**Vikunja's RRULE PR** [#3071](https://github.com/go-vikunja/vikunja/pull/3071)
+needs a breaking 3.0.0 release plus a second UI PR; the maintainer estimated
+September, "probably not until October" — so it is not something to wait for.
+
+---
+
+## History: three replacements attempted, none adopted (2026-07 → 2026-08)
+
+Kept for the candidate assessments and the traps, which remain accurate. The
+requirement list immediately below is **superseded** — see above.
+
+Vikunja was the task manager throughout. Three attempts were made to replace it —
 Donetick in July, Tududi and Donetick again on 1 August — and all three were
-removed. **Read this before proposing a fourth.** The requirement set is
-harder to satisfy than it looks, and the same candidates keep resurfacing.
+removed. The requirement set is harder to satisfy than it looks, and the same
+candidates keep resurfacing.
 
 ### The requirements, as they were finally articulated
 
@@ -1649,7 +1769,13 @@ is also why they are the ones without encryption.
 eight channels. Re-check only by watching for *new* projects, and screen them
 in the order given below.
 
-### Where things stand
+### Where things stood on 2 August (superseded 7 August)
+
+**Superseded — see the RESOLVED block at the top of this section.** The
+conclusion below ("the field is exhausted", "nothing satisfies all eleven
+requirements") was reached against the requirement list that has since been
+corrected, and against a combined A+B problem that has since been split. Kept
+because the candidate assessments and traps are still accurate.
 
 Vikunja holds everything, unchanged throughout. The two divergences created
 during the Donetick trial were merged back on 1 August: the
@@ -2961,11 +3087,16 @@ visibility for it.
   the Pi's tailnet).
 - **Intervals**: 60s for the key public services, 180s for LAN-only and
   tailnet ones.
-- **Status page** (`/status/all`): all 28 monitors in three groups
-  (Services / Monitoring & infrastructure / Tailnet apps). Wanderer added
-  to the Services group. Each group's monitor order is alphabetical
+- **Status page** (`/status/all`): **27 of the 29 active monitors**, in three
+  groups (Services / Monitoring & infrastructure / Tailnet apps). Wanderer
+  added to the Services group. Each group's monitor order is alphabetical
   (case-insensitive) — re-sorted 2026-07-28 after Wanderer landed at the
   end instead; keep new additions sorted into place rather than appended.
+  **Two active monitors are deliberately NOT on the page: Docs and
+  organice.** Being LAN-only is not the reason — BookStack and Paperless are
+  LAN-only and are listed. They are simply personal-authoring surfaces whose
+  existence there adds nothing; add them if that changes. (Counted 2026-08-07;
+  this line previously said "all 28", which was already drifting.)
 
 **API caveat (learned doing this):** Kuma's API keys only authenticate the
 read-only endpoints (`/metrics`, badges). ALL write operations (monitors,
@@ -2982,6 +3113,44 @@ here), so the code is generated with a direct RFC 6238 implementation
 subcommand. Storing this closes the loop the agent previously couldn't:
 before this, adding/editing a monitor needed Mathew's live 6-digit code
 pasted in from his phone every time.
+
+**Alternative: writing the SQLite DB directly** (used 2026-08-07 to add the
+organice monitor). Viable, and simpler than the Socket.IO dance when you just
+want one monitor, but it has one trap that makes it silently useless if
+missed:
+
+**Kuma loads monitors into memory at startup. An INSERT alone does nothing —
+the container must be restarted before the new monitor is ever checked.**
+Same class of mistake as the Donetick `sync_version` trap recorded in the
+task-management section: editing an app's database behind its back leaves the
+app's own state stale.
+
+`sqlite3` is not on the Pi, but it IS inside the container, so everything runs
+through `docker exec`. The recipe, all verified:
+
+```sh
+DB=/app/data/kuma.db
+# 1. Consistent backup FIRST — .backup, not cp: the DB is in WAL mode, so a
+#    plain file copy can miss everything sitting in kuma.db-wal.
+docker exec uptime-kuma sqlite3 $DB ".backup /app/data/kuma.db.bak-$(date +%Y%m%d-%H%M%S)"
+# 2. Insert, naming columns explicitly and letting the rest default. NOTE the
+#    column is `maxretries`, not `max_retries`.
+docker exec uptime-kuma sqlite3 $DB "INSERT INTO monitor (name, active, user_id, interval, url, type, keyword, ...) VALUES (...);"
+# 3. Link notifications — a monitor with no monitor_notification row is
+#    monitored but silent, which is worse than not monitoring it.
+docker exec uptime-kuma sqlite3 $DB "INSERT INTO monitor_notification (monitor_id, notification_id) VALUES (<new-id>, 1);"
+# 4. THE STEP THAT MATTERS
+docker restart uptime-kuma
+# 5. Verify it actually runs, rather than assuming
+docker exec uptime-kuma sqlite3 -header $DB "SELECT status,msg,ping FROM heartbeat WHERE monitor_id=<new-id> ORDER BY id DESC LIMIT 3;"
+```
+Status `1` = UP, `0` = DOWN, `2` = PENDING. Also worth running
+`PRAGMA integrity_check;` after any direct write, and confirming no other
+monitor went DOWN across the restart.
+
+Status-page membership is a separate `monitor_group` row, so a monitor
+inserted this way is deliberately absent from the public page until one is
+added.
 
 One payload gotcha for scripted monitor creation on 2.4.0: `add` requires
 `"conditions": []` explicitly or the insert fails a NOT NULL constraint.
@@ -6519,6 +6688,156 @@ docs-postgres hedgedoc hedgedoc docs`). **`docs/uploads/` is a separate Kopia
 source and matters just as much** — it holds every image pasted into a note, it
 is gitignored, and it exists nowhere else. A restore without it gives you notes
 full of broken images.
+
+---
+
+## organice (https://org.mathewcsims.uk) — LAN-only, runs on the Mac
+
+[organice](https://organice.200ok.ch) is a browser-based org-mode editor. It is
+the **Problem B** half of the two-tool task setup decided on 2026-08-07 — deep
+project and life management, arbitrarily nested, with projects and labels. The
+recurring-chores half (Problem A) is Tasks.org on the phone and does not touch
+any of this. See the *Task management* section above for how that was decided.
+
+**It is a static SPA with no backend, no database and no accounts of its own.**
+It runs entirely in the browser and speaks WebDAV directly to copyparty's
+`/orgtasks` volume. The org files are the data; the container serves JavaScript
+and nothing else. There is no state here to back up — Kopia backs up
+`copyparty/orgtasks/`, which is where everything real lives.
+
+### The pieces
+
+| Piece | Where | What it does |
+|---|---|---|
+| `organice/compose.yaml` | **Mac**, `:3600` | serves the SPA |
+| `copyparty` `[/orgtasks]` volume | **Mac** | stores the `.org` files, admin-only |
+| Caddy `org.mathewcsims.uk` block | **Pi** | TLS + LAN gate |
+
+Sync is **browser → copyparty**, cross-origin. It does **not** flow through
+the organice container or through its Caddy block. If sync breaks, look at
+copyparty's config, not at organice's.
+
+### copyparty changes this required
+
+Three, all in `copyparty/cfg/copyparty.conf`, and each is commented in place:
+
+1. **A new `[/orgtasks]` volume**, `A: admin` only — no anonymous, no `inbox`,
+   no `grady`. Its own volume rather than a folder under `[/]` specifically so
+   the write flag below is scoped to it.
+2. **The `daw` volflag, on that volume only.** Required, not cosmetic:
+   copyparty decides "is this a real WebDAV client?" partly from User-Agent,
+   and `--ua-nodav` defaults to a regex starting `^(Mozilla/`. organice runs in
+   a browser, so it always looks like a non-WebDAV client. `--daw` exists for
+   exactly that case. Its side effect — PUT overwrites rather than inventing a
+   new filename — is what saving an org file needs, and is precisely why it
+   must NOT be global: `/inbox` depends on never silently replacing an upload.
+   Verified scoped after deploy: `up2k` logs `daw` against `/orgtasks/` and
+   against none of `/`, `/pub/`, `/inbox/`, `/Grady's Training/`.
+3. **CORS, as a single named origin** — `acao: https://org.mathewcsims.uk` plus
+   an extended `acam`. Two traps here:
+   - copyparty's default `acao: *` "removes cookies and http-auth" (its
+     `--help`), so under the default organice could never authenticate at all.
+   - **organice's own documentation is wrong and unsafe on this point.** It
+     tells you to set `Access-Control-Allow-Origin: *` together with
+     `Access-Control-Allow-Credentials: true`. That pairing is invalid per the
+     CORS spec — browsers reject `*` when credentials are sent — and would be
+     dangerous if it worked, since any site you visited could then make
+     authenticated requests to copyparty. Naming one origin is both more
+     correct and tighter than the default it replaces.
+
+**`vague-403` was kept**, though copyparty's `--help` marks it "Not compatible
+with WebDAV". That was tested rather than assumed: against this exact config
+`PROPFIND / Depth:1` as admin returns **207** with a valid multistatus body,
+and `OPTIONS` advertises `Dav: 1, 2` with the full method set. The
+incompatibility concerns 403→404 substitution confusing clients in
+permission-denied cases, which cannot arise on a volume whose only account has
+full access. **If organice ever misbehaves against `/orgtasks` — sync silently
+doing nothing, or "not found" on a file that exists — removing `vague-403` is
+the first thing to try.**
+
+### Verified after deploy
+
+Run from the Mac against the live instance, not inferred:
+
+| Check | Result |
+|---|---|
+| unauthenticated `GET /orgtasks/` | **404** (hidden by `vague-403`) |
+| `PROPFIND` as admin | **207** |
+| `PUT` a file | **201** |
+| `PUT` the same path again | **overwrites in place** — one file on disk, new content. This is `daw` working; without it there would be two files |
+| preflight from `https://org.mathewcsims.uk` | correct `Access-Control-Allow-Origin` + `authorization`, `depth` allowed |
+| preflight from a hostile origin | **no access-control headers at all** — browser blocks it |
+| `https://org.mathewcsims.uk/` | **200**, valid cert (curl verified without `-k`), all four `security_headers` present |
+
+### Traps worth keeping
+
+- **The image is amd64-only.** `twohundredok/organice` publishes no arm64
+  variant (checked against the Docker Hub API), so on this M4 Mac it needs
+  `platform: linux/amd64` and runs emulated — the only emulated container in
+  this repo. Measured rather than assumed: 157 ms cold, 6 ms warm, 137 MiB
+  RSS. Irrelevant overhead for a process that only returns static files, and
+  cheaper than owning a yarn/Node build chain.
+- **The image ships no wget, curl, nc or python3** — only `node`. A `wget`
+  healthcheck would report the container permanently unhealthy while it served
+  fine, which is the same mistake made once on the Etherpad instance HedgeDoc
+  replaced. The healthcheck uses `node -e` with a global `fetch`.
+- **`REACT_APP_WEBDAV_URL` is not the runtime variable**, despite upstream's
+  own `docker-compose.yml` showing it. `bin/transient_env_vars.sh` rewrites
+  every `REACT_APP_*` name to `ORGANICE_*` at build time. Worse, the pinned
+  image's entrypoint substitutes into a `serve/` directory and then runs
+  `serve -p 5000 -s build`, i.e. serves the *unsubstituted* directory — so the
+  mechanism appears to be dead code. Nothing here depends on it; the WebDAV
+  URL is typed into organice's sign-in screen once. Do not add an env var
+  expecting it to work without testing it.
+- **organice never merges on conflict.** It does optimistic concurrency with a
+  Pull/Push modal (`src/actions/org.js`), and force-pushes without the modal
+  while a sync is already in flight. Pull discards local edits, Push discards
+  remote — there is no third option. **Any script that touches these files
+  must be read-only**, keeping its state in a sidecar file, or it will clobber
+  edits made in the browser. This matters for the planned
+  `SCHEDULED:`/`DEADLINE:` → Apprise reminder job.
+- **The landing page embeds a YouTube iframe** (upstream's markup), so an
+  unauthenticated visit reaches youtube.com. `X-Frame-Options: DENY` is
+  unaffected by this — that is an outbound frame, and DENY only stops *this*
+  site being framed by others.
+
+### Deploy
+
+```sh
+cd organice && podman compose up -d
+```
+
+No secrets, so no `pass-deploy.sh` — there is nothing to inject. copyparty,
+by contrast, still needs its render step first:
+
+```sh
+./scripts/pass-render-file.sh Copyparty ACCOUNTS_CONF copyparty/cfg/accounts.conf
+cd copyparty && podman compose up -d
+```
+
+### Monitoring
+
+Uptime Kuma monitor **`organice`** (id 37), added 2026-08-07: keyword type,
+`https://org.mathewcsims.uk/`, keyword `organice`, 60s interval, Discord
+notification linked — matching the `Docs` monitor it was copied from. The
+keyword is matched against the SPA's `<title>`, which is served
+unauthenticated, so no credentials are involved.
+
+Kuma reaches it through the LAN gate because its requests arrive from the Pi's
+own Docker bridge (`172.18.0.1`), which `private_ranges` covers.
+
+Added by writing Kuma's SQLite DB directly rather than through Socket.IO — see
+the Uptime Kuma section for the full recipe **and the restart requirement that
+makes or breaks it**. Deliberately not on the public status page, matching
+`Docs`.
+
+### Backups
+
+**Nothing in `organice/` needs backing up** — it is a stateless container with
+no volumes. `copyparty/orgtasks/` is the real data, is gitignored, and exists
+nowhere else; it is a Kopia source (added to `kopia-mac/backup.sh` alongside
+the other copyparty volumes). The nightly verifier derives its source list
+from the repo, so it picked this up with no change.
 
 ---
 

@@ -1,0 +1,98 @@
+# organice (https://organice.200ok.ch) — a browser-based org-mode editor at
+# org.mathewcsims.uk. This is the "deep project and life management" half of the
+# two-tool task setup decided on 2026-08-07; the recurring-chores half is
+# Tasks.org on the phone. See SETUP.md's "Task management" section.
+#
+# ── What this actually is ────────────────────────────────────────────────
+# A STATIC single-page app and nothing else. It has no backend, no database
+# and no accounts of its own: it runs entirely in the browser and talks
+# WebDAV directly to copyparty's /orgtasks volume (../copyparty/). The org
+# files are the data; this container only serves JavaScript.
+#
+# That means there is no state here worth backing up. Kopia backs up
+# ../copyparty/orgtasks/, which is where everything real lives.
+#
+# ── Why an amd64 image on an arm64 Mac ───────────────────────────────────
+# twohundredok/organice publishes amd64 ONLY — there is no arm64 variant
+# (checked against the Docker Hub API: tag 5873 has a single linux/amd64
+# manifest). This Mac is an M4, so `platform: linux/amd64` is required and
+# the container runs under emulation. It is the only emulated container in
+# this repo.
+#
+# That is a deliberate choice over building from source, and it was measured
+# rather than assumed: emulated, it serves the app in 157 ms cold and 6 ms
+# warm at 137 MiB RSS. Emulation overhead is irrelevant for a process whose
+# entire job is returning static files, and building from upstream's
+# Dockerfile would mean owning a yarn/Node build chain for no benefit.
+#
+# ── The env-var trap, if this ever needs configuring ─────────────────────
+# Upstream's own docker-compose.yml shows `REACT_APP_WEBDAV_URL`. That is
+# MISLEADING. bin/transient_env_vars.sh rewrites every REACT_APP_* name to
+# ORGANICE_* at image-build time and substitutes at container start, so the
+# variable a running container actually reads is ORGANICE_WEBDAV_URL.
+#
+# Worse, in the pinned image the entrypoint substitutes into a `serve/`
+# directory and then runs `serve -p 5000 -s build` — i.e. it serves the
+# UNsubstituted `build/` directory, so the substitution appears to be dead
+# code. Nothing here depends on it: the WebDAV URL is typed into organice's
+# own sign-in screen once and kept in browser storage. Do not add an env var
+# expecting it to work without testing it first.
+name: organice
+
+services:
+  organice:
+    # Pinned by digest to the numbered build tag 5873 (= `latest` as of
+    # 2026-07-09, which matches upstream's most recent commit), NOT the
+    # floating `latest` tag — same reasoning as every other app here: a
+    # future pull must not silently change what's running.
+    image: docker.io/twohundredok/organice:5873@sha256:4bd26be0fd6409e525b247520d32b8db37db213fa7604789bdea4d1be6c5e481
+    container_name: organice
+    # See the header — amd64-only upstream image on an arm64 host.
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      TZ: Europe/London
+    # Hardening. The image already drops to a non-root `organice` user in its
+    # Dockerfile (USER organice) before the entrypoint runs, so unlike the
+    # HedgeDoc/BookStack s6 images this needs no SETUID/SETGID to switch user
+    # — a bare cap_drop: ALL is enough. Verified: it starts, serves, and stays
+    # healthy with no capabilities at all. It binds 5000, not a low port, so
+    # NET_BIND_SERVICE isn't needed either.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # ~4x the 137 MiB measured at steady state, matching the sizing convention
+    # used for docs/HedgeDoc. Node under emulation, serving static files.
+    mem_limit: 512m
+    pids_limit: 256
+    # No volumes. Deliberately: this container is stateless and the org files
+    # live in copyparty, reached from the BROWSER over WebDAV — not from this
+    # container. organice never touches the filesystem here.
+    ports:
+      # IMPORTANT (the podman-machine quirk every Mac app here hits): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # reverse proxy connects to this address.
+      #
+      # 5000 is organice's own default but that is macOS's AirPlay Receiver
+      # port, so 3600 on the host side (3500 is docs/HedgeDoc). The router
+      # does NOT forward 3600, so this is never directly internet-facing even
+      # before the Caddy LAN-gate is considered.
+      - "10.0.1.14:3600:5000"
+    healthcheck:
+      # node, NOT wget — checked inside the image rather than assumed: of
+      # wget, curl, nc and python3, this bookworm-slim image ships NONE. Only
+      # /usr/local/bin/node exists. A wget healthcheck would report the
+      # container permanently unhealthy while the app served fine, which is
+      # the same mistake made once on the Etherpad instance that docs/HedgeDoc
+      # replaced. Node 20 has a global fetch, so this needs no dependencies.
+      #
+      # 127.0.0.1, NOT localhost: localhost can resolve to ::1 first while the
+      # server listens on IPv4 — the other half of that same Etherpad mistake.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Generous because this is emulated: cold start is slower than native.
+      start_period: 40s

@@ -228,6 +228,7 @@ $REPO_ROOT/memos-prospect-ukri-tus/data
 $REPO_ROOT/copyparty/data
 $REPO_ROOT/copyparty/public
 $REPO_ROOT/copyparty/inbox
+$REPO_ROOT/copyparty/orgtasks
 $REPO_ROOT/copyparty/cfg/accounts.conf
 $REPO_ROOT/owl/data
 $REPO_ROOT/docs/pgdata
