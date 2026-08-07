@@ -36,12 +36,11 @@ in front of the lot.
 | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `paperless.mathewcsims.uk` | Mac (personal document store — letters, medical, certificates; OCR on ingest, LAN-only. Document blobs live on the NAS over CIFS; the SQLite database and search index stay on local disk. **Deliberately not wired to LiteLLM** — personal medical/legal documents have no business on an employer's GCP project) |
 | [HedgeDoc](https://hedgedoc.org) | `docs.mathewcsims.uk` | Mac (personal Markdown authoring — real-time notes, per-note permissions, document list; LAN/tailnet-only **and** account-based, since the LAN gate admits any tailnet device but isn't an identity. Notes default to owner-only; accounts created deliberately via `scripts/docs-add-user.sh`, no self-registration, no guest access) |
 | [LiteLLM](https://github.com/BerriAI/litellm) | `litellm.possum-prometheus.ts.net` | **slartibartfast** (OpenAI-compatible proxy in front of employer-funded Gemini Enterprise Agent Platform (formerly Vertex AI) — **tailnet-only** via a Tailscale sidecar tagged `personal` — no public hostname, no DNS record, not behind Caddy; ADC auth, no service-account key) |
-| [organice](https://organice.200ok.ch) | `org.mathewcsims.uk` | Mac (browser-based org-mode editor for deeply nested project/task trees; LAN/tailnet-only. A **static SPA with no backend, database or accounts** — it talks WebDAV straight from the browser to copyparty's admin-only `/orgtasks` volume, which is where the data actually lives. The recurring-chores half of this setup is Tasks.org on the phone and touches none of it) |
 
 ### Decommissioned
 
-Five apps have been torn down for not earning their keep — four on
-**2026-08-04**, and HealthLog on **2026-08-07**:
+Six apps have been torn down for not earning their keep — four on
+**2026-08-04**, HealthLog on **2026-08-07**, and organice on **2026-08-08**:
 
 - **Marque** — a private, work-focused third Memos instance (2 memos, 1 user).
 - **Nimbus** — `dashboard.mathewcsims.uk`, the Pi-resident homelab dashboard.
@@ -49,6 +48,9 @@ Five apps have been torn down for not earning their keep — four on
   Infomaniak SSO (zero time records logged).
 - **Speedtest Tracker** — `speedtest.mathewcsims.uk`, Pi-resident and
   LAN-only, polling every 15 minutes (3,135 results kept).
+- **organice** — `org.mathewcsims.uk`, a browser org-mode editor, torn down the
+  day after deployment: neither it nor Orgzly Revived on Android was good enough
+  in daily use. The org files are preserved in `db-dumps/decommissioned/`.
 - **HealthLog** — `healthlog.mathewcsims.uk`, self-hosted health tracking.
   Medication tracking had already moved to [MedTimer](https://github.com/Futsch1/medTimer)
   on 2026-08-04, and a better solution now covers the rest. 38,587
@@ -87,7 +89,6 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ author.mathewcsims.uk            → Mac (LAN clients only)
                                   ├─ paperless.mathewcsims.uk         → Mac (LAN clients only)
                                   ├─ docs.mathewcsims.uk              → Mac (LAN clients only)
-                                  ├─ org.mathewcsims.uk               → Mac (LAN clients only)
                                   └─ fj.mathewcsims.uk                → Mac (LAN clients only;
                                                                           git-over-SSH bypasses
                                                                           Caddy entirely, port 2222)
@@ -220,9 +221,6 @@ wanderer/              compose.yaml and data (Mac — GPS trail/cycle-ride log)
 docs/                  compose.yaml, Postgres and uploads (Mac — HedgeDoc,
                        personal Markdown authoring, LAN-only; uploads/ holds
                        every pasted image and exists only here + Kopia)
-organice/              compose.yaml only (Mac — browser org-mode editor,
-                       LAN-only). Stateless by design: no volumes, nothing
-                       to back up. The org files live in copyparty/orgtasks/
 pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker compose)
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass
