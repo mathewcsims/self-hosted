@@ -1,13 +1,28 @@
 #!/bin/sh
-# One-time (idempotent) setup: registers the Discord webhook URL, fetched
-# from Proton Pass, into Apprise's persistent config store under the key
-# "self-hosted". Run this once after `docker compose up -d` in ../apprise/,
-# and again any time the webhook is rotated in Pass.
+# One-time (idempotent) setup: registers the notification targets, fetched
+# from Proton Pass, into Apprise's persistent config store. Run this once
+# after `docker compose up -d` in ../apprise/, and again any time the Discord
+# webhook or the ntfy publisher token is rotated in Pass.
 #
-# The webhook value only ever travels over stdin: this script's own fetch ->
-# ssh stdin -> a `read` in the remote shell -> a here-string into `docker
-# exec`'s stdin, landing in apprise/scripts/seed.py. It never appears in a
-# Bash command line, an env var, a file, or shell history anywhere.
+# Three config keys get registered:
+#   self-hosted      — Discord + ntfy topic "alerts". The general firehose
+#                      that every notifier in this repo posts to.
+#   fail2ban         — ntfy topic "fail2ban" at priority=low, Discord
+#                      deliberately excluded. The caddy-abuse jail's bans:
+#                      internet background radiation, worth logging but not
+#                      worth a buzz.
+#   fail2ban-urgent  — Discord + ntfy topic "alerts" at priority=high. The
+#                      OTHER jails' bans (sshd today, anything added later by
+#                      default), which are rare and genuinely worth
+#                      interrupting for. Deliberately reuses "alerts" rather
+#                      than a third topic, so there is nothing new to
+#                      subscribe to on the phone.
+# pi-fail2ban/notify-apprise.sh picks between the latter two by jail name.
+#
+# Secrets only ever travel over stdin: this script's own fetch -> ssh stdin ->
+# a `read` loop in the remote shell -> a pipe into `docker exec`'s stdin,
+# landing in apprise/scripts/seed.py. They never appear in a Bash command
+# line, an env var, a file, or shell history anywhere.
 #
 # Auto-authenticates using SECRET_ACCESS_TOKEN from the repo-root .env (a
 # durable, read-only, vault-scoped Personal Access Token) if no pass-cli
@@ -47,11 +62,13 @@ echo "Fetching Discord webhook + ntfy publisher token from Proton Pass and regis
 {
     PROTON_PASS_AGENT_REASON="Seeding Apprise's Discord notification target" \
         pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Apprise" --output json
-    # Ntfy runs alongside Discord during the ntfy trial (2026-07) — both
-    # registered untagged, so every /notify fans out to both. If the item is
-    # missing (e.g. rebuilding before the trial existed), Discord-only.
+    # Ntfy runs alongside Discord on the "self-hosted" key — both registered
+    # untagged, so every /notify fans out to both. It is no longer optional:
+    # the "fail2ban" key is ntfy-only, so a missing item is a hard error
+    # rather than a silent Discord-only fallback that would drop fail2ban
+    # notifications on the floor.
     PROTON_PASS_AGENT_REASON="Seeding Apprise's ntfy notification target" \
-        pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Ntfy" --output json 2>/dev/null || echo '{}'
+        pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "Ntfy" --output json
 } | python3 -c '
 import json, sys, re
 
@@ -86,19 +103,43 @@ webhook_id, webhook_token = m.groups()
 # flat text. image=yes: shows a small type icon (info/warning/error/
 # success) in the embed. Neither is a secret - safe to hardcode here rather
 # than store as a Pass field.
-urls = [f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes"]
+discord_url = f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes"
+urls = [discord_url]
 
-ntfy_token = None
-if len(docs) > 1 and docs[1].get("item"):
-    ntfy_token = fields_of(docs[1]).get("PUBLISHER_TOKEN")
-if ntfy_token:
-    # auth=token: the publisher access token (write-only, all topics).
-    # Topic "alerts" is the general firehose mirroring Discord.
-    urls.append(f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&format=markdown")
+if len(docs) < 2 or not docs[1].get("item"):
+    sys.exit("Could not read the Ntfy Pass item — needed for the fail2ban key")
+ntfy_token = fields_of(docs[1]).get("PUBLISHER_TOKEN")
+if not ntfy_token:
+    sys.exit("No PUBLISHER_TOKEN field found on the Ntfy Pass item")
 
-print(",".join(urls))
+# auth=token: the publisher access token (write-only, all topics — verified
+# live via `ntfy access`, so a new topic needs no ACL change; the admin user
+# "mathew" reads every topic). Topic "alerts" is the general firehose
+# mirroring Discord.
+urls.append(f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&format=markdown")
+
+# fail2ban gets its own topic at priority=low, and no Discord target at all.
+# priority= is an Apprise ntfy arg (choice of max/high/default/low/min,
+# confirmed from NotifyNtfy.template_args in the running container). It maps
+# straight to the X-Priority header ntfy reads, and is NOT derived from the
+# POSTed `type`, so `type=failure` no longer forces a loud notification.
+quiet_url = f"ntfys://ntfy.mathewcsims.uk/fail2ban?token={ntfy_token}&auth=token&format=markdown&priority=low"
+
+# The other jails (sshd, and any added later) keep Discord and go to the
+# main "alerts" topic, but at priority=high so the phone actually buzzes for
+# them. Same topic as the firehose on purpose — nothing new to subscribe to.
+urgent_urls = [
+    discord_url,
+    f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&format=markdown&priority=high",
+]
+
+print("self-hosted\t" + ",".join(urls))
+print("fail2ban\t" + quiet_url)
+print("fail2ban-urgent\t" + ",".join(urgent_urls))
 ' \
-    | ssh mathew@babel 'read -r APPRISE_URL && docker exec -i apprise python3 /scripts/seed.py <<<"$APPRISE_URL"'
+    | ssh mathew@babel 'while IFS= read -r LINE; do printf "%s\n" "$LINE" | docker exec -i apprise python3 /scripts/seed.py; done'
 
 echo "Done. Test from a LAN machine with:"
 echo "  curl -X POST https://apprise.mathewcsims.uk/notify/self-hosted -d 'body=test'"
+echo "  curl -X POST https://apprise.mathewcsims.uk/notify/fail2ban -d 'body=test'"
+echo "  curl -X POST https://apprise.mathewcsims.uk/notify/fail2ban-urgent -d 'body=test'"

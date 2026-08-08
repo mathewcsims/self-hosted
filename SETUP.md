@@ -2911,11 +2911,56 @@ item holds one field, `DISCORD_WEBHOOK` (the raw
 `https://discord.com/api/webhooks/<id>/<token>` URL from Discord's own
 integration settings). `scripts/pass-seed-apprise.sh` fetches it, converts it
 to Apprise's own `discord://<id>/<token>/` scheme, and feeds it — over stdin
-the whole way (ssh stdin → a remote `read` → a here-string into `docker
-exec`'s stdin, landing in `apprise/scripts/seed.py`) — into a `POST /add/`
-call against the container, registering it under the config key
-`self-hosted`. Nothing secret ever touches a Bash argument, an env var, or a
-file. Re-run this script any time the webhook is rotated in Pass.
+the whole way (ssh stdin → a remote `read` loop → a pipe into `docker exec`'s
+stdin, landing in `apprise/scripts/seed.py`) — into a `POST /add/<key>` call
+against the container. Nothing secret ever touches a Bash argument, an env
+var, or a file. Re-run this script any time the webhook or the ntfy publisher
+token is rotated in Pass; `/add/<key>` *replaces* that key's config, so it is
+idempotent.
+
+**Three config keys, deliberately (since 2026-08-08):**
+
+| Key | Targets | Who posts to it |
+|---|---|---|
+| `self-hosted` | Discord **+** ntfy topic `alerts` (default priority) | everything in this repo — backups, DB dumps, Trivy, watchdogs, relays |
+| `fail2ban` | ntfy topic `fail2ban` at `priority=low`, **no Discord at all** | `pi-fail2ban/notify-apprise.sh`, `caddy-abuse` jail only |
+| `fail2ban-urgent` | Discord **+** ntfy topic `alerts` at `priority=high` | `pi-fail2ban/notify-apprise.sh`, every other jail |
+
+The split exists because the `caddy-abuse` jail bans at machine rate, not
+human rate — 119 lifetime bans with 54 concurrently banned as of 2026-08-08,
+and three ban/unban notifications inside a twenty-minute window while this
+was being changed. On the shared key that buried every alert that actually
+needed reading.
+
+**But not all jails are that**, hence the third key rather than one quiet
+route for all of fail2ban. `sshd` has fired **zero** times in its lifetime,
+and password auth is off (`pi-sshd/`), so an `sshd` ban means something is
+attempting SSH auth that should not be — rare, and worth interrupting for.
+`notify-apprise.sh` routes by jail name, and **defaults unknown jails to the
+urgent key**: a jail added later should be loud until somebody deliberately
+decides it is noise, rather than quietly going missing. `fail2ban-urgent`
+reuses the existing `alerts` topic rather than adding a third one, so there
+is nothing new to subscribe to on the phone.
+
+Both the topic and the priority live entirely on the Apprise-side target
+URL, so retuning either is a re-seed and needs no change on the Pi.
+
+**`priority=` is an Apprise ntfy URL argument** (`max`/`high`/`default`/
+`low`/`min`), read off `NotifyNtfy.template_args` in the running container
+rather than assumed. Worth knowing: it maps straight to the `X-Priority`
+header and is **not** derived from the `type` a caller POSTs, so
+`notify-apprise.sh` sending `type=failure` does not drag the notification
+back up to a loud one. Verified live end-to-end — a test ban landed in
+`cache.db` as `topic=fail2ban, priority=2` (ntfy's numbering: 1 min, 2 low,
+3 default), where every earlier ban sits on `topic=alerts, priority=0`, and
+Apprise's own log shows `Loaded 1 entries` for that key, i.e. no Discord
+attempt at all.
+
+**Ntfy is no longer optional to this script.** It used to fall back to
+Discord-only if the "Ntfy" Pass item was missing; because the `fail2ban` key
+has no Discord target, that fallback would now silently drop fail2ban
+notifications on the floor instead. A missing or fieldless "Ntfy" item is a
+hard error.
 
 **To bring it up on a fresh machine:**
 1. **Pi:** copy the `apprise/` folder over (`scp -r`) and
@@ -2929,10 +2974,17 @@ file. Re-run this script any time the webhook is rotated in Pass.
 4. **NextDNS rewrite**: add `apprise.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 5. From the Mac (or anywhere with `pass-cli` access to the vault): run
-   `./scripts/pass-seed-apprise.sh` to register the Discord webhook.
+   `./scripts/pass-seed-apprise.sh` to register both config keys. Note it
+   `scp`s nothing — `apprise/scripts/seed.py` is bind-mounted from the Pi's
+   own copy of the folder, so **copy that file over first if it has changed
+   in the repo**, or the Pi will keep running the old one (this bit once:
+   the pre-split `seed.py` hardcoded the `self-hosted` key, so both seed
+   lines landed on it and left it empty until the file was copied across).
 6. Test from a LAN machine:
    `curl -X POST https://apprise.mathewcsims.uk/notify/self-hosted -d 'body=test'`
-   — a message should land in Discord within a couple of seconds.
+   — a message should land in Discord within a couple of seconds. HTTP 200
+   means every target under the key succeeded; a failed target gives 424.
+   Repeat against `/notify/fail2ban` to check the quiet ntfy-only route.
 
 **Notification formatting convention (color, icon, markdown).** The
 registered Discord URL carries `?format=markdown&image=yes`
@@ -2943,14 +2995,16 @@ the embed, `format=markdown` lets the `body` use `**bold**`/lists/`` `code`
 `type` value (`info`/`success`/`warning`/`failure`) each `POST
 /notify/self-hosted` call includes — this is generic Apprise/Discord
 behavior, not something built here. Every notifier in this repo that feeds
-this shared endpoint (`pi-fail2ban/notify-apprise.sh`,
-`pi-unattended-upgrades/notify-reboot-required.sh`,
-`vikunja-webhook-relay/relay.py`) follows the same convention: pick a
-`type` matching real severity, prefix the title with a matching emoji
-(🚫/✅/⚠️/🔔) for at-a-glance scanning in a channel feed, and send
-`format=markdown` with the body. Verified live for all three: ban/unban,
+this shared endpoint (`pi-unattended-upgrades/notify-reboot-required.sh`,
+`vikunja-webhook-relay/relay.py`, and the backup/scan scripts) follows the
+same convention: pick a `type` matching real severity, prefix the title with
+a matching emoji (🚫/✅/⚠️/🔔) for at-a-glance scanning in a channel feed,
+and send `format=markdown` with the body. Verified live: ban/unban,
 reboot-required, and a signed Vikunja `task.overdue` test event all
 rendered with the correct color/icon/markdown in Discord.
+`pi-fail2ban/notify-apprise.sh` still follows the convention but no longer
+feeds this key — it posts to `/notify/fail2ban`, which has no Discord target,
+so its `type` now only sets the ntfy icon.
 
 **Uptime Kuma does NOT go through this endpoint at all** — it bundles its
 own Apprise CLI and shells out to it directly from its own Notification
@@ -2968,9 +3022,23 @@ the Discord webhook: real priority levels (distinct sounds/vibrations per
 severity), markdown, attachments, and **action buttons** (a notification
 can carry up to three buttons — open a URL, or fire an arbitrary HTTP
 request, e.g. a "Retry" on a backup-failure alert). Discord keeps working
-unchanged alongside; Apprise fans every `/notify` out to **both** (see
-`scripts/pass-seed-apprise.sh` — the ntfy target is registered from the
-"Ntfy" Pass item's `PUBLISHER_TOKEN`, into topic `alerts`).
+unchanged alongside; Apprise fans every `/notify/self-hosted` out to
+**both** (see `scripts/pass-seed-apprise.sh` — the ntfy target is registered
+from the "Ntfy" Pass item's `PUBLISHER_TOKEN`, into topic `alerts`).
+
+**Topics in use:**
+
+| Topic | Priority | Content |
+|---|---|---|
+| `alerts` | default | the general firehose, mirroring Discord |
+| `alerts` | `high` | fail2ban bans from any jail *except* `caddy-abuse` (i.e. `sshd`), also mirrored to Discord |
+| `fail2ban` | `low` | `caddy-abuse` bans/unbans only, **not** mirrored to Discord — see the Apprise section above for why |
+
+Both are served by the same write-only `publisher` token: `ntfy access`
+confirms it holds `write-only access to topic *`, and the `mathew` admin user
+reads every topic, so adding a topic needs no ACL change at all. This is also
+the first thing here that ntfy delivers and Discord does not, so the 2026-07
+trial is now load-bearing rather than purely parallel.
 
 **Image**: `binwiederhier/ntfy:v2.26.3`, pinned by digest. **Emergency-bumped
 2026-07-23 from v2.14.0** — the first Trivy scan (see below) surfaced
@@ -7641,8 +7709,11 @@ one-off manual commands:
   hooked into `DOCKER-USER` — the standard `iptables-multiport` action's
   `INPUT`-chain rule has zero effect against a container's published,
   DNAT'd ports, since that traffic only ever transits the `FORWARD` chain.
-  Ban/unban events notify via the same Apprise pipe as everything else in
-  this repo. Verified live end-to-end: the filter regex correctly matches
+  Ban/unban events notify via the same Apprise container as everything else
+  in this repo, though **since 2026-08-08 on their own config keys** rather
+  than the shared one, split by jail: `caddy-abuse` to ntfy `fail2ban` at low
+  priority with no Discord, every other jail to Discord + ntfy `alerts` at
+  high priority (see the Apprise section). Verified live end-to-end: the filter regex correctly matches
   a synthetic scanner-shaped log line; feeding two real scanner-path hits
   from a test IP through the actual monitored log file triggered a real
   ban (confirmed in both `fail2ban-client status caddy-abuse` and
@@ -7659,6 +7730,86 @@ one-off manual commands:
     Fixed by adding an `(access_log)` snippet imported by all 25 site
     blocks. Re-verified afterwards: a probe with a unique path now appears
     in `logs/access.log`, and `fail2ban-regex` matches the emitted format.
+  - **Retuned 2026-08-08: ~67 bans/day down to ~10, with sweep detection
+    unchanged.** `maxretry = 2` / `findtime = 300` meant any IP making two
+    matching requests within five minutes was banned, which is nearly every
+    drive-by scanner. Those bans bought nothing — the probes had already
+    finished, and nothing behind this proxy serves PHP — while burying every
+    alert worth reading.
+
+    The instinct is to match fewer paths. **Measurement says that is the one
+    thing not to do.** 34h of real access log (41.5k lines) was replayed
+    through fail2ban's own counting semantics (sliding `findtime` window,
+    no re-ban while already banned, `ignoreip` honoured) across candidate
+    configs. On the old root-level-only path list, `maxretry = 5` gives
+    3.5 bans/day but catches only **5 of the 17** genuine multi-probe sweeps
+    in that window, against 15/17 before. Matching less trades away exactly
+    the detection that matters.
+
+    What worked was **widening what counts while raising how many it takes**:
+    the filter now also matches one-directory-deep variants
+    (`/blog/wp-login.php`, `/wordpress/wp-includes/wlwmanifest.xml`,
+    `/api/.env`) — 66 of the 429 matching requests in the sample, previously
+    invisible because the old regex anchored the whole URI between the JSON
+    quotes — and the jail moved to `maxretry = 5` / `findtime = 600`. Result:
+    **10.6 bans/day, an 84% cut, with sweep coverage held at 15/17,
+    identical to the old settings.** Real sweeps trip it faster than before;
+    single drive-by probes no longer trip it at all. `bantime` stayed at 24h
+    on purpose — lengthening it would cut repeat bans further, but a good
+    share of what lands here is shared egress (Cloudflare edge, GCP/DO NAT),
+    and a week-long block on a shared address is a wider blast radius than
+    the remaining volume justifies.
+
+    On those Cloudflare addresses specifically — a third of the ban list is
+    `104.23.x` / `172.6x-172.7x`, which would be alarming if these sites sat
+    behind Cloudflare, because Caddy's `remote_ip` would then be the CF edge
+    rather than the real client and the jail would be banning the proxy that
+    serves real visitors. **Checked, and they do not:** `msims.link` and
+    `mathewcsims.uk` both delegate to `ns[1-3].digitalocean.com` and their
+    public `A` records point straight at the WAN IP (queried against
+    `1.1.1.1`, not the local resolver, which NextDNS rewrites to `10.0.1.19`).
+    So those are scanners *egressing* through Cloudflare, and banning them
+    breaks nothing — it is just ineffective, since the campaign rotates
+    across the edge range faster than any ban list can follow. That
+    ineffectiveness is a large part of why per-IP ban volume was never the
+    security control it looked like.
+
+    **Two vhosts are carved out, both demanded by the filter's own
+    false-positive rule** (only paths *no* app here could serve legitimately):
+    `cp.mathewcsims.uk` (copyparty) is excluded from the prefixed form —
+    it is public, with no LAN gate, and serves arbitrary user-named files, so
+    a shared folder holding a `.env`, a `config.php` or a `.git/` directory
+    would otherwise ban the person downloading it; root-level probes against
+    it are still caught, exactly as before. `mc37.mathewcsims.uk` is the
+    DrayTek's admin UI, whose **entire interface is `/cgi-bin/*.cgi`** —
+    logging in fires six of them before the dashboard renders (seen in the
+    log: `wlogin.cgi`, `cgidashboard.cgi`, `certificatedata.cgi`,
+    `v2x00.cgi`, `sms.cgi`, `variable.cgi`). Nothing bans it today only
+    because the LAN and tailnet are in `ignoreip`; an `ignoreregex` now makes
+    that independent of `ignoreip`, at zero cost in coverage since that vhost
+    `abort`s every non-LAN client anyway.
+
+    Also fixed in passing: path tails are `[^"]*` rather than `.*`, so a
+    pattern cannot run past the end of the JSON `uri` field into later
+    fields on the same line, and a trailing `(?:\?[^"]*)?` makes query
+    strings match on fixed-path branches — `/.env?debug=1` and
+    `/xmlrpc.php?rsd` previously slipped through.
+
+    **Verified before deploying**, since a filter change can fail in both
+    directions: a 19-case suite of synthetic log lines built from a real
+    Caddy line as template (9 must-match, 10 must-not, including every
+    carve-out above and the pre-existing documented exclusions) passes
+    completely under `fail2ban-regex`; and on the real corpus,
+    `fail2ban-regex` matched **400/400** of the lines the replay model
+    predicted and **0/4000** of a sample it predicted would not match, so
+    the tuning numbers above reflect the engine's real behaviour and not
+    just a model of it. Two gotchas worth keeping: Python's `json.dumps`
+    inserts spaces after `:` where Caddy emits compact JSON, so synthetic
+    test lines silently match nothing unless built with
+    `separators=(",", ":")`; and `fail2ban-client reload` is a *soft*
+    reload — measured by stubbing the notifier and counting, it does **not**
+    re-issue `actionban` for the existing ban list, so reloading with 53
+    IPs banned produces no notification storm and does not drop the bans.
 
 **Manual action items — out of scope for this repo, worth doing
 separately:**

@@ -2,15 +2,28 @@ import sys
 import urllib.parse
 import urllib.request
 
-# Reads one Apprise-scheme notification URL (e.g. discord://id/token/) from
-# stdin and registers it under the "self-hosted" config key so anything on
-# the LAN can POST to /notify/self-hosted without knowing the underlying
-# webhook. Invoked from ../../scripts/pass-seed-apprise.sh via `docker exec
-# -i apprise python3 /scripts/seed.py`, with the URL piped in over stdin —
-# never as a command-line argument.
-webhook = sys.stdin.read().strip()
-data = urllib.parse.urlencode({"urls": webhook}).encode()
+# Reads one "<config key>\t<comma-separated Apprise URLs>" line from stdin and
+# registers those URLs under that config key, so anything on the LAN can POST
+# to /notify/<key> without knowing the underlying webhook or token. Invoked
+# once per key from ../../scripts/pass-seed-apprise.sh via `docker exec -i
+# apprise python3 /scripts/seed.py`, with the line piped in over stdin — never
+# as a command-line argument, since the URLs embed secrets.
+#
+# Three keys are seeded today:
+#   self-hosted     — Discord + ntfy topic "alerts". The general firehose
+#                     every notifier in the repo posts to.
+#   fail2ban        — ntfy topic "fail2ban" at priority=low, and NOTHING
+#                     else. The caddy-abuse jail's bans, which fired often
+#                     enough to drown out everything on the shared key.
+#   fail2ban-urgent — Discord + ntfy "alerts" at priority=high. The other
+#                     jails' bans (sshd), which are rare and want a buzz.
+line = sys.stdin.read().strip()
+key, _, urls = line.partition("\t")
+if not key or not urls:
+    sys.exit("Expected '<config key>\\t<urls>' on stdin")
+
+data = urllib.parse.urlencode({"urls": urls}).encode()
 req = urllib.request.Request(
-    "http://localhost:8000/add/self-hosted", data=data, method="POST"
+    f"http://localhost:8000/add/{key}", data=data, method="POST"
 )
-print(urllib.request.urlopen(req).read().decode())
+print(f"{key}: {urllib.request.urlopen(req).read().decode()}")

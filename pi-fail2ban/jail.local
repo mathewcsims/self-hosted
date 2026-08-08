@@ -27,8 +27,27 @@ filter = caddy-abuse
 logpath = /home/mathew/pi-reverse-proxy/logs/access.log
 backend = auto
 port = http,https
-maxretry = 2
-findtime = 300
+# maxretry was 2 / findtime 300 until 2026-08-08, which banned ~67 IPs a day
+# — essentially every drive-by scanner, since two matching requests inside
+# five minutes was enough. Those bans bought nothing (the probes had already
+# finished, and nothing behind this proxy serves PHP) and buried every alert
+# worth reading.
+#
+# 5-in-600 instead, paired with the filter's widened path coverage (see
+# filter.d/caddy-abuse.conf — it now also counts one-directory-deep variants
+# like /blog/wp-login.php, which scanners lean on heavily and the old regex
+# could not see at all). Measured by replaying 34h of real access log through
+# fail2ban's own counting semantics: 10.6 bans/day, down 84%, while still
+# catching 15 of the 17 genuine multi-probe sweeps in that window — exactly
+# the 15/17 the old settings caught. Raising maxretry WITHOUT widening the
+# filter was also measured, and is the version to avoid: 3.5 bans/day but
+# only 5/17 sweeps caught.
+maxretry = 5
+findtime = 600
+# Left at 24h deliberately. Lengthening it would cut repeat-ban events
+# further, but a good share of what lands here is shared egress (Cloudflare
+# edge, GCP/DO NAT ranges), and a week-long block on a shared address is a
+# wider blast radius than the remaining notification volume justifies.
 bantime = 86400
 # Caddy runs in Docker with 80/443 published — traffic is DNAT'd via the
 # FORWARD chain, which the standard iptables-multiport action (INPUT-chain
