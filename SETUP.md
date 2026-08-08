@@ -133,7 +133,7 @@ section below says which.
 | `pi-db-dumps/` | **Pi** | same for Pi-hosted databases — script + systemd **user** timer at 01:30; also triggers its own Kopia snapshot |
 | `trivy-scan/scan.py` + `.plist` | **Mac** | weekly launchd job scanning every pinned image in the repo for new CVEs; state lives outside the repo at `~/trivy-scan-state/`, keyed by repository+tag so a digest re-pin does not re-report as new |
 | `.github/workflows/ci.yml` | GitHub | required PR checks — dependency vulnerability screening, document-viewer build/audit, Caddyfile validation; enforced by a branch ruleset on `main`, see "Branch protection + required CI" |
-| `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min; push token lives outside the repo at `~/podman-watchdog/push-token` |
+| `podman-watchdog/` | **Mac** | dead-man's-switch pinging an Uptime Kuma push monitor every 2 min, and restarting the VM after 2 consecutive failures (capped, cooled down, locked); push token and state live outside the repo at `~/podman-watchdog/` |
 | `.claude/skills/bookstack-api/`, `.claude/skills/forgejo-api/` | — | Claude Code skills for talking to those two instances' REST APIs directly (no MCP servers for either) |
 | `pi-reverse-proxy/compose.yaml` | **Pi** | Caddy reverse proxy (fronts every app above, plus the LAN-only sites below); also creates the `pi-shared` Docker network |
 | `pi-reverse-proxy/Caddyfile` | **Pi** | routing + auto-HTTPS for every hostname |
@@ -3398,6 +3398,58 @@ is wedged — then pings Uptime Kuma's push-monitor API with `status=up`
 timeout, non-zero exit, or exception). The Kuma monitor ("Podman (Mac)",
 id 25, 150s interval / 60s retry / 2 retries) fans out through the same
 Discord notification channel as every other monitor.
+
+**It now also RESTARTS the VM (added 2026-08-08), because reporting was not
+enough.** On 8 August the machine died ~90 seconds after a clean
+post-reboot start. Detection worked perfectly — the watchdog caught it 43
+seconds in, pinged down, and Kuma escalated to Down Count 5 with Discord
+attached. And then every Mac-hosted app stayed down until a human happened
+to look, roughly seven minutes later. At 3am that is hours. Detection was
+never the missing piece.
+
+After **2 consecutive** failed probes the watchdog now runs
+`podman machine start` itself, guarded three ways:
+
+| Guard | Value | Why |
+|---|---|---|
+| `FAILURES_BEFORE_RESTART` | 2 | Never act on one failure. At a 120s interval this is 2–4 min of confirmed-dead, deliberately longer than a normal `machine start`. Without it the watchdog fights `podman-autostart.sh` at every boot — it saw exactly such a transient 43s into the last one, while autostart was still mid-start |
+| `RESTART_COOLDOWN` | 600s | A VM that dies immediately after starting must not become a restart loop hammering the host |
+| `MAX_RESTART_ATTEMPTS` | 3 | If three tries have not fixed it, a restart is not the fix. Stop, alert loudly, leave it. **Per-outage** — reset on the first success, so a later unrelated failure gets a fresh budget |
+
+An `O_EXCL` lock file makes the restart mutually exclusive, since
+`podman machine start` takes longer than the 120s scheduling interval and
+two overlapping starts is its own failure mode. The lock times out after
+`MACHINE_START_TIMEOUT * 2` so a killed run cannot deadlock every future
+restart — which would be the same outage in a different costume.
+
+Restart outcomes go to **Apprise**, not Kuma: a push monitor can only move
+between up and down, and has no way to say "I restarted your VM", which is
+the part actually worth telling someone. A successful restart is still a
+**warning**, not an info — it means the VM died, and the restart treats the
+symptom rather than the cause.
+
+State (`consecutive_failures`, `restart_attempts`, `last_restart`) lives in
+`~/podman-watchdog/state.json`, outside the repo alongside the push token,
+because each launchd run is a separate process with no memory of the last.
+
+**A responsive VM with zero containers now counts as DOWN, not up.** The
+probe used to report `up` on any `podman ps` that exited 0, including one
+returning nothing — so the monitor would go green while every Mac-hosted
+app was down. That was survivable while the script only watched; it is not
+now that it restarts things unattended, because `podman machine start`
+brings the VM back and, if the in-VM `podman-restart.service` does not then
+start the containers, that green-monitor-over-dead-stack state is exactly
+where you land. For the same reason a successful restart is followed by
+`podman start --all --filter should-start-on-boot=true`, mirroring what
+`podman-autostart.sh` does rather than trusting the VM to do it.
+
+All eleven behaviours are covered by a sandboxed test — fake `podman`,
+stubbed endpoints, temp state dir — verifying that a single failure does
+*not* restart, the second does, the cap holds at 3, a success clears both
+counters, a failed restart raises a `failure` alert rather than a warning,
+cooldown and an existing lock both block, a hung or killed start releases
+its lock instead of deadlocking, zero containers reports down, and a
+restart starts the containers as well as the VM.
 
 **Setup note:** Kuma's plain API key only authenticates read-only
 endpoints (see the caveat above) — monitor creation went through the
