@@ -85,10 +85,10 @@ services:
     environment:
       # PUID/PGID: linuxserver's baseimage runs the app as this fixed
       # UID/GID (not root, unlike copyparty) — ./config must be pre-owned
-      # by 1000:1000 before first boot, same fix as Karakeep's ./data
-      # needed (podman-machine's rootless remap doesn't apply here since
-      # the process never runs as root inside the container in the first
-      # place).
+      # by 1000:1000 before first boot (podman-machine's rootless remap
+      # doesn't apply here since the process never runs as root inside the
+      # container in the first place — unlike every other app in this repo,
+      # which is why this one needs the explicit chown and they don't).
       PUID: 1000
       PGID: 1000
       TZ: Europe/London
