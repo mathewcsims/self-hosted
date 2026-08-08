@@ -103,7 +103,8 @@ webhook_id, webhook_token = m.groups()
 # flat text. image=yes: shows a small type icon (info/warning/error/
 # success) in the embed. Neither is a secret - safe to hardcode here rather
 # than store as a Pass field.
-urls = [f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes"]
+discord_url = f"discord://{webhook_id}/{webhook_token}/?format=markdown&image=yes"
+urls = [discord_url]
 
 if len(docs) < 2 or not docs[1].get("item"):
     sys.exit("Could not read the Ntfy Pass item — needed for the fail2ban key")
@@ -128,7 +129,7 @@ quiet_url = f"ntfys://ntfy.mathewcsims.uk/fail2ban?token={ntfy_token}&auth=token
 # main "alerts" topic, but at priority=high so the phone actually buzzes for
 # them. Same topic as the firehose on purpose — nothing new to subscribe to.
 urgent_urls = [
-    urls[0],
+    discord_url,
     f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&format=markdown&priority=high",
 ]
 
