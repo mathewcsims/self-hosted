@@ -2352,6 +2352,39 @@ add later:
 podman exec -it fizzy bin/rails runner 'k=WebPush.generate_key; puts k.private_key, k.public_key'
 ```
 
+### Mobile: install the PWA, not the app-store app
+
+**The official Fizzy Android app does not work with a self-hosted instance.**
+It offers no server-URL field, 37signals ship it as a Turbo Native wrapper,
+and nothing in their docs suggests otherwise — the same shape as Super
+Productivity's Android client, whose URL is compile-time hardcoded. Do not
+install it expecting it to reach this instance.
+
+**Fizzy is a proper PWA, and that is the supported mobile route.** Verified
+on this instance: `/manifest` returns 200 with `display: standalone`,
+`scope: /` and three icons (192, 512, and a 192 maskable), all of which
+resolve; `/service-worker` is a real route (it 302s to sign-in when logged
+out, which is expected).
+
+To install on Android:
+
+1. Open **Chrome** — not Firefox, whose PWA handling on Android is weaker.
+2. Go to `https://fizzy.mathewcsims.uk` and **sign in first.** Installing
+   from the signed-out page pins a login screen and registers the service
+   worker against it.
+3. Chrome menu (**⋮**) → **Add to Home screen** (it may say **Install app**).
+4. Accept the name, confirm.
+5. It appears with the Fizzy icon and opens standalone — no address bar, no
+   browser chrome. It is pointed at this instance because that is the URL it
+   was installed from; there is no server setting to get wrong.
+
+**It only loads when Tailscale is up.** Fizzy is LAN/tailnet-gated, so away
+from home the phone needs Tailscale connected, exactly like paperless, docs
+and fj. Worth knowing that a PWA with a service worker can render a cached
+shell when it cannot reach the server, so a Fizzy that looks loaded but
+empty or stale usually means Tailscale is down rather than the instance
+being broken — check Tailscale before checking the server.
+
 **Backups.** `fizzy/storage` is a Kopia source, and
 `scripts/dump-databases.sh` dumps `production.sqlite3` nightly. The other
 three SQLite files it writes (`production_cable`, `production_cache`,
