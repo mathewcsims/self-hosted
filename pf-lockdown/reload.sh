@@ -43,20 +43,54 @@ APPRISE_URL="https://apprise.mathewcsims.uk/notify/self-hosted"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-# Best-effort, never fatal — the lockdown's correctness must not depend on
-# the Pi being up. Same pattern as kopia-mac/backup.sh.
+# Never fatal — the lockdown's correctness must not depend on the Pi being
+# up. Same pattern as kopia-mac/backup.sh, but with a retry loop, which that
+# script does not need and this one does.
+#
+# WHY THE RETRY. This runs from a LaunchDaemon with RunAtLoad, so it starts
+# EARLY — quite possibly before networking is up enough to resolve and reach
+# apprise.mathewcsims.uk on the Pi. A single `curl ... || true` would then
+# fail and be swallowed by design, and the one case this whole script exists
+# to report — "an OS update silently disabled your firewall, and I fixed it"
+# — would arrive nowhere. The repair itself is purely local and unaffected;
+# it is only the telling that races the boot.
+#
+# So: keep trying for ~2.5 minutes, then give up and say so IN THE LOG. A
+# notification that quietly fails to send is the same category of problem as
+# a check that quietly passes, and this script is supposed to be the cure for
+# that, not another instance of it.
+NOTIFY_DEADLINE_SECS=150
+NOTIFY_RETRY_SECS=10
+
 notify() {
     _title=$1
     _type=$2
     _body=$3
-    curl -fsS --max-time 10 \
-        --data-urlencode "title=$_title" \
-        --data-urlencode "type=$_type" \
-        --data-urlencode "format=markdown" \
-        --data-urlencode "body=$_body
+    _deadline=$(( $(date +%s) + NOTIFY_DEADLINE_SECS ))
+    _attempt=0
+
+    while :; do
+        _attempt=$(( _attempt + 1 ))
+        if curl -fsS --max-time 10 \
+            --data-urlencode "title=$_title" \
+            --data-urlencode "type=$_type" \
+            --data-urlencode "format=markdown" \
+            --data-urlencode "body=$_body
 
 Host: mathews-mac" \
-        "$APPRISE_URL" >/dev/null 2>&1 || true
+            "$APPRISE_URL" >/dev/null 2>&1; then
+            log "notification delivered on attempt $_attempt"
+            return 0
+        fi
+        if [ "$(date +%s)" -ge "$_deadline" ]; then
+            break
+        fi
+        log "notification attempt $_attempt failed (network may still be coming up) — retrying in ${NOTIFY_RETRY_SECS}s"
+        sleep "$NOTIFY_RETRY_SECS"
+    done
+
+    log "WARNING: notification NOT delivered after $_attempt attempts over ${NOTIFY_DEADLINE_SECS}s — the message above is in this log only"
+    return 1
 }
 
 log "=== pf lockdown reload ==="

@@ -7282,6 +7282,27 @@ a usable check and the rule count is. It alerts via Apprise on failure, and
 also on a successful repair — because something overwriting a system file is
 worth knowing about even when it fixes itself.
 
+**The alert retries, and that is load-bearing.** This runs from a
+LaunchDaemon with `RunAtLoad`, so it starts early — quite possibly before
+networking can reach `apprise.mathewcsims.uk` on the Pi. A single
+fire-and-forget `curl` would fail exactly when it matters most: the boot
+immediately after a macOS update, which is the one boot that has something
+to report. So `notify()` retries for ~2.5 minutes and, if it still cannot
+get through, records that failure in `reload.log`. A notification that
+quietly fails to send is the same category of problem as a check that
+quietly passes.
+
+Only the failure and repair paths notify at all, so a clean boot sends
+nothing and adds no delay. The retry cannot hold up boot either — the repair
+is local and already done by then, and LaunchDaemons run in parallel rather
+than in sequence with login.
+
+The rule count deliberately matches rule verbs (`pass`, `block`, `match`…)
+rather than counting non-empty lines, because `pfctl` prints `No ALTQ
+support in kernel` on every invocation. Counting lines would report 2 for a
+completely empty anchor — passing while enforcing nothing, which is the
+failure this check exists to catch.
+
 **One-time setup (needs sudo — run these yourself, not via the agent):**
 
 ```
