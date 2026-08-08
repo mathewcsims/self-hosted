@@ -2019,12 +2019,19 @@ nothing else does, not because it is the choice.
 > `vikunja/`, `vikunja-webhook-relay/` and
 > `scripts/pass-create-vikunja-relay-secret.sh` were removed from this repo
 > and survive only in git history. The section below is kept verbatim as the
-> rebuild recipe. **The data is kept**: a final `VACUUM INTO` dump and a cold
-> `tar.gz` of the whole app directory live in `db-dumps/decommissioned/` on
-> the Mac. Kopia's `vikunja/db` and `vikunja/files` sources were set to
-> `--manual` so they keep their history but drop out of nightly
-> verification. The **Vikunja** and **VikunjaWebhookRelay** Proton Pass items
-> were retained.
+> rebuild recipe.
+>
+> **THE DATA WAS DELETED, deliberately — this one differs from every other
+> decommissioning in this file.** A final `VACUUM INTO` dump and a cold
+> `tar.gz` were taken and placed in `db-dumps/decommissioned/` as usual, then
+> **removed on request** the same day: 11 tasks in 2 projects was not worth
+> keeping. They never reached Kopia — `db-dumps`' last snapshot was 02:00 and
+> the archives were written at 09:58 — so there is **no copy anywhere**, and
+> the only recoverable thing is the app's configuration, from git history.
+> Kopia's `vikunja/db` and `vikunja/files` sources were set to `--manual` so
+> their existing history ages out on the normal policy rather than failing
+> nightly verification. The **Vikunja** and **VikunjaWebhookRelay** Proton
+> Pass items were retained.
 >
 > Unwired from automation: `scripts/dump-databases.sh` (the sqlite dump and
 > the `vikunja` entry in the post-dump health check) and
