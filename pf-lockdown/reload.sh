@@ -76,7 +76,27 @@ Restore it from the repo:
 fi
 
 # 1. Self-heal /etc/pf.conf if a system update has stripped the anchor lines.
+#
+#    Guarded on the file EXISTING first. `>>` would happily create it, and a
+#    /etc/pf.conf containing only our two lines would drop Apple's own
+#    scrub/nat/rdr/dummynet anchors — quietly changing system networking
+#    behaviour to fix a firewall rule. Not a trade worth making automatically;
+#    if the file is gone, something is wrong enough to want a human.
 REPAIRED=0
+if [ ! -f "$PF_CONF" ]; then
+    log "FATAL: $PF_CONF does not exist — refusing to create it"
+    notify "🔴 pf lockdown BROKEN — /etc/pf.conf is missing" "failure" \
+"\`$PF_CONF\` does not exist. Not recreating it automatically: a pf.conf
+holding only our anchor lines would drop Apple's own scrub/nat/rdr anchors.
+
+Restore it from a Time Machine backup or another Mac, then re-append the
+snippet:
+
+    cat ~/self-hosted/pf-lockdown/pf-conf-snippet.txt | sudo tee -a $PF_CONF
+    sudo /bin/sh ~/self-hosted/pf-lockdown/reload.sh"
+    exit 1
+fi
+
 if ! grep -q "$ANCHOR" "$PF_CONF" 2>/dev/null; then
     log "WARNING: $PF_CONF does not reference $ANCHOR — re-adding"
     printf '\nanchor "%s"\nload anchor "%s" from "%s"\n' \
@@ -94,8 +114,17 @@ fi
 
 # 3. Verify the anchor is in the kernel and actually holds rules. An anchor
 #    that exists but is empty exits 0 here with no output, which is why the
-#    test is on the line count and not on $?.
-RULE_COUNT=$(/sbin/pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c .)
+#    test is on the rule count and not on $?.
+#
+#    Count only RULE-SHAPED lines, not every non-empty line. pfctl prints
+#    "No ALTQ support in kernel" / "ALTQ related functions disabled" on every
+#    invocation on macOS, and while those appear to go to stderr, a plain
+#    `grep -c .` would report 2 for a completely empty anchor if they ever
+#    went to stdout instead — i.e. it would pass while enforcing nothing,
+#    which is the exact failure this check exists to catch. Matching the
+#    rule verbs removes the dependency on that assumption entirely.
+RULE_COUNT=$(/sbin/pfctl -a "$ANCHOR" -s rules 2>/dev/null \
+    | grep -cE '^[[:space:]]*(pass|block|match|scrub|nat|rdr|anchor)[[:space:]]')
 
 if [ "$RULE_COUNT" -lt 1 ]; then
     log "FATAL: anchor $ANCHOR loaded 0 rules — lockdown is NOT in effect"
