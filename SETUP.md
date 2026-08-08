@@ -2428,6 +2428,84 @@ because the agent token can create Pass items but not update the existing
 "Copyparty" one. copyparty merges `[accounts]` across auto-loaded `*.conf`
 files; verified in a throwaway container before relying on it.
 
+### Configuring the sync, field by field
+
+Do this **once per browser/device** — the settings live in that browser's
+own storage, not on the server, so a new laptop or a cleared profile needs
+it again.
+
+1. Open `https://sp.mathewcsims.uk` and go to **Settings** (cog, bottom-left)
+   → **Sync & Export** → **Sync**.
+2. **Sync provider** → `WebDAV`. A warning appears calling generic WebDAV
+   "experimental and provided as-is" — expected; that is upstream's blanket
+   caveat about WebDAV servers differing, not a problem with this one.
+3. **Server URL** — `https://sp.mathewcsims.uk`
+   The field is labelled *Nextcloud Server URL* even for plain WebDAV; the
+   form is shared with the Nextcloud provider. Enter the origin only, with
+   no trailing path.
+4. **Username** — `spsync`
+5. **App Password** — the `PASSWORD` field of the **"Copyparty SP Sync"**
+   Proton Pass item. (Also labelled for Nextcloud; it is just the password.)
+6. **Sync Folder Path** — `/sp-sync`
+7. **Encryption** — a deliberate choice, see below. Default is off.
+8. Leave everything under **Advanced** (Sync interval, Manual sync only) at
+   its defaults unless you want otherwise.
+9. Press **Sync now**.
+
+**Verify it actually worked** — from the Mac:
+
+```
+ls -la ~/self-hosted/copyparty/sp-sync/
+```
+
+You want `sync-data.json` with a current timestamp and a non-trivial size
+(~30 KB with a real task list). `.hist/` is copyparty's own index and is
+expected. An empty directory means the sync did not run, whatever the app
+said.
+
+### Encryption is off by default — decide, don't drift
+
+The synced blob is **plaintext**: a `pf_2__` prefix followed by readable
+JSON containing every task. Turning on SP's encryption passphrase makes it
+opaque to anyone who obtains the `spsync` credentials.
+
+Not enabled here, on the grounds that the file already sits behind a LAN
+gate, a volume-scoped account, and full-disk encryption, and Kopia encrypts
+it again before it reaches Backblaze — while a lost passphrase means losing
+every task with no server-side recovery, because there is no server that
+understands the data. That reasoning is worth re-checking if the blob ever
+leaves this setup.
+
+### The `/sp-sync/` browsing trap
+
+**Do not browse to `https://sp.mathewcsims.uk/sp-sync/` in a browser to
+check on the files.** You will get a broken half-loaded Super Productivity
+app, not copyparty's file listing, and it looks exactly like the sync being
+broken when it is fine.
+
+Cause: Super Productivity is a PWA whose service worker is registered at
+scope `/`, and its `ngsw.json` navigation rules treat any path *without a
+dot in the last segment* as a navigation to serve the app shell for.
+`/sp-sync/` qualifies; the shell then requests `chunk-*.js`, `main-*.js`,
+`manifest.json` and fonts relative to `/sp-sync/`, and copyparty 404s all of
+them. Confirmed in Caddy's access log.
+
+**The sync itself is unaffected, and that was checked rather than assumed:**
+`sync-data.json` contains a dot, so it is excluded from navigation handling,
+and the only `dataGroup` in `ngsw.json` (`api-freshness`) matches
+`api.github.com`, `gitlab.com/api` and `*.atlassian.net` — nothing under
+`/sp-sync/` is ever cached or intercepted.
+
+To browse the synced files, use the **copyparty hostname**, which carries no
+service worker:
+
+```
+https://cp.mathewcsims.uk/sp-sync/
+```
+
+Note that `curl` will happily return 200 for both — curl has no service
+worker. Only a real browser hits this, which is why it is written down.
+
 **Backups.** `copyparty/sp-sync` is a Kopia source — the only durable copy,
 since everything else is browser IndexedDB that a cleared cache wipes.
 
