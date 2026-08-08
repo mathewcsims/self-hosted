@@ -16,6 +16,24 @@
     <integer>120</integer>
     <key>RunAtLoad</key>
     <true/>
+
+    <!-- LOAD-BEARING, and doubly so here. Same reason as
+         autostart/uk.mathewcsims.podman-autostart.plist: launchd kills any
+         process left in a job's process group when the job exits, and
+         `podman machine start` leaves gvproxy and krunkit in exactly that
+         group (they reparent to PID 1 but never setsid away).
+
+         This job now RESTARTS the VM, not just watches it. Without this key
+         that capability is worse than not having it: the watchdog would
+         start the machine, alert "restarted automatically", exit, have
+         launchd immediately kill the VM it just started, then repeat until
+         MAX_RESTART_ATTEMPTS is exhausted — burning every attempt while
+         reporting success each time, and finishing with the stack still
+         down. Caught on review of the change that added the restart, before
+         it ever ran against a real outage. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>

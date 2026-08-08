@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>uk.mathewcsims.podman-autostart</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>/Users/mathewcsims/self-hosted/autostart/podman-autostart.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- LOAD-BEARING. Without this the VM this job exists to start can be
+         killed moments after it starts, by launchd, for doing its job.
+
+         From launchd.plist(5): "When a job dies, launchd kills any remaining
+         processes with the same process group ID as the job. Setting this key
+         to true disables that behavior."
+
+         `podman machine start` spawns gvproxy and krunkit and returns. Those
+         two ARE the VM, they outlive the command, and they do NOT setsid away
+         — confirmed live: both run with PPID 1 (podman itself exited and they
+         were reparented) but keep the PGID of the podman invocation that
+         started them. Inside a launchd job that group is the job's group, so
+         when this script finishes its container-status listing and exits,
+         launchd tears the group down and takes the VM with it.
+
+         Observed 2026-08-08: script exited 10:56:12 having reported all 31
+         containers up; podman-watchdog found the VM dead at 10:57:41. Every
+         Mac-hosted app was down. No crash report for either process, because
+         they were signalled rather than crashing. Re-running the SAME script
+         by hand from an interactive shell worked and stayed up — the process
+         group belonged to a shell session, so there was no launchd job for it
+         to be reaped against. Same script, same command, opposite outcome:
+         that difference is the whole diagnosis.
+
+         Not deterministic — the stack has survived plenty of reboots, so
+         there is a race between launchd's teardown and podman's children
+         being reparented. This removes the race rather than winning it.
+         podman-watchdog/ remains the backstop for VM deaths from other
+         causes; this prevents the one we can name. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/mathewcsims</string>
+        <key>PATH</key>
+        <string>/opt/podman/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mathewcsims/self-hosted/autostart/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mathewcsims/self-hosted/autostart/launchd.log</string>
+</dict>
+</plist>

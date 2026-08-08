@@ -148,7 +148,7 @@ section below says which.
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data, 02:00 |
 | `kopia-mac/mirror-on-connect.sh` + `uk.mathewcsims.kopia-mirror.plist` | **Mac** | launchd job on `WatchPaths /Volumes` — mirrors the B2 bucket to the external drive automatically whenever it is connected; this is the **second copy** for the Pi's and slartibartfast's data |
 | `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 06:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
-| `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
+| `autostart/` | **Mac** | launchd auto-start (all podman containers, every app). The agent plist is tracked here and **must** carry `AbandonProcessGroup` — without it launchd kills the VM this job starts; see the podman-watchdog section |
 | `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh` (legacy — no job mounts the NAS since 2026-08-04), `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
 | `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty's published port to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
 | `pi-sshd/` | **Pi** | drop-in `sshd_config.d` file disabling password auth (deployed manually, not via a compose stack) |
@@ -3407,6 +3407,12 @@ attached. And then every Mac-hosted app stayed down until a human happened
 to look, roughly seven minutes later. At 3am that is hours. Detection was
 never the missing piece.
 
+> **The root cause of that particular death was found afterwards, and fixed
+> separately — see "Why launchd was killing the VM" below.** The watchdog's
+> restart is the backstop for VM deaths we cannot name; that fix prevents the
+> one we can. Both are worth having, but they are not the same thing, and
+> auto-restart should not be mistaken for a cure.
+
 After **2 consecutive** failed probes the watchdog now runs
 `podman machine start` itself, guarded three ways:
 
@@ -3450,6 +3456,85 @@ counters, a failed restart raises a `failure` alert rather than a warning,
 cooldown and an existing lock both block, a hung or killed start releases
 its lock instead of deadlocking, zero containers reports down, and a
 restart starts the containers as well as the VM.
+
+### Why launchd was killing the VM (found and fixed 2026-08-08)
+
+**`autostart/uk.mathewcsims.podman-autostart.plist` was missing
+`AbandonProcessGroup`, so launchd was killing the very VM the job exists to
+start.** From `launchd.plist(5)`:
+
+> When a job dies, launchd kills any remaining processes with the same
+> process group ID as the job. Setting this key to true disables that
+> behavior.
+
+That only bites if podman's VM processes stay in the launching process
+group. They do — confirmed live:
+
+```
+  PID  PPID  PGID   COMM
+ 3586     1  3581   /opt/podman/bin/gvproxy
+ 3587     1  3581   /opt/podman/bin/krunkit
+```
+
+`PPID 1` because podman itself exited and they were reparented to launchd;
+`PGID 3581` is the `podman machine start` invocation's group, which they
+never leave. No `setsid`, no detach. Inside a launchd job that group is the
+*job's* group, so:
+
+1. the agent runs `podman-autostart.sh`;
+2. `podman machine start` spawns `gvproxy` + `krunkit` into the job's group;
+3. the script finishes its container listing and exits — **10:56:12**;
+4. the job dies, launchd tears down the process group;
+5. VM gone — the watchdog saw it dead at **10:57:41**.
+
+Two things this explains that nothing else did. There is **no crash report**
+for either process, because they were signalled rather than crashing. And
+re-running **the same script by hand** from an interactive shell worked and
+stayed up, because the process group belonged to a shell session with no
+launchd job to be reaped against. Same script, same command, opposite
+outcome — that difference is the diagnosis.
+
+**Not deterministic.** The stack has survived plenty of reboots, so there is
+a race between launchd's teardown and podman's children being reparented.
+The fix removes the race rather than winning it.
+
+A wrong theory was held first and is recorded so it is not re-derived:
+**Podman Desktop was suspected purely because it launches at login at the
+same second** the autostart agent runs. There is no mechanism behind that —
+its `settings.json` has no machine-autostart preference and nothing shows it
+starting or stopping machines. Co-timing was the entire case, which is not
+one.
+
+**BOTH podman plists need this key, not just the autostart one.** The
+watchdog now runs `podman machine start` in its remediation path, so it has
+exactly the same exposure — and there it is worse than a plain omission:
+without the key the watchdog would start the VM, alert "restarted
+automatically", exit, have launchd kill the VM it just started, and repeat
+until `MAX_RESTART_ATTEMPTS` was exhausted — burning every attempt while
+reporting success each time, and ending with the stack still down. Caught on
+review of the commit that added the restart, before it ever ran against a
+real outage.
+
+Every other launchd job in this repo was checked and does **not** need it:
+`contact-sync`, `kopia-mac-backup`, `kopia-verify`, `kopia-mirror`,
+`trivy-scan`, `paperless-task-alert` and `pf-lan-lockdown` all run
+synchronously and leave no background process behind. The rule is narrow —
+a job needs `AbandonProcessGroup` only if the thing it starts is *meant* to
+outlive it.
+
+**The autostart plist is now tracked in the repo**, which it was not before
+— only the script was, unlike `podman-watchdog/` which tracked both.
+Reinstall either with:
+
+```
+cp autostart/uk.mathewcsims.podman-autostart.plist ~/Library/LaunchAgents/
+launchctl bootout gui/$(id -u)/uk.mathewcsims.podman-autostart
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.mathewcsims.podman-autostart.plist
+launchctl print gui/$(id -u)/uk.mathewcsims.podman-autostart | grep properties
+```
+
+That last line must list `abandon process group`. If it does not, the key
+did not take and the VM is one boot away from dying again.
 
 **Setup note:** Kuma's plain API key only authenticates read-only
 endpoints (see the caveat above) — monitor creation went through the
