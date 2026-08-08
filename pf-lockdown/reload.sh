@@ -41,6 +41,9 @@ ANCHOR_FILE="/etc/pf.anchors/$ANCHOR"
 PF_CONF="/etc/pf.conf"
 APPRISE_URL="https://apprise.mathewcsims.uk/notify/self-hosted"
 
+# The repo copy, alongside this script — the source of truth for the rules.
+REPO_ANCHOR="$(cd "$(dirname "$0")" && pwd)/$ANCHOR"
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # Never fatal — the lockdown's correctness must not depend on the Pi being
@@ -94,6 +97,40 @@ Host: mathews-mac" \
 }
 
 log "=== pf lockdown reload ==="
+
+# 0. Install the repo's anchor if the live one differs.
+#
+#    WHY THIS EXISTS. Editing pf-lockdown/<anchor> in the repo and running
+#    this script did NOT previously apply the change: reload.sh only ever
+#    reloaded /etc/pf.conf, and the anchor itself had to be copied to
+#    /etc/pf.anchors/ by hand as a separate step. That is a step easy to
+#    forget and impossible to notice, because the reload succeeds and
+#    reports success either way.
+#
+#    It was forgotten on 2026-08-08, adding ports 3600 and 3601 for Fizzy and
+#    Super Productivity. Both stayed reachable from every device on the LAN
+#    while the repo, the commit and the docs all said otherwise — and Super
+#    Productivity has no login at all, so for that app the rule was the only
+#    access control there was.
+#
+#    The repo is the source of truth, exactly as it is for the Pi's Caddyfile.
+#    Anything that edits the live file by hand will now be overwritten on the
+#    next run, which is the intended direction.
+if [ ! -f "$REPO_ANCHOR" ]; then
+    log "FATAL: $REPO_ANCHOR is missing — cannot verify or install the ruleset"
+    notify "🔴 pf lockdown BROKEN — repo anchor missing" "failure" \
+"\`$REPO_ANCHOR\` does not exist, so this script cannot tell whether the live
+ruleset is current. Check the repo is present and intact at that path."
+    exit 1
+fi
+
+if ! cmp -s "$REPO_ANCHOR" "$ANCHOR_FILE" 2>/dev/null; then
+    log "live anchor differs from the repo — installing $REPO_ANCHOR"
+    install -o root -g wheel -m 644 "$REPO_ANCHOR" "$ANCHOR_FILE"
+    ANCHOR_UPDATED=1
+else
+    ANCHOR_UPDATED=0
+fi
 
 if [ ! -f "$ANCHOR_FILE" ]; then
     log "FATAL: $ANCHOR_FILE is missing"
@@ -188,6 +225,10 @@ being enforced**, with no error from anything, until this run.
 It has been repaired automatically and the anchor now loads $RULE_COUNT rules.
 No action needed, but worth knowing an OS update did this — it will do it
 again."
+fi
+
+if [ "$ANCHOR_UPDATED" -eq 1 ]; then
+    log "NOTE: the live anchor was out of date and has been updated from the repo"
 fi
 
 log "=== done ==="

@@ -1,11 +1,20 @@
-# pf anchor: restrict copyparty (3923) on this Mac to LAN-published-port
-# access from the Pi (10.0.1.19) only. Caddy on the Pi is the only intended
-# path in for every app in this repo — this closes the gap where any other
-# device on the LAN could otherwise reach the port directly, bypassing Caddy
-# entirely (still gated by the app's own login, but an unnecessary extra
-# path in).
+# pf anchor: restrict copyparty (3923), Fizzy (3600) and Super Productivity
+# (3601) on this Mac to LAN-published-port access from the Pi (10.0.1.19)
+# only. Caddy on the Pi is the only intended path in for every app in this
+# repo — this closes the gap where any other device on the LAN could
+# otherwise reach the port directly, bypassing Caddy entirely.
 #
-# Scoped to exactly this one port/this one destination IP — nothing else
+# Both new ports were added on 2026-08-08 when those apps were deployed.
+# Super Productivity's 3601 matters more than it looks: that app has NO
+# LOGIN AT ALL — it is a static bundle whose state lives in the browser — so
+# unlike copyparty and Fizzy there is no second line of defence behind the
+# proxy. Caddy's LAN gate and this rule are the whole of its access control.
+#
+# NOTE that Super Productivity's WebDAV sync target is copyparty, reached
+# through Caddy at sp.mathewcsims.uk/sp-sync/ and therefore over 3923 — it
+# needs no port of its own, and is covered by the copyparty rule below.
+#
+# Scoped to exactly these three ports/this one destination IP — nothing else
 # on this Mac is affected. Tried an app-level fix first (copyparty's --ipa
 # option) but it doesn't work behind podman's published-port NAT, which
 # only ever exposes its own internal gateway IP as the connection source,
@@ -14,14 +23,14 @@
 # is the only lever.
 #
 # Port 3456 (Vikunja) was covered here too until Vikunja was decommissioned
-# on 2026-08-08; nothing listens on it now, so the rules were narrowed
-# rather than left matching a dead port.
+# on 2026-08-08; nothing listens on it now, so it was dropped rather than
+# left matching a dead port.
 #
 # "quick" + top-to-bottom order matters: the allow rule for the Pi must
 # come before the catch-all block, since "quick" stops evaluation at the
 # first match.
-pass in quick log proto tcp from 10.0.1.19 to 10.0.1.14 port 3923
-block in quick log proto tcp from any to 10.0.1.14 port 3923
+pass in quick log proto tcp from 10.0.1.19 to 10.0.1.14 port { 3923, 3600, 3601 }
+block in quick log proto tcp from any to 10.0.1.14 port { 3923, 3600, 3601 }
 
 # ── SSH (port 22): macOS Remote Login, LAN + Tailscale only ──────────────
 # macOS's own Application Firewall is OFF (confirmed via

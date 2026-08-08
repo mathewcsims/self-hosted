@@ -227,6 +227,13 @@ $REPO_ROOT/copyparty/data
 $REPO_ROOT/copyparty/public
 $REPO_ROOT/copyparty/inbox
 $REPO_ROOT/copyparty/cfg/accounts.conf
+# Super Productivity's synced tasks. This is the ONLY durable copy — the app
+# is local-first, so everything else lives in each browser's IndexedDB, which
+# a cleared cache or a reinstalled laptop wipes without warning. The
+# super-productivity container itself holds nothing and is not backed up.
+$REPO_ROOT/copyparty/sp-sync
+# Fizzy's SQLite databases and Active Storage uploads — its entire state.
+$REPO_ROOT/fizzy/storage
 $REPO_ROOT/owl/data
 $REPO_ROOT/docs/pgdata
 $REPO_ROOT/docs/uploads

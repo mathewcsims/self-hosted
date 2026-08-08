@@ -13,15 +13,34 @@
 # session is already active — see SETUP.md.
 #
 # Usage:
-#   ./scripts/pass-deploy.sh <app-dir> [item-title]
+#   ./scripts/pass-deploy.sh <app-dir> [item-title ...]
 #
 # Example:
 #   ./scripts/pass-deploy.sh karakeep
+#   ./scripts/pass-deploy.sh fizzy Fizzy "Fizzy SMTP"
+#
+# MORE THAN ONE ITEM. Extra item titles are merged into one environment, in
+# the order given, so an app whose secrets are split across Pass items can
+# still be deployed with the standard tooling. That split is not a style
+# choice: the agent's Pass token is create-and-read only and cannot UPDATE an
+# item (see SETUP.md's agent access model), so a secret added after an item
+# was first created has to live in its own item. Fizzy's SMTP token is the
+# first case; scripts/pass-deploy-kopia-server.sh already did the same thing
+# by hand for "Kopia" + "Backblaze B2", remotely.
+#
+# Later items win on a name clash, which is only reachable if two items
+# define the same field — worth knowing rather than discovering.
 
 set -eu
 
-APP_DIR="${1:?Usage: $0 <app-dir> [item-title]}"
-ITEM_TITLE="${2:-$(echo "$APP_DIR" | python3 -c 'import sys; print("".join(w.capitalize() for w in sys.stdin.read().strip().split("-")))')}"
+APP_DIR="${1:?Usage: $0 <app-dir> [item-title ...]}"
+shift
+
+# Default when no titles are given: derive one from the directory name
+# (karakeep -> Karakeep, super-productivity -> SuperProductivity).
+if [ "$#" -eq 0 ]; then
+    set -- "$(echo "$APP_DIR" | python3 -c 'import sys; print("".join(w.capitalize() for w in sys.stdin.read().strip().split("-")))')"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -48,10 +67,9 @@ if ! pass-cli info >/dev/null 2>&1; then
     fi
 fi
 
-echo "Fetching secrets for \"$ITEM_TITLE\" from Proton Pass..."
-
-EXPORTS=$(PROTON_PASS_AGENT_REASON="Fetching secrets to deploy $APP_DIR" \
-    pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "$ITEM_TITLE" --output json \
+fetch_exports() {
+    PROTON_PASS_AGENT_REASON="Fetching secrets to deploy $APP_DIR" \
+    pass-cli item view --vault-name "Self-Hosted Secrets" --item-title "$1" --output json \
     | python3 -c '
 import json, sys, shlex
 
@@ -70,7 +88,19 @@ for f in fields:
     name = f["name"]
     value = list(f["content"].values())[0]
     print(f"export {name}={shlex.quote(value)}")
-')
+'
+}
+
+EXPORTS=""
+for _item in "$@"; do
+    echo "Fetching secrets for \"$_item\" from Proton Pass..."
+    # Captured then eval'd all at once, deliberately: eval-ing inside the
+    # loop would leave a partially-applied environment behind if a later
+    # item failed to resolve, and `podman compose up` would then run with
+    # some variables silently blank. set -eu aborts before the eval instead.
+    EXPORTS="$EXPORTS
+$(fetch_exports "$_item")"
+done
 
 eval "$EXPORTS"
 

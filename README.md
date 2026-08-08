@@ -18,6 +18,8 @@ in front of the lot.
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 | [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
 | [Karakeep](https://github.com/karakeep-app/karakeep) | `karakeep.mathewcsims.uk` | Mac (migrated from a separate Tailscale-only deployment) |
+| [Fizzy](https://www.fizzy.do) | `fizzy.mathewcsims.uk` | Mac (LAN-only — backlog / triage board) |
+| [Super Productivity](https://super-productivity.com) | `sp.mathewcsims.uk` | Mac (LAN-only — day-to-day tasks; syncs to copyparty at `/sp-sync`) |
 | [Apprise API](https://github.com/caronc/apprise-api) | `apprise.mathewcsims.uk` | Pi (LAN-only — generic notification relay to Discord) |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
 | Tailscale webhook relay (this repo) | `tailscale-relay.mathewcsims.uk` | Pi (public — bridges Tailscale's webhook events to Apprise; HMAC-verified) |
@@ -78,6 +80,8 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ prospect-ukri-tus.mathewcsims.uk → Mac
                                   ├─ blog.mathewcsims.uk              → Mac
                                   ├─ karakeep.mathewcsims.uk          → Mac
+                                  ├─ fizzy.mathewcsims.uk             → Mac (LAN clients only)
+                                  ├─ sp.mathewcsims.uk                → Mac (LAN clients only)
                                   ├─ apprise.mathewcsims.uk           → itself (Pi, LAN clients only)
                                   ├─ status.mathewcsims.uk            → itself (Pi)
                                   ├─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
@@ -200,6 +204,9 @@ memos-prospect-ukri-tus/  compose.yaml and data (Mac)
 blog/                  compose.yaml, MySQL, and Ghost content (Mac)
 landing-page/          compose.yaml, static site content (Mac, no secrets)
 karakeep/              compose.yaml, bookmark/asset data, search index (Mac)
+fizzy/                 compose.yaml and data (Mac — Kanban backlog, LAN-only)
+super-productivity/    compose.yaml only (Mac — static app, holds NO data;
+                       tasks live in the browser + copyparty's /sp-sync)
 apprise/               compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 uptime-kuma/           compose.yaml (Pi — deployed via scp + docker compose)
 kopia-server/          compose.yaml + Dockerfile + entrypoint.sh (Pi — deployed via scp + docker compose, LAN-only)

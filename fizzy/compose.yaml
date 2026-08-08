@@ -1,0 +1,146 @@
+# Fizzy (https://www.fizzy.do) — 37signals' open-source Kanban board, used
+# here as the BACKLOG: someday / now / done / never triage, not detailed task
+# work. Detailed day-to-day tasks live in ../super-productivity/, recurring
+# chores live in Tasks.org on the phone. See SETUP.md's "Task management"
+# section for why the split is three tools and not one.
+#
+# Same architecture as ../copyparty: TLS and the public hostname
+# (fizzy.mathewcsims.uk) are handled by Caddy on the Raspberry Pi (see
+# ../pi-reverse-proxy/). This Mac only serves plain HTTP on the LAN, and only
+# to the Pi — see ../pf-lockdown/, which restricts port 3600 the same way it
+# restricts copyparty's 3923.
+#
+# LAN/tailnet-gated at Caddy, not public. It holds a private backlog, and
+# Tailscale already covers access from away — the same call as docs,
+# paperless, author and fj.
+#
+# SQLite, no DB sidecar: Fizzy's own Docker deployment guide puts everything
+# under /rails/storage and ships no database service. Same discipline as
+# Forgejo and Memos.
+#
+# All secrets live in ./.env (gitignored — see .env.example), rendered from
+# Proton Pass at deploy time by ../scripts/pass-deploy.sh. NEVER run a bare
+# `podman compose up -d` here: SECRET_KEY_BASE would silently become blank,
+# and Rails would generate a new one, invalidating every session and any
+# encrypted column.
+name: fizzy
+
+services:
+  fizzy:
+    # Pinned by digest. Upstream publishes a rolling `:main` tag rather than
+    # versioned releases, so the tag alone would move under us silently —
+    # digest-pinning makes every upgrade a reviewed decision, same as every
+    # other image in this repo. Verified arm64-native, so no emulation on the
+    # M4 (unlike the organice attempt, which needed linux/amd64).
+    image: ghcr.io/basecamp/fizzy@sha256:c0aadd02a8249752998d3fe930ce99e24de6997522511ee052d1bb44616ac521
+    container_name: fizzy
+    restart: unless-stopped
+    # Do NOT set `user:` — on podman-machine (macOS) the container's root maps
+    # to the host user, giving sane ownership on the bind mount below. Same
+    # reasoning as copyparty's and Ghost's compose.yaml.
+    environment:
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+
+      # Used to build absolute links (emails, push payloads, secure links).
+      BASE_URL: https://fizzy.mathewcsims.uk
+
+      # The image runs as uid 1000 (verified: `user=1000:1000`, entrypoint
+      # `./bin/thrust ./bin/rails server`), so the Thruster front-end CANNOT
+      # bind its default port 80 — it crash-loops with
+      # "listen tcp :80: bind: permission denied". Upstream's own example
+      # compose publishes 80/443 and works only because plain Docker there
+      # grants the capability; it does not here.
+      #
+      # Moving Thruster to an unprivileged port is the right fix. The
+      # alternative — running the container as root to reclaim port 80 —
+      # would undo the image's own privilege separation for no benefit,
+      # since Caddy is what the outside world talks to anyway.
+      HTTP_PORT: "8080"
+
+      # DELIBERATELY NOT SET: TLS_DOMAIN and DISABLE_SSL.
+      #
+      # TLS_DOMAIN would make Fizzy terminate its own TLS, which is Caddy's
+      # job here. DISABLE_SSL would switch off `config.assume_ssl` AND
+      # `config.force_ssl` together (config/environments/production.rb:76-83
+      # derives both from it), losing HSTS and secure cookies.
+      #
+      # Leaving both unset is exactly right behind a terminating proxy:
+      # assume_ssl=true makes Rails treat the forwarded request as HTTPS —
+      # so force_ssl does not bounce it into a redirect loop — while
+      # force_ssl=true keeps secure cookies and HSTS. This is Rails' own
+      # documented pattern for this topology, not a workaround.
+
+      # Single-account mode is the DEFAULT and is left alone: Fizzy closes
+      # signups automatically as soon as the first account exists. That is
+      # the registration hardening every other app in this repo does
+      # explicitly (Vikunja's ENABLEREGISTRATION=false, Forgejo's
+      # DISABLE_REGISTRATION, Karakeep's DISABLE_SIGNUPS) — here it is
+      # upstream's default, so MULTI_TENANT must simply never be set to true.
+
+      # SMTP — Proton submission. This is the FIRST app in this repo with
+      # working outbound mail; every other one leaves it commented out.
+      #
+      # Fizzy needs it for real: sign-in is a magic link / 6-character code,
+      # so without mail the only way in is reading the code out of this
+      # container's log. That is fine for a one-off and unacceptable as the
+      # standing arrangement.
+      #
+      # Credentials come from the SHARED "Proton SMTP" Pass item — created
+      # deliberately as a general-purpose sender for this and future apps,
+      # not per-app — so Fizzy must be deployed with BOTH items:
+      #   ./scripts/pass-deploy.sh fizzy Fizzy "Proton SMTP"
+      # Deploying with only "Fizzy" leaves the credentials blank and every
+      # send fails authentication.
+      #
+      # THE FIELD NAMES DO NOT LINE UP, hence the mapping below: the Pass
+      # item uses SMTP_SERVER/SMTP_TOKEN (generic, provider-shaped) while
+      # Fizzy wants SMTP_ADDRESS/SMTP_PASSWORD (Rails ActionMailer-shaped).
+      # Mapping here rather than renaming the Pass fields keeps that item
+      # reusable by apps with their own naming.
+      #
+      # SMTP_TLS is deliberately unset: Proton's submission endpoint is
+      # STARTTLS on 587, and Fizzy's own docs say STARTTLS is used
+      # automatically — SMTP_TLS is only for implicit-TLS servers on 465.
+      #
+      # MAILER_FROM_ADDRESS must MATCH the address the Proton token was
+      # issued against (self-hosted@mathewcsims.uk). Proton rejects a From
+      # that differs from the token's own address, so this is not
+      # independently configurable — note it is the SENDING address, and is
+      # deliberately not the same as the account owner's address.
+      SMTP_ADDRESS: ${SMTP_SERVER}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_TOKEN}
+      MAILER_FROM_ADDRESS: ${SMTP_USERNAME}
+
+      # Web Push is unavailable without VAPID keys, which cannot be generated
+      # before first boot (they need a Rails console in the running
+      # container). Not needed: Fizzy's notifications are activity-based
+      # (comments, assignment), not the due-date reminders this stack relies
+      # on — those come from Tasks.org and Super Productivity. To add later:
+      #   podman exec -it fizzy bin/rails runner 'k=WebPush.generate_key; puts k.private_key, k.public_key'
+      # then set VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY here and in Pass.
+
+      TZ: Europe/London
+    volumes:
+      # Everything Fizzy persists — the SQLite databases and Active Storage
+      # uploads — lives under this one path, per its deployment guide.
+      - ./storage:/rails/storage
+    ports:
+      # IMPORTANT (same podman-machine quirk as every other Mac app): a
+      # published port must be bound to the Mac's *actual* LAN IP —
+      # podman-machine cannot bind 0.0.0.0 to the real interface. The Pi's
+      # Caddy connects here. The router does NOT forward 3600, and
+      # ../pf-lockdown/ additionally blocks every LAN source except the Pi.
+      - "10.0.1.14:3600:8080"
+    healthcheck:
+      # Rails' built-in health endpoint (config/routes.rb: get "up", to:
+      # "rails/health#show"). `curl` is present in this image and `wget` is
+      # NOT — checked inside the image rather than assumed, because that
+      # exact assumption broke a previous deployment here.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Rails boots slower than the static apps here; migrations run first.
+      start_period: 60s

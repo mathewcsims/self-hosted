@@ -23,6 +23,14 @@ services:
       - ./data:/w           # PRIVATE storage (admin-only, served at /)
       - ./public:/pub       # PUBLIC storage (anonymous read, served at /pub)
       - ./inbox:/inbox      # DROP BOX storage (password write-only, served at /inbox)
+      # Super Productivity's WebDAV sync target (served at /sp-sync). THIS
+      # BIND IS LOAD-BEARING: a [/sp-sync] volume in copyparty.conf with no
+      # matching mount here still "works" — copyparty logs
+      # `type=overlay` and writes into the container's ephemeral layer, so
+      # every task would be lost the next time the container is recreated,
+      # silently and with no error. Caught during setup by reading that log
+      # line rather than trusting that the volume block was enough.
+      - ./sp-sync:/sp-sync
     ports:
       # IMPORTANT: podman-machine on macOS will only expose a published port on
       # the *specific* host IP you name here — it cannot bind 0.0.0.0 to the real
