@@ -16,7 +16,7 @@
 #   ./scripts/pass-import-env.sh <app-dir> [item-title]
 #
 # Example:
-#   ./scripts/pass-import-env.sh vikunja
+#   ./scripts/pass-import-env.sh karakeep
 #   ./scripts/pass-import-env.sh bookstack BookStack
 
 set -eu

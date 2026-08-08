@@ -240,7 +240,6 @@ dump_mysql bookstack-db mariadb-dump  bookstack
 
 dump_sqlite "$REPO_ROOT/owl/data/memos_prod.db"                    owl
 dump_sqlite "$REPO_ROOT/memos-prospect-ukri-tus/data/memos_prod.db" memos-prospect
-dump_sqlite "$REPO_ROOT/vikunja/db/vikunja.db"                     vikunja
 dump_sqlite "$REPO_ROOT/forgejo/data/gitea/gitea.db"               forgejo
 dump_sqlite "$REPO_ROOT/karakeep/data/db.db"                       karakeep
 dump_sqlite "$REPO_ROOT/wanderer/data/pb_data/data.db"             wanderer
@@ -283,7 +282,7 @@ done
 # at all — counts as broken, which is exactly how that incident presented.
 UNHEALTHY=""
 echo "=== post-dump health check ==="
-for _host in owl prospect-ukri-tus vikunja karakeep wanderer fj blog author docs; do
+for _host in owl prospect-ukri-tus karakeep wanderer fj blog author docs; do
     _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$_host.mathewcsims.uk/" 2>/dev/null || true)
     [ -z "$_code" ] && _code=000
     case "$_code" in

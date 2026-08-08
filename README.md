@@ -15,13 +15,11 @@ in front of the lot.
 |-----|-----|---------|
 | [copyparty](https://github.com/9001/copyparty) | `cp.mathewcsims.uk` | Mac |
 | [Memos](https://github.com/usememos/memos) | `prospect-ukri-tus.mathewcsims.uk` | Mac |
-| [Vikunja](https://vikunja.io) | `vikunja.mathewcsims.uk` | Mac |
 | [Ghost](https://ghost.org) | `blog.mathewcsims.uk` | Mac (replaces paid Ghost(Pro) hosting) |
 | [LittleLink](https://github.com/sethcottle/littlelink) | `mathewcsims.uk` | Mac (bare apex domain — static, no backend) |
 | [Karakeep](https://github.com/karakeep-app/karakeep) | `karakeep.mathewcsims.uk` | Mac (migrated from a separate Tailscale-only deployment) |
 | [Apprise API](https://github.com/caronc/apprise-api) | `apprise.mathewcsims.uk` | Pi (LAN-only — generic notification relay to Discord) |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.mathewcsims.uk` | Pi (deliberately — stays up if the Mac doesn't) |
-| Vikunja webhook relay (this repo) | `vikunja-relay.mathewcsims.uk` | Pi (LAN-only — bridges Vikunja's webhook events to Apprise) |
 | Tailscale webhook relay (this repo) | `tailscale-relay.mathewcsims.uk` | Pi (public — bridges Tailscale's webhook events to Apprise; HMAC-verified) |
 | [Kopia](https://kopia.io) | `backup.mathewcsims.uk` | Pi (LAN-only — encrypted, deduplicated backups to Backblaze B2) |
 | Owl ([Memos](https://github.com/usememos/memos)) | `owl.mathewcsims.uk` | Mac (personal notes instance, migrated from a Tailscale-only ScaleTail deployment — closed registration, unrelated to the Prospect Memos instance above) |
@@ -78,12 +76,10 @@ internet → DrayTek router → Pi (Caddy, terminates HTTPS, routes by hostname)
                                   ├─ mathewcsims.uk                   → Mac
                                   ├─ cp.mathewcsims.uk                → Mac
                                   ├─ prospect-ukri-tus.mathewcsims.uk → Mac
-                                  ├─ vikunja.mathewcsims.uk           → Mac
                                   ├─ blog.mathewcsims.uk              → Mac
                                   ├─ karakeep.mathewcsims.uk          → Mac
                                   ├─ apprise.mathewcsims.uk           → itself (Pi, LAN clients only)
                                   ├─ status.mathewcsims.uk            → itself (Pi)
-                                  ├─ vikunja-relay.mathewcsims.uk     → itself (Pi, LAN clients only)
                                   ├─ backup.mathewcsims.uk            → itself (Pi, LAN clients only)
                                   ├─ owl.mathewcsims.uk               → Mac
                                   ├─ author.mathewcsims.uk            → Mac (LAN clients only)
@@ -201,13 +197,11 @@ can wedge the job indefinitely any more, and a skipped run now alerts.
 ```
 copyparty/            compose.yaml, config, and data (Mac)
 memos-prospect-ukri-tus/  compose.yaml and data (Mac)
-vikunja/               compose.yaml and data (Mac)
 blog/                  compose.yaml, MySQL, and Ghost content (Mac)
 landing-page/          compose.yaml, static site content (Mac, no secrets)
 karakeep/              compose.yaml, bookmark/asset data, search index (Mac)
 apprise/               compose.yaml (Pi — deployed via scp + docker compose, LAN-only)
 uptime-kuma/           compose.yaml (Pi — deployed via scp + docker compose)
-vikunja-webhook-relay/ compose.yaml + Dockerfile + relay.py (Pi — deployed via scp + docker compose, LAN-only)
 kopia-server/          compose.yaml + Dockerfile + entrypoint.sh (Pi — deployed via scp + docker compose, LAN-only)
 kopia-mac/             backup.sh + LaunchAgent plist (Mac — scheduled snapshots, no compose project)
 owl/                   compose.yaml, logo SVG, and data (Mac — personal Memos instance)
@@ -225,8 +219,8 @@ pi-reverse-proxy/      Caddy reverse proxy (Pi — deployed via scp + docker com
 autostart/             launchd auto-start for podman on the Mac
 scripts/               deploy tooling that fetches secrets from Proton Pass
                        at deploy time — see SETUP.md
-pf-lockdown/           macOS pf firewall rules restricting copyparty/Vikunja
-                       to LAN-published-port access from the Pi only
+pf-lockdown/           macOS pf firewall rules restricting copyparty's
+                       LAN-published port to access from the Pi only
 SETUP.md               full setup, deployment, and troubleshooting guide
 SECURITY.md            how to report a vulnerability
 LICENSE                MIT, with a carve-out for the Prospect logo files

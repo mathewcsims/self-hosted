@@ -84,7 +84,7 @@ services:
       # No self-registration — was open (DISABLE_SIGNUPS=false) under the
       # old Tailscale-only deployment, where only devices on the tailnet
       # could even reach the signup page. Now that this is a public
-      # hostname, closed permanently, same reasoning as Vikunja/Ghost
+      # hostname, closed permanently, same reasoning as Ghost
       # elsewhere in this repo. Existing account(s) are unaffected.
       DISABLE_SIGNUPS: "true"
       DISABLE_PASSWORD_AUTH: "false"

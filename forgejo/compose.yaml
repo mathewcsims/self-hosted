@@ -7,8 +7,8 @@
 #
 # SQLite, not a DB sidecar: Forgejo/Gitea's own docs treat sqlite3 as a
 # fully supported production backend for low-concurrency, single-user
-# instances like this one (this repo already does the same for Vikunja/
-# Memos) — no MariaDB/Postgres container needed here.
+# instances like this one (this repo already does the same for Memos) —
+# no MariaDB/Postgres container needed here.
 #
 # Registration closed from first boot (FORGEJO__service__DISABLE_REGISTRATION),
 # and the only admin account is created via the `forgejo admin user create`

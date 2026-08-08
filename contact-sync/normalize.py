@@ -19,7 +19,7 @@ Contacts.app JXA) is reduced to the same dict:
       "modified":  ISO-8601 UTC timestamp or "" (drives newest-wins),
     }
 
-Stdlib only, matching this repo's other Python (vikunja-webhook-relay).
+Stdlib only, matching this repo's other Python (wanderer/memo-relay).
 Phone normalization assumes UK numbers for bare national formats —
 07... → +447..., 0044/44-prefixed → +44 — anything else keeps digits
 with a leading + if it had one. Good enough for identity-matching; the

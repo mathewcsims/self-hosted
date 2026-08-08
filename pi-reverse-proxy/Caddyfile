@@ -7,7 +7,7 @@
 	# order, so it must be told where to run. "first" = every site block
 	# checks its rate-limit zones before anything else (headers, rewrites,
 	# proxying) — an over-limit request is rejected as cheaply as possible,
-	# and never reaches copyparty/Memos/Vikunja at all.
+	# and never reaches copyparty/Memos/Paperless at all.
 	order rate_limit first
 
 	# Persist the access log to a file on disk (bind-mounted out of the
@@ -28,10 +28,11 @@
 
 # Reusable hardening headers — HSTS (force HTTPS on repeat visits),
 # clickjacking and MIME-sniffing protection, conservative referrer leakage.
-# Was Vikunja-only ("wasn't asked for elsewhere"); now applied everywhere
-# per "harden Copyparty/Nimbus/Caddy in general" (Nimbus decommissioned
-# 2026-08-04; the blanket policy it prompted stays) — it's free and every app
-# here is either private or has an admin login worth protecting.
+# Originally added for one app only ("wasn't asked for elsewhere"); now
+# applied everywhere per "harden Copyparty/Nimbus/Caddy in general" (Nimbus
+# decommissioned 2026-08-04, Vikunja 2026-08-08; the blanket policy they
+# prompted stays) — it's free and every app here is either private or has an
+# admin login worth protecting.
 (security_headers) {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -64,8 +65,8 @@
 
 # General-purpose per-site, per-IP request budget — coarse abuse/DoS
 # protection, not a substitute for each app's own auth-specific limits
-# (copyparty has --ban-pw/--ban-403 built in and enabled by default; Vikunja
-# has VIKUNJA_RATELIMIT_*; Memos has none at all, see its own zones below).
+# (copyparty has --ban-pw/--ban-403 built in and enabled by default; Memos
+# has none at all, see its own zones below).
 # 300 req/min/IP is loose enough not to bother a real browsing session
 # (page + assets + polling) while still capping a single source's blast
 # radius. Zone name is parameterized per site (import ... <name>) so each
@@ -290,22 +291,9 @@ owl.mathewcsims.uk {
 	}
 }
 
-# ── Vikunja (running on the Mac) ───────────────────────────────────────────
-# Clean public URL https://vikunja.mathewcsims.uk. Same pattern as copyparty
-# above. Vikunja's own image is pinned to an exact patched version and
-# hardened at the app level (no self-registration, rate limiting on, link
-# sharing off, trusted-proxy config so it can tell real clients from the
-# podman gateway) — see vikunja/compose.yaml for the reasoning.
-vikunja.mathewcsims.uk {
-	import access_log
-	import security_headers
-	import general_ratelimit vikunja
-	reverse_proxy http://{$MAC_IP}:3456
-}
-
 # ── Ghost blog (running on the Mac) ───────────────────────────────────────
 # Clean public URL https://blog.mathewcsims.uk — replaces paid Ghost(Pro)
-# hosting. Same pattern as Vikunja above. Ghost's own docs warn that without
+# hosting. Same pattern as copyparty above. Ghost's own docs warn that without
 # X-Forwarded-Proto being set correctly behind a TLS-terminating proxy, it
 # creates an infinite HTTPS redirect loop — Caddy's reverse_proxy sets this
 # by default, so nothing extra is needed here for that specifically.
@@ -476,30 +464,6 @@ tailscale-relay.mathewcsims.uk {
 	import security_headers
 	import general_ratelimit tailscale_relay
 	reverse_proxy tailscale-webhook-relay:8080
-}
-
-# ── Vikunja webhook relay (running HERE on the Pi, LAN-ONLY) ─────────────
-# Clean public URL https://vikunja-relay.mathewcsims.uk, but only for LAN
-# clients — same LAN-gate idiom as Apprise above. Bridges
-# Vikunja's webhook payload shape to Apprise's /notify shape (see
-# ../vikunja-webhook-relay/compose.yaml for why this exists at all — the two
-# don't line up without something in between). The real access control is
-# HMAC-SHA256 verification inside the relay itself (X-Vikunja-Signature),
-# not this LAN-gate — but every other machine-to-machine app in this repo
-# gets one anyway, so this does too, for consistency and defense in depth.
-vikunja-relay.mathewcsims.uk {
-	import access_log
-	import security_headers
-	import general_ratelimit vikunja_relay
-
-	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
-	handle @lan {
-		reverse_proxy vikunja-webhook-relay:8080
-	}
-	# non-LAN (internet) clients: closed connection, nothing revealed
-	handle {
-		abort
-	}
 }
 
 # ── Kopia backup server (running HERE on the Pi, LAN-ONLY) ───────────────

@@ -19,13 +19,14 @@ services:
   memos:
     # Pinned to the exact digest behind :stable as of 2026-07-02 (verified
     # via Docker Hub's API to be v0.29.1, the actual current stable release —
-    # not stale like Vikunja's old default tag was). Same discipline as every
-    # other app in this repo: an upstream push to :stable can't silently
-    # change what's running here. Checked against GitHub security advisories
-    # for usememos/memos: every known CVE (SSRF via link-preview fetching,
-    # stale tokens after password change, a CORS privilege-escalation bug,
-    # an old SSRF+XSS pair in a since-removed REST endpoint) was fixed well
-    # before this version — nothing unpatched applies.
+    # not stale, the way an unmaintained registry tag can be). Same
+    # discipline as every other app in this repo: an upstream push to
+    # :stable can't silently change what's running here. Checked against
+    # GitHub security advisories for usememos/memos: every known CVE (SSRF
+    # via link-preview fetching, stale tokens after password change, a CORS
+    # privilege-escalation bug, an old SSRF+XSS pair in a since-removed REST
+    # endpoint) was fixed well before this version — nothing unpatched
+    # applies.
     image: docker.io/neosmemo/memos@sha256:3e1253477066eb2aefa91145f7f9038bb931ed88c8a3ee05310a933594cdba7d
     container_name: memos-prospect-ukri-tus
     restart: unless-stopped

@@ -219,8 +219,6 @@ SOURCES="
 $REPO_ROOT/db-dumps
 $REPO_ROOT/karakeep/data
 $REPO_ROOT/karakeep/meilisearch-data
-$REPO_ROOT/vikunja/db
-$REPO_ROOT/vikunja/files
 $REPO_ROOT/blog/db
 $REPO_ROOT/blog/content
 $REPO_ROOT/blog/traffic-analytics-data
