@@ -3833,6 +3833,18 @@ its `settings.json` has no machine-autostart preference and nothing shows it
 starting or stopping machines. Co-timing was the entire case, which is not
 one.
 
+**`reload.sh` now installs the anchor from the repo (2026-08-08).** It used
+to only reload `/etc/pf.conf`, so editing `pf-lockdown/<anchor>` in the repo
+and running the script applied **nothing** — the file had to be copied to
+`/etc/pf.anchors/` by hand as a separate step, which is easy to forget and
+impossible to notice, because the reload succeeds and reports success either
+way. That is exactly what happened when ports 3600 and 3601 were added for
+Fizzy and Super Productivity: both stayed reachable from every device on the
+LAN while the repo, the commit and this document all said otherwise. The repo
+is now the source of truth, as it already is for the Pi's Caddyfile — so a
+hand-edit of the live file will be overwritten on the next run, which is the
+intended direction.
+
 **BOTH podman plists need this key, not just the autostart one.** The
 watchdog now runs `podman machine start` in its remediation path, so it has
 exactly the same exposure — and there it is worse than a plain omission:
