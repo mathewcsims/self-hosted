@@ -9,13 +9,14 @@ import urllib.request
 # apprise python3 /scripts/seed.py`, with the line piped in over stdin — never
 # as a command-line argument, since the URLs embed secrets.
 #
-# Two keys are seeded today:
-#   self-hosted — Discord + ntfy topic "alerts". The general firehose every
-#                 notifier in the repo posts to.
-#   fail2ban    — ntfy topic "fail2ban" at priority=low, and NOTHING else.
-#                 Ban/unban events fire dozens of times a day off the
-#                 caddy-abuse jail, which drowned out everything else on the
-#                 shared key; they get their own quiet topic instead.
+# Three keys are seeded today:
+#   self-hosted     — Discord + ntfy topic "alerts". The general firehose
+#                     every notifier in the repo posts to.
+#   fail2ban        — ntfy topic "fail2ban" at priority=low, and NOTHING
+#                     else. The caddy-abuse jail's bans, which fired often
+#                     enough to drown out everything on the shared key.
+#   fail2ban-urgent — Discord + ntfy "alerts" at priority=high. The other
+#                     jails' bans (sshd), which are rare and want a buzz.
 line = sys.stdin.read().strip()
 key, _, urls = line.partition("\t")
 if not key or not urls:

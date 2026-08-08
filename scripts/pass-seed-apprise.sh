@@ -4,13 +4,20 @@
 # after `docker compose up -d` in ../apprise/, and again any time the Discord
 # webhook or the ntfy publisher token is rotated in Pass.
 #
-# Two config keys get registered:
-#   self-hosted — Discord + ntfy topic "alerts". The general firehose that
-#                 every notifier in this repo posts to.
-#   fail2ban    — ntfy topic "fail2ban" at priority=low, Discord deliberately
-#                 excluded. The caddy-abuse jail bans dozens of IPs a day
-#                 (119 lifetime bans by 2026-08-08, 54 concurrently banned),
-#                 which buried every other alert on the shared key.
+# Three config keys get registered:
+#   self-hosted      — Discord + ntfy topic "alerts". The general firehose
+#                      that every notifier in this repo posts to.
+#   fail2ban         — ntfy topic "fail2ban" at priority=low, Discord
+#                      deliberately excluded. The caddy-abuse jail's bans:
+#                      internet background radiation, worth logging but not
+#                      worth a buzz.
+#   fail2ban-urgent  — Discord + ntfy topic "alerts" at priority=high. The
+#                      OTHER jails' bans (sshd today, anything added later by
+#                      default), which are rare and genuinely worth
+#                      interrupting for. Deliberately reuses "alerts" rather
+#                      than a third topic, so there is nothing new to
+#                      subscribe to on the phone.
+# pi-fail2ban/notify-apprise.sh picks between the latter two by jail name.
 #
 # Secrets only ever travel over stdin: this script's own fetch -> ssh stdin ->
 # a `read` loop in the remote shell -> a pipe into `docker exec`'s stdin,
@@ -115,13 +122,23 @@ urls.append(f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&f
 # confirmed from NotifyNtfy.template_args in the running container). It maps
 # straight to the X-Priority header ntfy reads, and is NOT derived from the
 # POSTed `type`, so `type=failure` no longer forces a loud notification.
-fail2ban_url = f"ntfys://ntfy.mathewcsims.uk/fail2ban?token={ntfy_token}&auth=token&format=markdown&priority=low"
+quiet_url = f"ntfys://ntfy.mathewcsims.uk/fail2ban?token={ntfy_token}&auth=token&format=markdown&priority=low"
+
+# The other jails (sshd, and any added later) keep Discord and go to the
+# main "alerts" topic, but at priority=high so the phone actually buzzes for
+# them. Same topic as the firehose on purpose — nothing new to subscribe to.
+urgent_urls = [
+    urls[0],
+    f"ntfys://ntfy.mathewcsims.uk/alerts?token={ntfy_token}&auth=token&format=markdown&priority=high",
+]
 
 print("self-hosted\t" + ",".join(urls))
-print("fail2ban\t" + fail2ban_url)
+print("fail2ban\t" + quiet_url)
+print("fail2ban-urgent\t" + ",".join(urgent_urls))
 ' \
     | ssh mathew@babel 'while IFS= read -r LINE; do printf "%s\n" "$LINE" | docker exec -i apprise python3 /scripts/seed.py; done'
 
 echo "Done. Test from a LAN machine with:"
 echo "  curl -X POST https://apprise.mathewcsims.uk/notify/self-hosted -d 'body=test'"
 echo "  curl -X POST https://apprise.mathewcsims.uk/notify/fail2ban -d 'body=test'"
+echo "  curl -X POST https://apprise.mathewcsims.uk/notify/fail2ban-urgent -d 'body=test'"
