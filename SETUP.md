@@ -2368,10 +2368,13 @@ out, which is expected).
 
 To install on Android:
 
-1. Open **Chrome** — not Firefox, whose PWA handling on Android is weaker.
-2. Go to `https://fizzy.mathewcsims.uk` and **sign in first.** Installing
-   from the signed-out page pins a login screen and registers the service
-   worker against it.
+1. Open **Chrome**. Firefox on Android can add a home-screen shortcut but its
+   PWA support is weaker; Chrome is the reliable route.
+2. Go to `https://fizzy.mathewcsims.uk` and sign in. Signing in first is not
+   strictly required — the manifest's `start_url` is `/` regardless of
+   session, so an app installed while logged out simply opens the sign-in
+   page once and is fine thereafter. It is still the better order, because
+   Chrome gates its install prompt on some page engagement.
 3. Chrome menu (**⋮**) → **Add to Home screen** (it may say **Install app**).
 4. Accept the name, confirm.
 5. It appears with the Fizzy icon and opens standalone — no address bar, no
