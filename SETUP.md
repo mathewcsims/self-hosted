@@ -3505,8 +3505,26 @@ its `settings.json` has no machine-autostart preference and nothing shows it
 starting or stopping machines. Co-timing was the entire case, which is not
 one.
 
-**The plist is now tracked in the repo**, which it was not before — only the
-script was, unlike `podman-watchdog/` which tracks both. Reinstall it with:
+**BOTH podman plists need this key, not just the autostart one.** The
+watchdog now runs `podman machine start` in its remediation path, so it has
+exactly the same exposure — and there it is worse than a plain omission:
+without the key the watchdog would start the VM, alert "restarted
+automatically", exit, have launchd kill the VM it just started, and repeat
+until `MAX_RESTART_ATTEMPTS` was exhausted — burning every attempt while
+reporting success each time, and ending with the stack still down. Caught on
+review of the commit that added the restart, before it ever ran against a
+real outage.
+
+Every other launchd job in this repo was checked and does **not** need it:
+`contact-sync`, `kopia-mac-backup`, `kopia-verify`, `kopia-mirror`,
+`trivy-scan`, `paperless-task-alert` and `pf-lan-lockdown` all run
+synchronously and leave no background process behind. The rule is narrow —
+a job needs `AbandonProcessGroup` only if the thing it starts is *meant* to
+outlive it.
+
+**The autostart plist is now tracked in the repo**, which it was not before
+— only the script was, unlike `podman-watchdog/` which tracked both.
+Reinstall either with:
 
 ```
 cp autostart/uk.mathewcsims.podman-autostart.plist ~/Library/LaunchAgents/
