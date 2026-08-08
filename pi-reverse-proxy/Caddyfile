@@ -291,6 +291,95 @@ owl.mathewcsims.uk {
 	}
 }
 
+# ── Fizzy — backlog / triage board (running on the Mac, LAN-ONLY) ─────────
+# Clean public URL https://fizzy.mathewcsims.uk, LAN + tailnet clients only.
+# Holds a private backlog; Tailscale covers access from away, same call as
+# docs, paperless, author and fj. Fizzy has its own account and closes
+# signups once the first one exists, so this gate is defence in depth rather
+# than the only control.
+fizzy.mathewcsims.uk {
+	import access_log
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		# Hand-written rather than `import general_ratelimit fizzy` because
+		# the snippet applies at block level, outside this handle — same as
+		# BookStack, Paperless, Forgejo, Immich and docs.
+		rate_limit {
+			zone rl_fizzy {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+		}
+		reverse_proxy http://{$MAC_IP}:3600
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
+# ── Super Productivity + its WebDAV sync target (LAN-ONLY) ────────────────
+# Clean public URL https://sp.mathewcsims.uk, LAN + tailnet clients only.
+#
+# TWO BACKENDS ON ONE HOSTNAME, AND THAT IS THE POINT. `/sp-sync/*` goes to
+# copyparty; everything else goes to the Super Productivity static app.
+# Super Productivity is local-first and syncs FROM THE BROWSER, so if its
+# WebDAV target were on another hostname every request would be
+# cross-origin. copyparty exposes only --acao/--acam and has no control over
+# Access-Control-Allow-Headers, while SP sends `Depth` and `If-Match`, which
+# are not CORS-safelisted — preflight would fail. Serving both from one
+# origin removes the problem instead of configuring around it, and SP has a
+# dedicated PotentialCorsError for exactly the failure this avoids.
+#
+# THE PATH MUST NOT BE REWRITTEN. copyparty puts its own absolute paths in
+# PROPFIND <D:href> (verified: `<D:href>/sp-sync/</D:href>`), and the client
+# resolves subsequent requests against them — so `handle` with a plain
+# reverse_proxy, never `handle_path`, which would strip the prefix and make
+# every href point somewhere that does not exist.
+#
+# The app itself has NO login — it is a static bundle with all state in the
+# browser — so for that half this gate IS the only access control. The
+# copyparty half is separately protected by the scoped `spsync` account.
+sp.mathewcsims.uk {
+	import access_log
+	import security_headers
+
+	@lan remote_ip private_ranges 100.64.0.0/10 # + Tailscale CGNAT range
+	handle @lan {
+		route {
+			# `route` pins source order; without it the adapter reorders by
+			# its own directive precedence and the /sp-sync handle could run
+			# after the catch-all had already answered. Same lesson as the
+			# Owl and docs blocks above.
+			rate_limit {
+				zone rl_sp {
+					key {remote_host}
+					events 300
+					window 1m
+				}
+			}
+
+			# WebDAV sync target — copyparty's /sp-sync volume, scoped to the
+			# `spsync` account. Same path on both sides, deliberately.
+			handle /sp-sync/* {
+				reverse_proxy http://{$MAC_IP}:3923
+			}
+
+			# Everything else: the Super Productivity static app.
+			handle {
+				reverse_proxy http://{$MAC_IP}:3601
+			}
+		}
+	}
+	# non-LAN (internet) clients: closed connection, nothing revealed
+	handle {
+		abort
+	}
+}
+
 # ── Ghost blog (running on the Mac) ───────────────────────────────────────
 # Clean public URL https://blog.mathewcsims.uk — replaces paid Ghost(Pro)
 # hosting. Same pattern as copyparty above. Ghost's own docs warn that without

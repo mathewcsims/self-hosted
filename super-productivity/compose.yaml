@@ -1,0 +1,54 @@
+# Super Productivity (https://super-productivity.com) — the middle tier of
+# the three-tool task setup: detailed day-to-day to-dos with reminders, that
+# are too heavy for the Fizzy backlog and not recurring chores. Backlog is
+# ../fizzy/, recurring chores are Tasks.org on the phone and watch. See
+# SETUP.md's "Task management" section.
+#
+# THIS CONTAINER HOLDS NO DATA. It is nginx serving a static Angular bundle
+# (upstream Dockerfile's final stage is `FROM nginx:1` with the built app
+# copied to /usr/share/nginx/html). Super Productivity is local-first: your
+# tasks live in the BROWSER's IndexedDB on each device, and are synced by the
+# app itself to WebDAV. There is no server-side database, no accounts, and
+# nothing here to back up — losing this container loses nothing.
+#
+# That also means the sync target is what actually matters. It is copyparty's
+# /sp-sync volume, reached at https://sp.mathewcsims.uk/sp-sync/ — the SAME
+# ORIGIN as this app, deliberately. See ../pi-reverse-proxy/Caddyfile for why
+# that matters (CORS) and ../copyparty/cfg/copyparty.conf for the volume and
+# the dav-port it is served from.
+#
+# LAN/tailnet-gated at Caddy. There is no login on this app — there is
+# nothing to log into — so the gate is the only access control, and without
+# it anyone could load the client. They would see an empty instance, but
+# there is no reason to publish it.
+name: super-productivity
+
+services:
+  super-productivity:
+    # Pinned by digest; upstream's `:latest` would move silently. Verified
+    # arm64-native, so no emulation on the M4.
+    image: docker.io/johannesjo/super-productivity@sha256:ae91fe9ac19561e0f3669d15a2c4c71d7a75c43a29eb44ddc010ae50d1f63c82
+    container_name: super-productivity
+    restart: unless-stopped
+    environment:
+      # The image's entrypoint templates nginx's config from this; 80 is its
+      # own default, stated explicitly so the port mapping below is readable
+      # rather than depending on an unwritten default.
+      APP_PORT: "80"
+      TZ: Europe/London
+    # No volumes, deliberately — see the header. Adding one would imply this
+    # container holds state that needs backing up, and it does not.
+    ports:
+      # Bound to the Mac's real LAN IP (podman-machine cannot bind 0.0.0.0 to
+      # the real interface). Reached only by the Pi's Caddy; the router does
+      # not forward 3601, and ../pf-lockdown/ blocks every LAN source but the
+      # Pi.
+      - "10.0.1.14:3601:80"
+    healthcheck:
+      # `curl` is present in this image and `wget` is NOT — checked inside
+      # the image rather than assumed.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

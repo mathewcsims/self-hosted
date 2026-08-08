@@ -10,6 +10,8 @@ follow the same recipe — see "Adding another app" near the end.
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
 | Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
+| Fizzy | `https://fizzy.mathewcsims.uk` | Mac `:3600`, LAN-only | magic link / code to `mat@mathewcsims.uk`; signups close after the first account |
+| Super Productivity | `https://sp.mathewcsims.uk` | Mac `:3601`, LAN-only | **no login — none exists**; the LAN gate is the whole access control |
 | Landing page | `https://mathewcsims.uk` | Mac `:3080` | static site, no login |
 | Karakeep | `https://karakeep.mathewcsims.uk` | Mac `:3000` | set up on first visit; signups disabled |
 | Apprise API | `https://apprise.mathewcsims.uk` | **Pi**, LAN-only | no login — LAN-gate is the only access control |
@@ -34,6 +36,7 @@ follow the same recipe — see "Adding another app" near the end.
        │   port published):                                │
        │     Mac:    mathewcsims.uk, cp, prospect-ukri-    │
        │             tus, blog, karakeep, owl,             │
+       │             fizzy*, sp*,                          │
        │             author*, fj*                          │
        │             (author/fj are BookStack/Forgejo,     │
        │             LAN/tailnet-gated)                    │
@@ -53,6 +56,9 @@ follow the same recipe — see "Adding another app" near the end.
                        blog (Ghost)  :2368  (MySQL)
                        landing-page  :3080  (static)
                        karakeep  :3000  (sqlite + Meilisearch)
+                       fizzy  :3600  (sqlite)
+                       super-productivity  :3601  (static,
+                         no data — syncs to copyparty)
 
                      slartibartfast 10.0.1.11 — Ubuntu box,
                      docker-compose (NOT podman):
@@ -102,6 +108,10 @@ section below says which.
 | `owl/owl-logo.svg` | **Mac** | source asset for the instance logo (tracked; the deployed logo itself is a data URI in Memos' own DB) |
 | `owl/owl-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
 | `owl/document-viewer/` | **Mac** | client-side attachment preview feature — source (`src/`), esbuild config, and a separate Caddy sidecar (`compose.yaml`, own `Caddyfile`) serving the built bundle; deployed via `scripts/pass-deploy-owl-document-viewer.sh`, see the Owl section below |
+| `fizzy/compose.yaml` | **Mac** | Fizzy Kanban backlog; reads secrets from the "Fizzy" **and** "Proton SMTP" Pass items |
+| `fizzy/storage/` | **Mac** | **your backlog lives here** — SQLite + uploads |
+| `super-productivity/compose.yaml` | **Mac** | static Super Productivity bundle. **No volume, no data** — tasks live in the browser and in copyparty's `/sp-sync` |
+| `copyparty/sp-sync/` | **Mac** | **Super Productivity's synced tasks** — the only durable copy |
 | `blog/compose.yaml` | **Mac** | Ghost + MySQL + traffic-analytics; reads secrets from Proton Pass |
 | `blog/db/` | **Mac** | **Ghost's MySQL datadir** |
 | `blog/content/` | **Mac** | **your posts, images, themes live here** |
@@ -1338,9 +1348,35 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 > below for what was checked in source and what the two structural results
 > are.
 >
-> The agreed direction is to **build**, smallest-piece-first, with the
-> interface built before any backend — because interface, not features, is
-> what has killed almost every candidate. Nothing has been built yet.
+> **SUPERSEDED 2026-08-08 (later the same day) — a three-tool answer was
+> adopted and deployed.** Not a single product, and not the build below:
+>
+> | Tier | Tool | Where |
+> |---|---|---|
+> | Backlog — someday/now/done/never | **Fizzy** | `fizzy.mathewcsims.uk`, LAN-only |
+> | Day-to-day detailed to-dos + reminders | **Super Productivity** | `sp.mathewcsims.uk`, LAN-only, syncs to copyparty |
+> | Recurring chores | **Tasks.org** | phone **and watch**, local, no sync |
+>
+> **Why this works where five sweeps failed: each tool's fatal flaw is
+> neutralised by the role it is given.** Tasks.org's door-closer was that
+> `repeat_from` does not sync — irrelevant when it never leaves one device.
+> Super Productivity's was having no server, so reminders are per-device
+> with no backstop — acceptable for work you are actively engaged with, once
+> the must-not-miss chores live elsewhere. Fizzy's flatness does not matter
+> because a backlog is a list. The `card_not_nows` table means "not now" is
+> a first-class concept in Fizzy, not a column convention.
+>
+> Tasks.org earned its place on something no other candidate had: real
+> `:wear` and `:wear-datalayer` Gradle modules — a genuine watch app with a
+> data layer, not mirrored notifications.
+>
+> **What this does NOT cover: deep decomposition.** Fizzy's `steps` are a
+> flat checklist (no nesting, no ordering, no promote-to-card) and Super
+> Productivity is one level in practice. The original "closer to a genuine
+> project planning system" requirement is unmet, knowingly.
+>
+> The build below is shelved, not cancelled. Everything above it stands as
+> the record of why nothing off-the-shelf fits as a single product.
 
 ### The requirements, restated 2026-08-08
 
@@ -2248,6 +2284,152 @@ create it as root first and fixing ownership after is the harder path.
    loopback path at all.
 5. Visit `https://speedtest.mathewcsims.uk` from a LAN device and log in with
    the admin credentials from `speedtest-tracker/.env`.
+
+---
+
+## Fizzy (https://fizzy.mathewcsims.uk) — LAN-only
+
+[Fizzy](https://www.fizzy.do), 37signals' open-source Kanban board, used as
+the **backlog**: someday / now / done / never triage. The other two tiers of
+the task setup are Super Productivity (below) and Tasks.org on the phone and
+watch — see "Task management" for why it is three tools.
+
+Single container, SQLite under `/rails/storage`, no DB sidecar — its own
+deployment guide ships no database service. Image pinned by digest because
+upstream publishes a rolling `:main` tag rather than versioned releases.
+Verified arm64-native, so no emulation on the M4.
+
+**LAN/tailnet-gated at Caddy**, matching docs, paperless, author and fj. It
+holds a private backlog and Tailscale already covers access from away.
+
+**Registration hardening comes free, and must not be undone.** Fizzy runs in
+single-account mode by default and closes signups permanently as soon as the
+first account exists — the same posture Vikunja needed
+`ENABLEREGISTRATION=false` for. **Never set `MULTI_TENANT=true`.** Until the
+first account is created, signups are OPEN to anyone who can reach the
+hostname; the LAN gate is the only thing standing in front of that window.
+
+**It runs as uid 1000, so it cannot bind port 80.** Thruster (the front-end
+in `./bin/thrust ./bin/rails server`) defaults to port 80 and crash-loops
+with `listen tcp :80: bind: permission denied`. Upstream's example compose
+publishes 80/443 and works only because plain Docker there grants the
+capability. Fixed with `HTTP_PORT=8080` and a `3600:8080` mapping, rather
+than running the container as root and undoing the image's own privilege
+separation.
+
+**TLS_DOMAIN and DISABLE_SSL are both deliberately unset.** `DISABLE_SSL`
+switches off `config.assume_ssl` AND `config.force_ssl` together
+(`config/environments/production.rb:76-83` derives both from it), losing
+HSTS and secure cookies. Leaving both unset is Rails' documented pattern
+behind a terminating proxy: `assume_ssl` stops `force_ssl` bouncing the
+forwarded request into a redirect loop, while `force_ssl` keeps the security
+headers.
+
+**Mail — the first working SMTP in this repo.** Every other app here leaves
+it commented out; Fizzy needs it, because sign-in is a magic link or
+6-character code and the alternative is reading codes out of the container
+log forever. Credentials live in the shared **"Proton SMTP"** Pass item
+(`self-hosted@mathewcsims.uk`, `smtp.protonmail.ch:587`, STARTTLS),
+deliberately general-purpose rather than per-app. **The field names do not
+line up** — Pass uses `SMTP_SERVER`/`SMTP_TOKEN`, Rails wants
+`SMTP_ADDRESS`/`SMTP_PASSWORD` — so `compose.yaml` maps them, keeping the
+Pass item reusable. Proton requires the From address to match the address
+the token was issued against, so `MAILER_FROM_ADDRESS` is not independently
+configurable.
+
+**Deploy with BOTH Pass items**, or every send fails authentication:
+
+```
+./scripts/pass-deploy.sh fizzy Fizzy "Proton SMTP"
+```
+
+**Web Push is unavailable** — no VAPID keys, which cannot be generated
+before first boot. Not needed: Fizzy's notifications are activity-based
+(comments, assignment), not the due-date reminders this stack relies on. To
+add later:
+
+```
+podman exec -it fizzy bin/rails runner 'k=WebPush.generate_key; puts k.private_key, k.public_key'
+```
+
+**Backups.** `fizzy/storage` is a Kopia source, and
+`scripts/dump-databases.sh` dumps `production.sqlite3` nightly. The other
+three SQLite files it writes (`production_cable`, `production_cache`,
+`production_queue`) are Solid Cable/Cache/Queue infrastructure — regenerated
+on boot, worthless in a restore, deliberately not dumped.
+
+---
+
+## Super Productivity (https://sp.mathewcsims.uk) — LAN-only
+
+[Super Productivity](https://super-productivity.com), the middle tier:
+detailed day-to-day tasks with reminders, too heavy for the Fizzy backlog
+and not recurring chores.
+
+**THIS CONTAINER HOLDS NO DATA.** It is nginx serving a static Angular
+bundle. Super Productivity is local-first: tasks live in each browser's
+IndexedDB and are synced by the app itself over WebDAV. There is no
+server-side database, no accounts, and nothing here to back up — losing this
+container loses nothing. There is deliberately no volume, because adding one
+would imply otherwise.
+
+**There is also no login, at all.** Unlike every other app here, there is no
+second line of defence behind the proxy: Caddy's LAN gate and the
+`pf-lockdown` rule on port 3601 are the entire access control.
+
+### The sync target, and why it shares a hostname
+
+Sync goes to copyparty's `/sp-sync` volume at
+`https://sp.mathewcsims.uk/sp-sync/` — the **same origin** as the app, via a
+Caddy route to copyparty on 3923. That is the load-bearing design decision:
+
+- Super Productivity syncs **from the browser**, so a target on another
+  hostname makes every request cross-origin.
+- copyparty exposes only `--acao`/`--acam` and has **no control over
+  `Access-Control-Allow-Headers`**, while SP sends `Depth` and `If-Match`,
+  which are not CORS-safelisted. Preflight would fail. SP even has a
+  dedicated `PotentialCorsError` for exactly this.
+- Same-origin removes the problem instead of configuring around it.
+
+**The path must never be rewritten** — `handle`, never `handle_path`.
+copyparty puts its own absolute paths in PROPFIND `<D:href>` (verified:
+`<D:href>/sp-sync/</D:href>`) and the client resolves against them, so
+stripping the prefix would point every subsequent request at nothing.
+
+### Things checked in source rather than assumed
+
+- **`--daw` is set as a VOLFLAG, not globally.** Without it copyparty
+  answers a PUT over an existing file by inventing a new filename instead of
+  overwriting, so every save becomes a new file and sync never converges.
+  Set globally it would change overwrite semantics for the **entire** file
+  server including your documents; copyparty's own help says to prefer the
+  volflag. Needed because SP does not send `x-oc-mtime`.
+- **`vague-403` was KEPT.** The old note here said to remove it the moment a
+  WebDAV volume returned, on the assumption that WebDAV clients wait to be
+  challenged. SP's client sets `Authorization: Basic` on every request, and
+  an unauthenticated PROPFIND against this config returns **401, not 404** —
+  both measured, not inferred.
+- **No `dav-port` needed.** `--ua-nodav` defaults to `^(Mozilla/|...)`, so a
+  browser looks like a non-WebDAV client — but that governs GET-versus-HTML
+  behaviour, not method dispatch. PROPFIND, MKCOL, PUT, overwrite, GET and
+  DELETE all verified working with a browser user-agent on the normal port.
+- **copyparty returns no `ETag`, and that is fine.** SP's own XML parser
+  does `etag: lastModified` — it deliberately uses `getlastmodified`, which
+  copyparty does return on every entry.
+- **The bind mount is load-bearing.** A `[/sp-sync]` volume with no matching
+  mount in `copyparty/compose.yaml` still "works": copyparty logs
+  `type=overlay` and writes into the container's ephemeral layer, losing
+  every task on the next recreation, silently. Caught during setup by
+  reading that log line.
+
+**The account** is `spsync`, scoped `rwmd` to `/sp-sync` only, defined in
+`copyparty/cfg/accounts-spsync.conf` — rendered from its **own** Pass item
+because the agent token can create Pass items but not update the existing
+"Copyparty" one. copyparty merges `[accounts]` across auto-loaded `*.conf`
+files; verified in a throwaway container before relying on it.
+
+**Backups.** `copyparty/sp-sync` is a Kopia source — the only durable copy,
+since everything else is browser IndexedDB that a cleared cache wipes.
 
 ---
 
@@ -7556,12 +7738,27 @@ ssh mathewcsims@100.68.10.65 'timeout 5 bash -c "</dev/tcp/10.0.1.14/3923"' || e
 ssh mathewcsims@100.68.10.65 'timeout 5 bash -c "</dev/tcp/10.0.1.19/443"' && echo "routing OK"
 ```
 
-**Do NOT test the block by curling `10.0.1.14:3923` from the Mac itself** —
-which is what this section used to advise. Traffic from the Mac to its own
-LAN address does not traverse `en1`'s inbound filter, so it succeeds whether
-the rule is working or not. It proves nothing, and it reads as a pass.
-slartibartfast is reached over its **tailnet** address above because its
-`sshd` does not listen on the LAN interface.
+**Curling `10.0.1.14:3923` from the Mac itself IS a valid test — it gets
+blocked.** An earlier version of this section claimed the opposite ("traffic
+from the Mac to its own LAN address does not traverse `en1`'s inbound
+filter"). That claim was wrong, was written on 2026-08-08 on reasoning rather
+than measurement, and was corrected the same day on measurement:
+
+```
+from the Mac:  10.0.1.14:3923 -> 000    (in the pf anchor)
+               10.0.1.14:2368 -> 301    (published, NOT in the anchor)
+               10.0.1.14:5230 -> 200    (published, NOT in the anchor)
+               10.0.1.14:3000 -> 307    (published, NOT in the anchor)
+```
+
+Only the port pf covers is blocked, which isolates pf as the cause rather
+than any podman-machine loopback quirk. So the Mac is a perfectly good
+second source for the negative test, and needs no SSH.
+
+The two-host test above is still the better one, because it also proves the
+**pass** path (the Pi must keep working — breaking that is an outage), which
+a single-source test cannot. slartibartfast is reached over its **tailnet**
+address there because its `sshd` does not listen on the LAN interface.
 
 ### Hardening pass (copyparty, Nimbus, Caddy, Memos)
 

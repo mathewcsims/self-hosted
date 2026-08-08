@@ -4,6 +4,11 @@
 .env
 **/.env
 copyparty/cfg/accounts.conf
+# The scoped Super Productivity sync account, rendered from its own Pass
+# item ("Copyparty SP Sync") at deploy time — same treatment as
+# accounts.conf above, kept in a separate file because the agent Pass token
+# can create items but not update them.
+copyparty/cfg/accounts-spsync.conf
 # local-only volume definitions and compose overrides — extra copyparty
 # areas that deliberately stay out of the public repo entirely
 copyparty/cfg/local-*.conf
@@ -28,6 +33,11 @@ kopia-mac/.mirror-state
 copyparty/data/
 copyparty/public/
 copyparty/inbox/
+# Super Productivity's synced task data — the ONLY copy besides whatever is
+# in each browser's IndexedDB, so it is a Kopia source (see kopia-mac/backup.sh)
+copyparty/sp-sync/
+# Fizzy's SQLite databases and Active Storage uploads — its entire state
+fizzy/storage/
 # copyparty's own internal state: salts, sessions.db, shares.db, cert.pem, iphash
 copyparty/cfg/copyparty/
 memos-prospect-ukri-tus/data/
