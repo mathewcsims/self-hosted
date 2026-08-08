@@ -7,7 +7,7 @@
 # MySQL, not sqlite: Ghost's own docs are explicit that "MySQL 8 is the only
 # supported database in production" (sqlite works in dev but isn't QA'd for
 # production use, and Ghost's own Docker image made MySQL the default as of
-# 5.9) — so unlike Vikunja this needs a real DB sidecar, same
+# 5.9) — so unlike Memos this needs a real DB sidecar, same
 # pattern as Nimbus's nimbus-db.
 #
 # All secrets live in ./.env (gitignored — see .env.example for the
@@ -64,7 +64,7 @@ services:
         required: false
     # Do NOT set `user:` — on podman-machine (macOS) the container's root
     # maps to your host user, giving sane ownership on the bind mount below
-    # (same reasoning as copyparty/Vikunja's compose.yaml).
+    # (same reasoning as copyparty's compose.yaml).
     environment:
       url: https://blog.mathewcsims.uk
       NODE_ENV: production

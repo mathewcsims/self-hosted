@@ -78,7 +78,7 @@ services:
     restart: unless-stopped
     # Do NOT set `user:` — on podman-machine (macOS) the container's root maps
     # to your host user, giving sane ownership on the bind mounts below. Same
-    # reasoning as vikunja and copyparty.
+    # reasoning as copyparty.
     #
     # Hardening. The capability set is dictated by the image, not chosen: the
     # entrypoint starts as root and drops to the `hedgedoc` user, so a bare

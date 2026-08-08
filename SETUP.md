@@ -9,13 +9,11 @@ follow the same recipe — see "Adding another app" near the end.
 |-----|-----|---------|-------|
 | copyparty | `https://cp.mathewcsims.uk` | Mac `:3923` | `admin` + others, see its section below |
 | Memos | `https://prospect-ukri-tus.mathewcsims.uk` | Mac `:5230` | set up on first visit; OAuth planned |
-| Vikunja | `https://vikunja.mathewcsims.uk` | Mac `:3456` | `mat`, see its section below — no self-registration, ever |
 | Ghost blog | `https://blog.mathewcsims.uk` | Mac `:2368` | set up on first visit |
 | Landing page | `https://mathewcsims.uk` | Mac `:3080` | static site, no login |
 | Karakeep | `https://karakeep.mathewcsims.uk` | Mac `:3000` | set up on first visit; signups disabled |
 | Apprise API | `https://apprise.mathewcsims.uk` | **Pi**, LAN-only | no login — LAN-gate is the only access control |
 | Uptime Kuma | `https://status.mathewcsims.uk` | **Pi** | set up on first visit; 2FA recommended |
-| Vikunja webhook relay | `https://vikunja-relay.mathewcsims.uk` | **Pi**, LAN-only | no login — HMAC-signed requests only |
 | Kopia backups | `https://backup.mathewcsims.uk` | **Pi**, LAN-only (Mac also backs up, no daemon) | username + password, see its section below |
 | Immich | `https://immich.mathewcsims.uk` | **slartibartfast** `:2283`, LAN/tailnet-only | local account, no SSO (deliberate — see its section below) |
 
@@ -35,12 +33,11 @@ follow the same recipe — see "Adding another app" near the end.
        │   container name over `pi-shared` — no host       │
        │   port published):                                │
        │     Mac:    mathewcsims.uk, cp, prospect-ukri-    │
-       │             tus, vikunja, blog, karakeep, owl,    │
+       │             tus, blog, karakeep, owl,             │
        │             author*, fj*                          │
        │             (author/fj are BookStack/Forgejo,     │
        │             LAN/tailnet-gated)                    │
-       │     Pi:     status (Kuma),                        │
-       │             apprise*, vikunja-relay*,             │
+       │     Pi:     status (Kuma), apprise*,              │
        │             backup* (Kopia)                       │
        │     slarti: immich*  (third host, 10.0.1.11)      │
        │     router: mc37* (its own admin UI)              │
@@ -53,7 +50,6 @@ follow the same recipe — see "Adding another app" near the end.
                      stack per app, each its own folder:
                        copyparty  :3923  (data on disk)
                        memos-prospect-ukri-tus  :5230  (sqlite)
-                       vikunja  :3456  (sqlite)
                        blog (Ghost)  :2368  (MySQL)
                        landing-page  :3080  (static)
                        karakeep  :3000  (sqlite + Meilisearch)
@@ -66,7 +62,7 @@ follow the same recipe — see "Adding another app" near the end.
 
 The Pi is the **single front door** for all apps. Because it owns ports 80/443,
 Let's Encrypt validation works normally and public URLs are clean, no ports.
-Several apps (Apprise, Uptime Kuma, the Vikunja
+Several apps (Apprise, Uptime Kuma, the Tailscale
 webhook relay, Kopia's server) are deliberately Pi-resident rather than
 Mac-resident — either
 for resilience (the thing telling you something's down shouldn't depend on
@@ -106,9 +102,6 @@ section below says which.
 | `owl/owl-logo.svg` | **Mac** | source asset for the instance logo (tracked; the deployed logo itself is a data URI in Memos' own DB) |
 | `owl/owl-theme.css` | **Mac** | source stylesheet for the instance accent theme (tracked; deployed via `additionalStyle` in Memos' own DB) |
 | `owl/document-viewer/` | **Mac** | client-side attachment preview feature — source (`src/`), esbuild config, and a separate Caddy sidecar (`compose.yaml`, own `Caddyfile`) serving the built bundle; deployed via `scripts/pass-deploy-owl-document-viewer.sh`, see the Owl section below |
-| `vikunja/compose.yaml` | **Mac** | Vikunja, pinned by digest to `ghcr.io/go-vikunja/vikunja:2.3.0`; reads secrets from Proton Pass |
-| `vikunja/db/` | **Mac** | **your tasks live here** (sqlite) |
-| `vikunja/files/` | **Mac** | task attachments |
 | `blog/compose.yaml` | **Mac** | Ghost + MySQL + traffic-analytics; reads secrets from Proton Pass |
 | `blog/db/` | **Mac** | **Ghost's MySQL datadir** |
 | `blog/content/` | **Mac** | **your posts, images, themes live here** |
@@ -150,7 +143,6 @@ section below says which.
 | `apprise/config/` | **Pi** | **the registered notification-target config lives here** |
 | `uptime-kuma/compose.yaml` | **Pi** | uptime monitoring + public status page; no secrets — admin account set up via its own first-visit wizard |
 | `uptime-kuma/data/` | **Pi** | **your monitors, history, and settings live here** |
-| `vikunja-webhook-relay/compose.yaml` + `Dockerfile` + `relay.py` | **Pi**, LAN-only | bridges Vikunja's webhook payload shape to Apprise's `/notify` shape; reads `WEBHOOK_SECRET` from Proton Pass |
 | `kopia-server/compose.yaml` + `Dockerfile` + `entrypoint.sh` | **Pi**, LAN-only | Kopia backup server + web UI; reads secrets merged from the "Kopia" and "Backblaze B2" Proton Pass items |
 | `kopia-server/config/`, `cache/`, `logs/`, `tmp/` | **Pi** | Kopia's own local state — repository connection, TLS cert, cache. **Not** where your backed-up data lives (that's in B2) |
 | `kopia-mac/backup.sh` + `uk.mathewcsims.kopia-mac-backup.plist` | **Mac** | launchd job (no compose project, no persistent daemon) triggering scheduled Kopia snapshots of the Mac's app data, 02:00 |
@@ -158,7 +150,7 @@ section below says which.
 | `kopia-mac/verify-backups.sh` + `uk.mathewcsims.kopia-verify.plist` | **Mac** | launchd job, 06:00 — verifies every active source on **all three hosts** actually snapshotted cleanly and resolves in B2, then sends the nightly confirmation; weekly deep content check on Sundays |
 | `autostart/` | **Mac** | launchd auto-start (all podman containers, every app) |
 | `scripts/` | — | deploy tooling that fetches secrets from Proton Pass at deploy time, including `pass-create-kopia-secrets.sh`, `pass-import-b2-credentials.sh`, `pass-import-nas-credentials.sh` (legacy — no job mounts the NAS since 2026-08-04), `pass-deploy-kopia-server.sh`, and the DNS automation `dns-digitalocean.sh` / `dns-nextdns.sh` (see "Automating this" under Part 3 above) |
-| `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty/Vikunja's published ports to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
+| `pf-lockdown/` | **Mac** | macOS `pf` firewall rules restricting copyparty's published port to the Pi only, plus SSH Remote Login to the Pi + Tailscale CGNAT range |
 | `pi-sshd/` | **Pi** | drop-in `sshd_config.d` file disabling password auth (deployed manually, not via a compose stack) |
 | `pi-unattended-upgrades/` | **Pi** | security-only auto-patching config + a daily reboot-required notifier (deployed manually) |
 | `pi-fail2ban/` | **Pi** | fail2ban jails (sshd, Caddy-abuse), filters, and ban actions (deployed manually) |
@@ -184,8 +176,8 @@ Every app's real secrets live in **Proton Pass**, in a vault named
 "Self-Hosted Secrets" (named specifically so it's obvious at a glance
 which agent/project a shared vault belongs to, if you end up sharing
 others with different agents later) — one custom item per app, each field
-named after the env var it holds (e.g. the "Vikunja" item has a
-`VIKUNJA_SERVICE_SECRET` field). Nothing is ever written to a `.env` file
+named after the env var it holds (e.g. the "Karakeep" item has a
+`NEXTAUTH_SECRET` field). Nothing is ever written to a `.env` file
 as a persistent artifact; secrets are fetched live at deploy time and
 either exported directly into the shell for that one `compose up` call, or
 (for the one app that needs an actual config file on disk) rendered fresh
@@ -225,7 +217,7 @@ export PROTON_PASS_SESSION_DIR="$HOME/.pass-cli-personal"
 pass-cli login   # your normal Proton Pass login
 
 # Create a new app's item from its existing .env (key=value pairs → fields)
-./scripts/pass-import-env.sh <app-dir>              # e.g. vikunja
+./scripts/pass-import-env.sh <app-dir>              # e.g. karakeep
 
 # Or for a whole-file secret (currently only copyparty's accounts.conf)
 ./scripts/pass-import-file.sh <file> <item-title> <field-name>
@@ -234,7 +226,7 @@ pass-cli login   # your normal Proton Pass login
 **Deploying an app (the agent side, day to day):**
 
 ```
-# Mac-hosted apps (vikunja, blog, karakeep, copyparty, landing-page)
+# Mac-hosted apps (blog, karakeep, copyparty, landing-page)
 ./scripts/pass-deploy.sh <app-dir>
 
 # Apps on ANY remote host — the Pi (uptime-kuma, apprise) or
@@ -579,7 +571,7 @@ resolved the hostname.
 The Pi runs Tailscale, configured as both a subnet router (advertising the
 LAN) and an exit node — meaning devices elsewhere can reach this network
 through it, including while off any physical LAN entirely. Every LAN-gated
-app in this repo (`mc37`, `apprise`, `vikunja-relay`, `backup`, `author`,
+app in this repo (`mc37`, `apprise`, `backup`, `author`,
 `paperless`, `fj`, `docs`)
 needs **three** separate things to actually be reachable this way. Each is
 necessary and none is sufficient, which is what makes this so awkward to
@@ -758,7 +750,7 @@ Generate a token yourself in the web UI: Settings ▸ My Account ▸ Access Toke
 members should be able to sign up freely) and must stay on — nothing below
 disables it.
 - Image pinned to the exact digest behind `:stable` (currently v0.29.1), same
-  discipline as Vikunja/Nimbus. Checked against usememos/memos's GitHub
+  discipline as every other app here. Checked against usememos/memos's GitHub
   security advisories: several real CVEs exist in its history (an SSRF via
   link-preview fetching, stale auth tokens surviving a password change, a
   CORS misconfiguration, an older SSRF+XSS pair in a since-removed endpoint)
@@ -1335,18 +1327,100 @@ boot (Pi default) is what brings it back after a Pi reboot, same as Caddy.
 
 ---
 
-## Task management: UNRESOLVED — organice tried and abandoned 2026-08-08
+## Task management: SEARCH CLOSED 2026-08-08 — nothing off the shelf fits
 
-> **STATUS 2026-08-08: no solution in place.** The 7 August decision below is
-> **superseded**. organice was deployed on 7 August and torn down on 8 August;
-> neither it nor Orgzly Revived was good enough in use. See the organice
-> section for the decommissioning record and, more usefully, for what the
-> exercise established about *why* nothing fits — the binding requirement is
-> from-completion recurrence surviving sync with the next occurrence appearing
-> instantly, which forces client-side recurrence, which RFC 5545 cannot carry.
+> **STATUS 2026-08-08: no tool in place, and the search for one is over.**
+> Vikunja — the incumbent throughout everything below — was decommissioned on
+> 8 August, holding 11 tasks in 2 projects. organice was deployed 7 August and
+> torn down 8 August. The field has now been swept five times and is
+> exhausted; the conclusion is that **the requirement set has no off-the-shelf
+> answer**, for structural reasons rather than bad luck. See *The fifth sweep*
+> below for what was checked in source and what the two structural results
+> are.
 >
-> Problem A (recurring reminders) was never solved. Problem B (deep project
-> management) is back to unsolved as well.
+> The agreed direction is to **build**, smallest-piece-first, with the
+> interface built before any backend — because interface, not features, is
+> what has killed almost every candidate. Nothing has been built yet.
+
+### The requirements, restated 2026-08-08
+
+Three high-level needs, and **a combination of tools is acceptable as long as
+the seams actually hold**:
+
+1. **Backlog**, hand-orderable and prioritisable.
+2. **Repeating tasks** — bins, weekly timesheet, end-of-week wrap-up — with
+   labels, sub-tasks, a reminder at the time the thing needs doing, and
+   completion each cycle.
+3. **Complex decomposition**, closer to a genuine project planning system.
+
+Moving items from 1 into 3 programmatically is a nice-to-have, not a
+requirement — and it disappears entirely if 1 and 3 are the same tool, since
+promotion is then just re-parenting.
+
+Two clarifications that changed the search materially:
+
+- **"Disruptive" replaced "nagging".** The requirement is *notifications
+  sufficiently disruptive that they are not easily ignored* — not
+  specifically MedTimer's repeat-until-actioned mechanism. That is a property
+  of the notification channel, not the task app, which is why it only has to
+  work on the phone.
+- **Both recurrence anchors, evenly.** Calendar-anchored *and* from-completion,
+  in roughly equal measure. Not one or the other.
+
+And one requirement that turned out to be the sharpest filter of all:
+**sub-tasks on a repeating task must reset each occurrence.** That means the
+occurrence has to be a *clone*, not a date-bump on the same row — which also
+determines whether per-occurrence history can exist at all.
+
+### The fifth sweep (2026-08-08) — checked in source, not from docs
+
+| Tool | Verdict | Evidence |
+|---|---|---|
+| **Donetick** | Meets requirement 2 almost completely | `IsRolling` bool is per-chore and orthogonal to frequency type, giving both anchors per task; `ResetSubtasksCompletion()`; per-chore IANA timezone; completion fires notifications synchronously. Flat sub-tasks, so not a decomposition tool. **`snooze` appears nowhere in the codebase.** Ruled out by Mat |
+| **TaskTrove** | Best recurrence model found anywhere — and still fails | `recurringMode` is a per-task union of `dueDate` / `completedAt` / `autoRollover`. But `SubtaskSchema` is flat (no parent ref on tasks), and `notification-scheduler.ts` schedules a **browser `setTimeout`** — no server-side scheduler, no webhook, nothing to bridge to ntfy. **Dormant**: last commit 2026-01-09. Sustainable Use License (source-available, not OSI) |
+| **Huly** | Real arbitrary nesting — `attachedTo: Ref<Issue>` plus a materialised `parents: IssueParentInfo[]` | Rejected: bundles chat, video, HR and CRM across 10+ services. The Plane objection |
+| **Wekan** | Real arbitrary nesting — `parentId` with an unbounded ancestor walk (`models/cards.js`) | Rejected on interface. Also a Meteor + MongoDB stack, ~9 images |
+| **Planka** | Out on structure | `List → Card → TaskList → Task`, fixed depth, no self-parent. Recurrence is pro-only |
+| **Kaneo** | Out on structure | No task parent ref; nested subtasks is open FR #1170 |
+| **Kanboard** | Out on structure | Recurrence duplicates the task (so sub-tasks and history do work) but is **event-triggered only** — no calendar anchoring. Sub-tasks flat |
+| **Forgejo** | Not yet possible | Sub-issues are an unmerged WIP PR (#6267) |
+| **OpenProject** | No native recurrence | #29120 open 5+ years; community works around it with an external cron daemon. Also the weight objection |
+| **Leantime** | Recurrence is a **paid marketplace plugin** for self-hosted | — |
+| **TaskView** | Feature-complete on paper | Source-available with a paid tier — licence mismatch for this repo |
+| **TriliumNext** | Native arbitrary tree, but tasks are a **trial plugin** | The HamsterBase objection |
+| **Focalboard** | Dead | Archived by Mattermost 2023, last release Jun 2024 |
+| **Todoist** | Genuinely meets the spec | Ruled out: not private, and no E2EE |
+
+### The two structural results
+
+These are the useful output of the whole exercise, and they explain why five
+sweeps failed:
+
+**1. Arbitrary nesting and light weight are anti-correlated.** Everything in
+this category that decomposes properly is a platform (Huly, Plane,
+OpenProject) or a fat stack (Wekan); everything light is flat (Planka, Kaneo,
+Kanboard, TaskTrove). The only tools at the intersection were Vikunja
+(rejected on interface, and now adding a Pro tier), Focalboard (dead) and
+TaskView (source-available).
+
+**2. Privacy and reliable nagging are in direct tension.** Todoist can pester
+you dependably *because* its servers read your tasks and push. E2EE tools
+cannot do that by construction — if the server can't read the data it can't
+decide when to ping — so reminders fall back to the client, which is exactly
+TaskTrove's failure mode. The self-hosted middle ground mostly doesn't
+schedule server-side at all, or only knows how to send email.
+
+**The missing component is therefore narrow and specific: a server-side
+scheduler that pushes.** Not a task manager — something that knows a time, a
+topic and a title. It does not need to read the tasks, which is what makes it
+compatible with the privacy requirement. `ntfy/` and `apprise/` are already
+deployed, so delivery is solved; scheduling is the gap.
+
+**Interface is the real binding constraint**, not features: Vikunja, Super
+Productivity, Kanboard, Wekan and HamsterBase all died on it, and Plane and
+Huly on bloat. Hence the agreed sequencing — build the interface first,
+against fixed sample data, before any backend exists. That is the design
+phase of a waterfall project, not iterative delivery of half a product.
 
 **The superseded decision of 7 August 2026.** Everything below this block is kept as
 history and as a list of candidates not to re-propose. **Three of its stated
@@ -1933,7 +2007,31 @@ nothing else does, not because it is the choice.
 
 ---
 
-## Vikunja (https://vikunja.mathewcsims.uk)
+## Vikunja (https://vikunja.mathewcsims.uk) — DECOMMISSIONED
+
+> **DECOMMISSIONED 2026-08-08.** Torn down because it was not being used —
+> the interface objection recorded throughout the section below never
+> resolved, and the search for a replacement closed without one (see "Task
+> management" above). The final database held 11 tasks in 2 projects, which
+> is its own verdict. Container, image, network, both Caddy site blocks,
+> Uptime Kuma monitors #4 and #17, the `vikunja` and `vikunja-relay` public
+> A records and the `vikunja-relay` NextDNS LAN rewrite are all gone;
+> `vikunja/`, `vikunja-webhook-relay/` and
+> `scripts/pass-create-vikunja-relay-secret.sh` were removed from this repo
+> and survive only in git history. The section below is kept verbatim as the
+> rebuild recipe. **The data is kept**: a final `VACUUM INTO` dump and a cold
+> `tar.gz` of the whole app directory live in `db-dumps/decommissioned/` on
+> the Mac. Kopia's `vikunja/db` and `vikunja/files` sources were set to
+> `--manual` so they keep their history but drop out of nightly
+> verification. The **Vikunja** and **VikunjaWebhookRelay** Proton Pass items
+> were retained.
+>
+> Unwired from automation: `scripts/dump-databases.sh` (the sqlite dump and
+> the `vikunja` entry in the post-dump health check) and
+> `kopia-mac/backup.sh` (both snapshot sources). `pf-lockdown/` was narrowed
+> from `{ 3923, 3456 }` to port 3923 alone — **this needs a `pfctl` reload to
+> take effect**, which needs your password; until then it harmlessly guards a
+> dead port.
 
 [Vikunja](https://vikunja.io) task management, holding private information —
 built with more deliberate hardening than the other apps here, on request.
@@ -3319,7 +3417,15 @@ cache.
 
 ---
 
-## Vikunja webhook relay (https://vikunja-relay.mathewcsims.uk) — LAN-only, runs on the Pi
+## Vikunja webhook relay (https://vikunja-relay.mathewcsims.uk) — DECOMMISSIONED
+
+> **DECOMMISSIONED 2026-08-08**, with Vikunja itself — it existed only to
+> carry Vikunja's webhooks, so it had nothing left to relay. Container,
+> image, Caddy site block, DNS records and `~/vikunja-webhook-relay` on the
+> Pi are all gone. Kept below because the *pattern* is the reusable part:
+> `wanderer/memo-relay/` and `tailscale-webhook-relay/` are the same shape,
+> and the payload-mismatch problem it solves recurs every time an app's
+> webhook meets Apprise's `/notify`.
 
 A small purpose-built bridge, not a third-party app: Vikunja's own webhook
 feature (Settings → Webhook Notifications) POSTs its own JSON shape

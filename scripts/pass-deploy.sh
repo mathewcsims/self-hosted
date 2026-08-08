@@ -16,7 +16,7 @@
 #   ./scripts/pass-deploy.sh <app-dir> [item-title]
 #
 # Example:
-#   ./scripts/pass-deploy.sh vikunja
+#   ./scripts/pass-deploy.sh karakeep
 
 set -eu
 

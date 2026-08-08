@@ -31,8 +31,6 @@ copyparty/inbox/
 # copyparty's own internal state: salts, sessions.db, shares.db, cert.pem, iphash
 copyparty/cfg/copyparty/
 memos-prospect-ukri-tus/data/
-vikunja/db/
-vikunja/files/
 pi-reverse-proxy/caddy_data/
 pi-reverse-proxy/caddy_config/
 blog/db/

@@ -7,7 +7,7 @@
 # hostname are handled by Caddy on the Pi; this Mac only serves plain HTTP
 # on the LAN. Two containers, MariaDB sidecar like Ghost's MySQL one — read
 # straight from BookStack's own docs, which require a real MariaDB/MySQL
-# instance (no sqlite option, unlike Vikunja/Memos).
+# instance (no sqlite option, unlike Memos).
 #
 # Pinned image (26.05.2, linuxserver's build) is past CVE-2026-5484 (auth
 # bypass in the chapter-export handler, fixed at 26.03.1 — checked GitHub
@@ -85,7 +85,7 @@ services:
     environment:
       # PUID/PGID: linuxserver's baseimage runs the app as this fixed
       # UID/GID (not root, unlike copyparty) — ./config must be pre-owned
-      # by 1000:1000 before first boot, same fix as Vikunja's ./files/./db
+      # by 1000:1000 before first boot, same fix as Karakeep's ./data
       # needed (podman-machine's rootless remap doesn't apply here since
       # the process never runs as root inside the container in the first
       # place).

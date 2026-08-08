@@ -16,7 +16,7 @@ and the superuser is the only account that can see every trail's realtime
 events regardless of owner, same pragmatic tradeoff as Karakeep only ever
 using its full MEILI_MASTER_KEY rather than a scoped index key.
 
-Best-effort forward, same as vikunja-webhook-relay's Apprise forward: a
+Best-effort forward, same as pi-fail2ban/notify-apprise.sh's Apprise forward: a
 failed Owl post is logged, not retried or queued. If this container is
 down when a ride is created, that event is simply missed — acceptable for
 a personal convenience feature, not something building a retry queue is
