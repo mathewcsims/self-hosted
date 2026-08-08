@@ -2911,11 +2911,44 @@ item holds one field, `DISCORD_WEBHOOK` (the raw
 `https://discord.com/api/webhooks/<id>/<token>` URL from Discord's own
 integration settings). `scripts/pass-seed-apprise.sh` fetches it, converts it
 to Apprise's own `discord://<id>/<token>/` scheme, and feeds it — over stdin
-the whole way (ssh stdin → a remote `read` → a here-string into `docker
-exec`'s stdin, landing in `apprise/scripts/seed.py`) — into a `POST /add/`
-call against the container, registering it under the config key
-`self-hosted`. Nothing secret ever touches a Bash argument, an env var, or a
-file. Re-run this script any time the webhook is rotated in Pass.
+the whole way (ssh stdin → a remote `read` loop → a pipe into `docker exec`'s
+stdin, landing in `apprise/scripts/seed.py`) — into a `POST /add/<key>` call
+against the container. Nothing secret ever touches a Bash argument, an env
+var, or a file. Re-run this script any time the webhook or the ntfy publisher
+token is rotated in Pass; `/add/<key>` *replaces* that key's config, so it is
+idempotent.
+
+**Two config keys, deliberately (since 2026-08-08):**
+
+| Key | Targets | Who posts to it |
+|---|---|---|
+| `self-hosted` | Discord **+** ntfy topic `alerts` (default priority) | everything in this repo — backups, DB dumps, Trivy, watchdogs, relays |
+| `fail2ban` | ntfy topic `fail2ban` at `priority=low`, **no Discord at all** | only `pi-fail2ban/notify-apprise.sh` |
+
+The split exists because the `caddy-abuse` jail bans at machine rate, not
+human rate — 119 lifetime bans with 54 concurrently banned as of 2026-08-08,
+and three ban/unban notifications inside a twenty-minute window while this
+was being changed. On the shared key that buried every alert that actually
+needed reading. Both the topic and the priority live entirely on the
+Apprise-side target URL, so retuning either is a re-seed and needs no change
+on the Pi.
+
+**`priority=` is an Apprise ntfy URL argument** (`max`/`high`/`default`/
+`low`/`min`), read off `NotifyNtfy.template_args` in the running container
+rather than assumed. Worth knowing: it maps straight to the `X-Priority`
+header and is **not** derived from the `type` a caller POSTs, so
+`notify-apprise.sh` sending `type=failure` does not drag the notification
+back up to a loud one. Verified live end-to-end — a test ban landed in
+`cache.db` as `topic=fail2ban, priority=2` (ntfy's numbering: 1 min, 2 low,
+3 default), where every earlier ban sits on `topic=alerts, priority=0`, and
+Apprise's own log shows `Loaded 1 entries` for that key, i.e. no Discord
+attempt at all.
+
+**Ntfy is no longer optional to this script.** It used to fall back to
+Discord-only if the "Ntfy" Pass item was missing; because the `fail2ban` key
+has no Discord target, that fallback would now silently drop fail2ban
+notifications on the floor instead. A missing or fieldless "Ntfy" item is a
+hard error.
 
 **To bring it up on a fresh machine:**
 1. **Pi:** copy the `apprise/` folder over (`scp -r`) and
@@ -2929,10 +2962,17 @@ file. Re-run this script any time the webhook is rotated in Pass.
 4. **NextDNS rewrite**: add `apprise.mathewcsims.uk` → `10.0.1.19`, same as
    every other app.
 5. From the Mac (or anywhere with `pass-cli` access to the vault): run
-   `./scripts/pass-seed-apprise.sh` to register the Discord webhook.
+   `./scripts/pass-seed-apprise.sh` to register both config keys. Note it
+   `scp`s nothing — `apprise/scripts/seed.py` is bind-mounted from the Pi's
+   own copy of the folder, so **copy that file over first if it has changed
+   in the repo**, or the Pi will keep running the old one (this bit once:
+   the pre-split `seed.py` hardcoded the `self-hosted` key, so both seed
+   lines landed on it and left it empty until the file was copied across).
 6. Test from a LAN machine:
    `curl -X POST https://apprise.mathewcsims.uk/notify/self-hosted -d 'body=test'`
-   — a message should land in Discord within a couple of seconds.
+   — a message should land in Discord within a couple of seconds. HTTP 200
+   means every target under the key succeeded; a failed target gives 424.
+   Repeat against `/notify/fail2ban` to check the quiet ntfy-only route.
 
 **Notification formatting convention (color, icon, markdown).** The
 registered Discord URL carries `?format=markdown&image=yes`
@@ -2943,14 +2983,16 @@ the embed, `format=markdown` lets the `body` use `**bold**`/lists/`` `code`
 `type` value (`info`/`success`/`warning`/`failure`) each `POST
 /notify/self-hosted` call includes — this is generic Apprise/Discord
 behavior, not something built here. Every notifier in this repo that feeds
-this shared endpoint (`pi-fail2ban/notify-apprise.sh`,
-`pi-unattended-upgrades/notify-reboot-required.sh`,
-`vikunja-webhook-relay/relay.py`) follows the same convention: pick a
-`type` matching real severity, prefix the title with a matching emoji
-(🚫/✅/⚠️/🔔) for at-a-glance scanning in a channel feed, and send
-`format=markdown` with the body. Verified live for all three: ban/unban,
+this shared endpoint (`pi-unattended-upgrades/notify-reboot-required.sh`,
+`vikunja-webhook-relay/relay.py`, and the backup/scan scripts) follows the
+same convention: pick a `type` matching real severity, prefix the title with
+a matching emoji (🚫/✅/⚠️/🔔) for at-a-glance scanning in a channel feed,
+and send `format=markdown` with the body. Verified live: ban/unban,
 reboot-required, and a signed Vikunja `task.overdue` test event all
 rendered with the correct color/icon/markdown in Discord.
+`pi-fail2ban/notify-apprise.sh` still follows the convention but no longer
+feeds this key — it posts to `/notify/fail2ban`, which has no Discord target,
+so its `type` now only sets the ntfy icon.
 
 **Uptime Kuma does NOT go through this endpoint at all** — it bundles its
 own Apprise CLI and shells out to it directly from its own Notification
@@ -2968,9 +3010,22 @@ the Discord webhook: real priority levels (distinct sounds/vibrations per
 severity), markdown, attachments, and **action buttons** (a notification
 can carry up to three buttons — open a URL, or fire an arbitrary HTTP
 request, e.g. a "Retry" on a backup-failure alert). Discord keeps working
-unchanged alongside; Apprise fans every `/notify` out to **both** (see
-`scripts/pass-seed-apprise.sh` — the ntfy target is registered from the
-"Ntfy" Pass item's `PUBLISHER_TOKEN`, into topic `alerts`).
+unchanged alongside; Apprise fans every `/notify/self-hosted` out to
+**both** (see `scripts/pass-seed-apprise.sh` — the ntfy target is registered
+from the "Ntfy" Pass item's `PUBLISHER_TOKEN`, into topic `alerts`).
+
+**Topics in use:**
+
+| Topic | Priority | Content |
+|---|---|---|
+| `alerts` | default | the general firehose, mirroring Discord |
+| `fail2ban` | `low` | fail2ban ban/unban only, **not** mirrored to Discord — see the Apprise section above for why |
+
+Both are served by the same write-only `publisher` token: `ntfy access`
+confirms it holds `write-only access to topic *`, and the `mathew` admin user
+reads every topic, so adding a topic needs no ACL change at all. This is also
+the first thing here that ntfy delivers and Discord does not, so the 2026-07
+trial is now load-bearing rather than purely parallel.
 
 **Image**: `binwiederhier/ntfy:v2.26.3`, pinned by digest. **Emergency-bumped
 2026-07-23 from v2.14.0** — the first Trivy scan (see below) surfaced
@@ -7641,8 +7696,10 @@ one-off manual commands:
   hooked into `DOCKER-USER` — the standard `iptables-multiport` action's
   `INPUT`-chain rule has zero effect against a container's published,
   DNAT'd ports, since that traffic only ever transits the `FORWARD` chain.
-  Ban/unban events notify via the same Apprise pipe as everything else in
-  this repo. Verified live end-to-end: the filter regex correctly matches
+  Ban/unban events notify via the same Apprise container as everything else
+  in this repo, though **since 2026-08-08 on their own config key** rather
+  than the shared one (ntfy topic `fail2ban` at low priority, no Discord —
+  see the Apprise section). Verified live end-to-end: the filter regex correctly matches
   a synthetic scanner-shaped log line; feeding two real scanner-path hits
   from a test IP through the actual monitored log file triggered a real
   ban (confirmed in both `fail2ban-client status caddy-abuse` and
