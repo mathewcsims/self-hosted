@@ -2036,9 +2036,13 @@ nothing else does, not because it is the choice.
 > Unwired from automation: `scripts/dump-databases.sh` (the sqlite dump and
 > the `vikunja` entry in the post-dump health check) and
 > `kopia-mac/backup.sh` (both snapshot sources). `pf-lockdown/` was narrowed
-> from `{ 3923, 3456 }` to port 3923 alone — **this needs a `pfctl` reload to
-> take effect**, which needs your password; until then it harmlessly guards a
-> dead port.
+> from `{ 3923, 3456 }` to port 3923 alone, applied and verified the same day
+> (6 rules, down from 8).
+>
+> **This teardown incidentally exposed a live security gap**: applying that
+> narrowing revealed the pf anchor had not been loaded at all for weeks, a
+> macOS update having silently stripped it from `/etc/pf.conf`. See
+> "Restricting LAN-only ports" for the incident and the self-healing fix.
 
 [Vikunja](https://vikunja.io) task management, holding private information —
 built with more deliberate hardening than the other apps here, on request.
@@ -7220,13 +7224,39 @@ raise the allocation again before adding the next service.
   restart.
 - Use a long unique admin password per app (already generated where relevant).
 
-### Restricting LAN-only ports (copyparty, Vikunja)
+### Restricting LAN-only ports (copyparty)
+
+> **⚠️ macOS UPDATES SILENTLY DISABLE THIS. READ THIS FIRST.**
+>
+> A system update replaces `/etc/pf.conf` with Apple's stock file, which
+> removes the two lines from `pf-conf-snippet.txt` that reference our anchor.
+> The anchor file itself survives in `/etc/pf.anchors/`, untouched and
+> irrelevant, because nothing loads it any more.
+>
+> **Nothing reports an error when this happens.** `pfctl -f /etc/pf.conf`
+> genuinely succeeds — it just loads a ruleset that references nothing — so
+> the LaunchDaemon reports success at every boot and `reload.log` looks
+> healthy while enforcing nothing at all.
+>
+> This happened, and it was found by accident on **2026-08-08**, weeks after
+> the fact, while narrowing the ruleset for the Vikunja teardown:
+> `pfctl -s Anchors` listed only `com.apple`, and
+> `pfctl -a com.mathewcsims.lan-lockdown -s rules` returned
+> `DIOCGETRULES: Invalid argument`. For that whole period copyparty's `:3923`
+> was reachable from any device on the LAN — still behind copyparty's own
+> login, so a missing defence-in-depth layer rather than an open door, but
+> not what this section claimed.
+>
+> **`reload.sh` now detects and self-heals this** (see below), so the
+> exposure window is one boot rather than indefinite. The warning stays here
+> because the failure is invisible without it.
 
 Every Mac-hosted app publishes its port bound to `10.0.1.14`, reachable by
 any device on the LAN, not just the Pi's Caddy — intended to be reached
 only via Caddy's TLS + rate-limiting, with direct LAN access as an
-unnecessary (if still login-gated) extra path in. Fixed for copyparty and
-Vikunja specifically via a macOS `pf` firewall rule — see `pf-lockdown/`.
+unnecessary (if still login-gated) extra path in. Fixed for copyparty via a
+macOS `pf` firewall rule — see `pf-lockdown/`. Vikunja's `:3456` was covered
+here too until it was decommissioned on 2026-08-08.
 
 **Why not fix this at the app level instead?** Tried copyparty's own
 `--ipa` (IP allow-list) option first — it doesn't work here. Behind
@@ -7234,14 +7264,23 @@ podman's published-port NAT, copyparty only ever sees podman's *internal
 gateway IP* as the connection source, never the real LAN IP (confirmed
 against [copyparty issue
 #1109](https://github.com/9001/copyparty/issues/1109)) — setting `ipa` to
-the Pi's IP blocked the Pi too, along with everyone else. Vikunja has no
-equivalent option at all. A firewall-layer rule was the only approach that
-actually works for either.
+the Pi's IP blocked the Pi too, along with everyone else. A firewall-layer
+rule was the only approach that actually works.
 
 **What the rule does:** `pf-lockdown/com.mathewcsims.lan-lockdown` allows
-TCP to `10.0.1.14` ports `3923`/`3456` from `10.0.1.19` (the Pi) only, and
-blocks everyone else — scoped to exactly those two ports; nothing else on
-this Mac is affected.
+TCP to `10.0.1.14` port `3923` from `10.0.1.19` (the Pi) only, and blocks
+everyone else — scoped to exactly that port; nothing else on this Mac is
+affected.
+
+**What `reload.sh` does, and why it does more than reload.** It re-adds the
+anchor lines to `/etc/pf.conf` if they have gone missing (idempotent —
+guarded by a `grep`, so repeated runs cannot duplicate them), reloads, then
+**asserts the anchor is in the kernel and holds a non-zero rule count**.
+That last part is the important one: `pfctl -a <anchor> -s rules` exits 0
+with no output for an anchor that exists but is empty, so exit status is not
+a usable check and the rule count is. It alerts via Apprise on failure, and
+also on a successful repair — because something overwriting a system file is
+worth knowing about even when it fixes itself.
 
 **One-time setup (needs sudo — run these yourself, not via the agent):**
 
@@ -7256,24 +7295,56 @@ sudo chmod 644 /Library/LaunchDaemons/uk.mathewcsims.pf-lan-lockdown.plist
 sudo launchctl bootstrap system /Library/LaunchDaemons/uk.mathewcsims.pf-lan-lockdown.plist
 ```
 
-This runs the reload script (which enables `pf` if it isn't already, then
-loads the ruleset) at every boot — no per-reboot action needed after this.
+This runs the reload script (which repairs `/etc/pf.conf` if needed, enables
+`pf` if it isn't already, loads the ruleset, then verifies the anchor
+actually holds rules) at every boot — no per-reboot action needed after this.
 
 **Verify it worked:**
 
 ```
-sudo pfctl -a com.mathewcsims.lan-lockdown -s rules   # confirm the rules loaded
-curl http://10.0.1.14:3923/       # from the Mac itself — should now be blocked
-ssh mathew@babel 'curl http://10.0.1.14:3923/'   # from the Pi — should still work
+sudo pfctl -s Anchors                                 # com.mathewcsims.lan-lockdown must be listed
+sudo pfctl -a com.mathewcsims.lan-lockdown -s rules   # must print 6 rules, not nothing
 ```
+
+Six is the expected count: pass/block on `3923`, pass/block on SSH, and
+pass/block on SSH over IPv6. It was **8** before 2026-08-08, because
+`port { 3923, 3456 }` expands to one rule per port and Vikunja's `3456` was
+still in there.
+
+If that second command prints `DIOCGETRULES: Invalid argument`, the anchor
+is not loaded — see the warning at the top of this section. Re-running
+`sudo /bin/sh pf-lockdown/reload.sh` now repairs it automatically.
+
+**Then test it functionally, from two hosts** — reading the rules only
+proves they loaded, not that they work:
+
+```
+# MUST still work — this is Caddy's path in, and breaking it is an outage
+ssh mathew@babel 'timeout 5 bash -c "</dev/tcp/10.0.1.14/3923"' && echo OK
+
+# MUST be blocked — any LAN host that is not the Pi
+ssh mathewcsims@100.68.10.65 'timeout 5 bash -c "</dev/tcp/10.0.1.14/3923"' || echo "blocked, correct"
+
+# Control: same host reaching the Pi proves LAN routing is fine, so a
+# blocked 3923 is the pf rule and not a network fault
+ssh mathewcsims@100.68.10.65 'timeout 5 bash -c "</dev/tcp/10.0.1.19/443"' && echo "routing OK"
+```
+
+**Do NOT test the block by curling `10.0.1.14:3923` from the Mac itself** —
+which is what this section used to advise. Traffic from the Mac to its own
+LAN address does not traverse `en1`'s inbound filter, so it succeeds whether
+the rule is working or not. It proves nothing, and it reads as a pass.
+slartibartfast is reached over its **tailnet** address above because its
+`sshd` does not listen on the LAN interface.
 
 ### Hardening pass (copyparty, Nimbus, Caddy, Memos)
 
 Applied across the board, on top of what each app section above already
-documents (Vikunja's app-level hardening, Nimbus's OIDC, Memos's registration
-policy, etc.):
+documents (Nimbus's OIDC, Memos's registration policy, copyparty's
+`--ban-pw`/`--ban-403`, etc.):
 
-- **Reusable security headers, now on every site, not just Vikunja.**
+- **Reusable security headers, now on every site.** Originally added for one
+  app only.
   `pi-reverse-proxy/Caddyfile` defines a `(security_headers)` snippet (HSTS,
   `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy: strict-origin-when-cross-origin`) and every site block
