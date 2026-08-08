@@ -3432,12 +3432,24 @@ State (`consecutive_failures`, `restart_attempts`, `last_restart`) lives in
 `~/podman-watchdog/state.json`, outside the repo alongside the push token,
 because each launchd run is a separate process with no memory of the last.
 
-All nine behaviours are covered by a sandboxed test — fake `podman`, stubbed
-endpoints, temp state dir — verifying that a single failure does *not*
-restart, the second does, the cap holds at 3, a success clears both
+**A responsive VM with zero containers now counts as DOWN, not up.** The
+probe used to report `up` on any `podman ps` that exited 0, including one
+returning nothing — so the monitor would go green while every Mac-hosted
+app was down. That was survivable while the script only watched; it is not
+now that it restarts things unattended, because `podman machine start`
+brings the VM back and, if the in-VM `podman-restart.service` does not then
+start the containers, that green-monitor-over-dead-stack state is exactly
+where you land. For the same reason a successful restart is followed by
+`podman start --all --filter should-start-on-boot=true`, mirroring what
+`podman-autostart.sh` does rather than trusting the VM to do it.
+
+All eleven behaviours are covered by a sandboxed test — fake `podman`,
+stubbed endpoints, temp state dir — verifying that a single failure does
+*not* restart, the second does, the cap holds at 3, a success clears both
 counters, a failed restart raises a `failure` alert rather than a warning,
-cooldown and an existing lock both block, and a hung or killed start
-releases its lock instead of deadlocking.
+cooldown and an existing lock both block, a hung or killed start releases
+its lock instead of deadlocking, zero containers reports down, and a
+restart starts the containers as well as the VM.
 
 **Setup note:** Kuma's plain API key only authenticates read-only
 endpoints (see the caveat above) — monitor creation went through the

@@ -163,6 +163,19 @@ def try_restart(state, reason):
         except OSError:
             pass
 
+    # Starting the VM is not the same as starting the stack. The in-VM
+    # podman-restart.service usually brings containers back on its own, but
+    # podman-autostart.sh does not rely on that either ("safety net:
+    # idempotent"), and neither should this — a VM that answers `podman ps`
+    # with nothing running is an outage wearing a green monitor.
+    if ok:
+        try:
+            subprocess.run(["podman", "start", "--all",
+                            "--filter", "should-start-on-boot=true"],
+                           capture_output=True, text=True, timeout=MACHINE_START_TIMEOUT)
+        except Exception as e:  # noqa: BLE001 — the VM is up; this is best-effort
+            print(f"container start after restart failed: {e}", file=sys.stderr)
+
     if ok:
         alert(
             "⚠️ Podman VM was down — restarted automatically",
@@ -205,6 +218,15 @@ def probe():
                            capture_output=True, text=True, timeout=PODMAN_TIMEOUT)
         if r.returncode == 0:
             n = len(r.stdout.strip().splitlines())
+            if n == 0:
+                # A responsive VM with nothing running is NOT healthy, and
+                # reporting it as up is worse than reporting nothing: the
+                # monitor goes green while every Mac-hosted app is down.
+                # Reachable unattended now that this script restarts the VM
+                # itself — `podman machine start` brings the VM back, and if
+                # the in-VM podman-restart.service does not then start the
+                # containers, this is exactly the state you land in.
+                return False, "podman is up but ZERO containers are running"
             return True, f"{n} containers responding"
         return False, f"podman ps exited {r.returncode}: {r.stderr[-200:]}"
     except subprocess.TimeoutExpired:
